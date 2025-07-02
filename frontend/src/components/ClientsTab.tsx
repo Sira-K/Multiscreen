@@ -17,56 +17,16 @@ interface Client {
   order: number;
 }
 
-const ClientsTab = () => {
+interface ClientsTabProps {
+  clients: Client[];
+  setClients: React.Dispatch<React.SetStateAction<Client[]>>;
+}
+
+const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
-  const [clients, setClients] = useState<Client[]>([
-    {
-      id: 'client-1',
-      name: 'Display 1 - Main Hall',
-      ip: '192.168.1.101',
-      status: 'active',
-      connectedStream: 'Main Display Stream',
-      lastSeen: '2 minutes ago',
-      order: 1
-    },
-    {
-      id: 'client-2',
-      name: 'Display 2 - Reception',
-      ip: '192.168.1.102',
-      status: 'active',
-      connectedStream: 'Main Display Stream',
-      lastSeen: '1 minute ago',
-      order: 2
-    },
-    {
-      id: 'client-3',
-      name: 'Display 3 - Conference Room',
-      ip: '192.168.1.103',
-      status: 'inactive',
-      connectedStream: null,
-      lastSeen: '15 minutes ago',
-      order: 3
-    },
-    {
-      id: 'client-4',
-      name: 'Display 4 - Lobby',
-      ip: '192.168.1.104',
-      status: 'active',
-      connectedStream: 'Secondary Stream',
-      lastSeen: '30 seconds ago',
-      order: 4
-    },
-    {
-      id: 'client-5',
-      name: 'Display 5 - Cafeteria',
-      ip: '192.168.1.105',
-      status: 'inactive',
-      connectedStream: null,
-      lastSeen: '2 hours ago',
-      order: 5
-    }
-  ]);
+
+
 
   const moveClient = (clientId: string, direction: 'up' | 'down') => {
     const clientIndex = clients.findIndex(c => c.id === clientId);
@@ -104,7 +64,7 @@ const ClientsTab = () => {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h2 className="text-2xl font-semibold text-white mb-2">Client Management</h2>
+        <h2 className="text-2xl font-semibold text-black mb-2">Client Management</h2>
         <p className="text-gray-400">Monitor and manage connected display clients</p>
       </div>
 

@@ -1,11 +1,33 @@
-
+import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import StreamsTab from "@/components/StreamsTab";
 import ClientsTab from "@/components/ClientsTab";
 import VideoFilesTab from "@/components/VideoFilesTab";
 import { Monitor, Users, Video } from "lucide-react";
 
+interface Stream {
+  id: string;
+  name: string;
+  url: string;
+  port: number;
+  status: 'active' | 'inactive';
+  clients: string[];
+}
+
+interface Client {
+  id: string;
+  name: string;
+  ip: string;
+  status: 'active' | 'inactive';
+  connectedStream: string | null;
+  lastSeen: string;
+  order: number;
+}
+
 const Index = () => {
+  const [streams, setStreams] = useState<Stream[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
       <div className="container mx-auto px-6 py-8">
@@ -40,11 +62,18 @@ const Index = () => {
           </TabsList>
 
           <TabsContent value="streams" className="mt-0">
-            <StreamsTab />
+            <StreamsTab 
+              streams={streams} 
+              setStreams={setStreams}
+              clients={clients}
+            />
           </TabsContent>
 
           <TabsContent value="clients" className="mt-0">
-            <ClientsTab />
+            <ClientsTab 
+              clients={clients} 
+              setClients={setClients}
+            />
           </TabsContent>
 
           <TabsContent value="videos" className="mt-0">
