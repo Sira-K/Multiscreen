@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -116,7 +115,6 @@ const StreamsTab = ({ streams, setStreams, clients }: StreamsTabProps) => {
       description: "Client has been removed from the stream"
     });
   };
-
 
   const getClientName = (clientId: string) => {
     return clients.find(c => c.id === clientId)?.name || clientId;
