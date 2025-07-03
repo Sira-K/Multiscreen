@@ -191,3 +191,4 @@ def launch_player():
         logger.error(f"Error launching player: {e}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+        

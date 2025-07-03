@@ -9,10 +9,9 @@ import logging
 import time
 from typing import Dict, List, Any, Tuple, Optional
 
-# Import utility functions at the top of the file
 try:
     from utils.video_utils import get_video_resolution
-    from utils.ffmpeg_utils import build_ffmpeg_filter_chain, calculate_section_info
+    from utils.ffmpeg_utils import build_ffmpeg_filter_chain, calculate_section_info, build_group_ffmpeg_filter_chain
     UTILS_AVAILABLE = True
 except ImportError as e:
     logging.warning(f"Could not import utils: {e}")
@@ -312,393 +311,6 @@ def find_video_file(requested_file: str = None) -> Tuple[str, bool]:
     logger.info("No video files found, will use test pattern")
     return "", True
 
-@stream_bp.route("/start_srt", methods=["POST"])
-def start_srt():
-    """Start SRT streaming with FFmpeg - Now supports grid layouts"""
-    try:
-        # Get app state
-        state = get_state()
-        
-        logger.info("Starting SRT stream with grid support...")
-        sei = "681d5c8f-80cd-4847-930a-99b9484b4a32+000000"
-        
-        # Get parameters from the request
-        data = request.get_json() or {}
-        requested_file = data.get("mp4_file")
-        
-        # Remove 'uploads/' prefix if present (for backward compatibility)
-        if requested_file and requested_file.startswith('uploads/'):
-            requested_file = requested_file[8:]
-        
-        # Looping configuration options
-        enable_looping = data.get("enable_looping", True)
-        loop_count = data.get("loop_count", -1)
-        
-        # Grid configuration from state
-        screen_count = getattr(state, 'screen_count', 4)
-        orientation = getattr(state, 'orientation', 'horizontal')
-        grid_rows = getattr(state, 'grid_rows', 2)
-        grid_cols = getattr(state, 'grid_cols', 2)
-        
-        logger.info(f"Requested file: {requested_file}")
-        logger.info(f"Layout: {orientation}, Screen count: {screen_count}")
-        if orientation == 'grid':
-            logger.info(f"Grid layout: {grid_rows}×{grid_cols}")
-        logger.info(f"Looping enabled: {enable_looping}, loop count: {loop_count}")
-        
-        # Find the best video file to use
-        mp4_file, use_test_pattern = find_video_file(requested_file)
-        
-        # Get video dimensions
-        width = 3840
-        height = 1080
-        framerate = 30
-        
-        if not use_test_pattern and UTILS_AVAILABLE:
-            logger.info("Getting video dimensions with ffprobe...")
-            result = get_video_resolution(mp4_file)
-            if result and result[0] and result[1]:
-                width, height, framerate = result
-                logger.info(f"Video dimensions: {width}x{height} @ {framerate}fps")
-        
-        # ===== DYNAMIC STREAM GENERATION BASED ON CLIENTS =====
-        logger.info("Getting available streams based on connected clients...")
-        streams_info = get_available_streams()
-        available_streams = streams_info["available_streams"]
-        active_client_count = streams_info["active_clients"]
-        
-        logger.info(f"Active clients: {active_client_count}")
-        logger.info(f"Available streams: {available_streams}")
-        
-        # Determine how many split sections to generate
-        if active_client_count <= 1:
-            split_count = 0
-            logger.info("Creating only full stream (1 or fewer clients)")
-        else:
-            if orientation == 'grid':
-                split_count = min(active_client_count, grid_rows * grid_cols)
-            else:
-                split_count = min(active_client_count, screen_count)
-            logger.info(f"Creating {split_count} split streams for {active_client_count} clients ({orientation} layout)")
-        
-        # Get SRT IP from state
-        srt_ip = getattr(state, 'srt_ip', '127.0.0.1')
-        
-        # Stop any existing FFmpeg process
-        if hasattr(state, 'ffmpeg_process_id') and state.ffmpeg_process_id:
-            try:
-                process = psutil.Process(state.ffmpeg_process_id)
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except:
-                    process.kill()
-            except:
-                pass
-        
-        # Prepare FFmpeg command
-        ffmpeg_path = os.path.join(current_app.root_path, 'cmake-build-debug/external/Install/bin/ffmpeg')
-        if not os.path.exists(ffmpeg_path):
-            try:
-                ffmpeg_path = subprocess.check_output(['which', 'ffmpeg']).decode().strip()
-            except:
-                ffmpeg_path = 'ffmpeg'
-        
-        # Build input arguments with advanced looping control
-        if use_test_pattern:
-            # Test pattern loops automatically
-            input_args = [
-                "-f", "lavfi",
-                "-i", f"testsrc=s={width}x{height}:r={framerate}"
-            ]
-            loop_mode = "automatic"
-            video_source = "test_pattern"
-        else:
-            # Video file with configurable looping
-            input_args = []
-            
-            if enable_looping and loop_count != 0:
-                # Add stream loop parameter
-                input_args.extend(["-stream_loop", str(loop_count)])
-                
-                if loop_count == -1:
-                    loop_mode = "infinite"
-                    logger.info("Video will loop infinitely")
-                else:
-                    loop_mode = f"finite_{loop_count}"
-                    logger.info(f"Video will loop {loop_count} times (total plays: {loop_count + 1})")
-            else:
-                loop_mode = "once"
-                logger.info("Video will play once (no looping)")
-            
-            # Add other video input parameters
-            input_args.extend([
-                "-re",  # Read input at native frame rate
-                "-i", mp4_file
-            ])
-            
-            # Determine if we're using resized or raw video
-            download_folder = current_app.config.get('DOWNLOAD_FOLDER', 'resized_video')
-            if mp4_file.startswith(download_folder):
-                video_source = "resized_video"
-            else:
-                video_source = "raw_video"
-        
-        # ===== USE DYNAMIC FILTER CHAIN BUILDER WITH GRID SUPPORT =====
-        if split_count > 0:
-            if UTILS_AVAILABLE:
-                filter_complex_str, output_mappings = build_ffmpeg_filter_chain(
-                    width, height, split_count, orientation, srt_ip, sei, grid_rows, grid_cols
-                )
-            else:
-                filter_complex_str, output_mappings = build_simple_ffmpeg_filter_chain(
-                    width, height, split_count, orientation, srt_ip, sei, grid_rows, grid_cols
-                )
-        else:
-            # Only full stream - simple case
-            filter_complex_str = ""
-            output_mappings = [
-                "-map", "0:v",
-                "-an", "-c:v", "libx264",
-                "-bsf:v", f"h264_metadata=sei_user_data={sei}",
-                "-pes_payload_size", "0",
-                "-bf", "0",
-                "-g", "1",
-                "-f", "mpegts", f"srt://{srt_ip}:10080?streamid=#!::r=live/test,m=publish"
-            ]
-        
-        # Construct the final FFmpeg command
-        ffmpeg_cmd = [
-            ffmpeg_path,
-            "-y"
-        ] + input_args
-        
-        # Add filter complex only if we have splits
-        if filter_complex_str:
-            ffmpeg_cmd.extend(["-filter_complex", filter_complex_str])
-        
-        # Add output mappings
-        ffmpeg_cmd.extend(output_mappings)
-        
-        # Print full command for debugging
-        logger.info("Executing FFmpeg command:")
-        logger.info(" ".join(ffmpeg_cmd))
-        
-        # Start the ffmpeg process
-        process = subprocess.Popen(
-            ffmpeg_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-            bufsize=1
-        )
-        
-        # Store the process ID globally
-        state.ffmpeg_process_id = process.pid
-        
-        # Create a background thread to capture and print output in real-time
-        def monitor_output(process):
-            while process.poll() is None:
-                output = process.stderr.readline()
-                if output:
-                    logger.info(f"FFmpeg: {output.strip()}")
-            
-            logger.info(f"FFmpeg process {process.pid} ended")
-        
-        # Start the monitoring thread
-        monitor_thread = threading.Thread(target=monitor_output, args=(process,))
-        monitor_thread.daemon = True
-        monitor_thread.start()
-        
-        # ===== CALCULATE SECTION DETAILS FOR RESPONSE =====
-        if split_count > 0:
-            if UTILS_AVAILABLE:
-                section_info = calculate_section_info(
-                    width, height, split_count, orientation, grid_rows, grid_cols
-                )
-            else:
-                section_info = calculate_simple_section_info(
-                    width, height, split_count, orientation, grid_rows, grid_cols
-                )
-        else:
-            section_info = [{
-                "section": 1,
-                "x": 0,
-                "y": 0,
-                "width": width,
-                "height": height,
-                "stream_id": "live/test",
-                "position": "Full Screen",
-                "layout_type": orientation
-            }]
-        
-        # Build available streams list
-        created_streams = ["live/test"]
-        if split_count > 0:
-            for i in range(split_count):
-                created_streams.append(f"live/test{i}")
-        
-        # Build layout description
-        if orientation == 'grid':
-            layout_description = f"{grid_rows}×{grid_cols} grid"
-        else:
-            layout_description = f"{orientation} layout"
-        
-        # Determine message based on video source and looping configuration
-        if use_test_pattern:
-            message = f"SRT stream started with test pattern ({layout_description}, automatic loop)"
-        elif video_source == "resized_video":
-            if enable_looping and loop_count == -1:
-                message = f"SRT stream started with 2K resized video ({layout_description}, infinite loop)"
-            elif enable_looping and loop_count > 0:
-                message = f"SRT stream started with 2K resized video ({layout_description}, loop {loop_count} times)"
-            else:
-                message = f"SRT stream started with 2K resized video ({layout_description}, play once)"
-        else:  # raw_video
-            if enable_looping and loop_count == -1:
-                message = f"SRT stream started with raw video ({layout_description}, infinite loop) - Consider using resized version"
-            elif enable_looping and loop_count > 0:
-                message = f"SRT stream started with raw video ({layout_description}, loop {loop_count} times) - Consider using resized version"
-            else:
-                message = f"SRT stream started with raw video ({layout_description}, play once) - Consider using resized version"
-        
-        # Return comprehensive response
-        return jsonify({
-            "message": message,
-            "pid": process.pid,
-            "input_file": None if use_test_pattern else mp4_file,
-            "video_dimensions": f"{width}x{height}",
-            "screen_count": screen_count,
-            "orientation": orientation,
-            "grid_rows": grid_rows,
-            "grid_cols": grid_cols,
-            "layout_description": layout_description,
-            "srt_ip": srt_ip,
-            "section_details": section_info,
-            "available_streams": created_streams,
-            "active_clients": active_client_count,
-            "generated_sections": split_count,
-            "streaming_mode": "full_only" if split_count == 0 else f"{split_count}_splits",
-            "utils_available": UTILS_AVAILABLE,
-            # Looping information
-            "looping_enabled": enable_looping,
-            "loop_count": loop_count,
-            "loop_mode": loop_mode,
-            "video_source": video_source,
-            # Folder information
-            "raw_folder": current_app.config.get('UPLOAD_FOLDER', 'raw_video_file'),
-            "resized_folder": current_app.config.get('DOWNLOAD_FOLDER', 'resized_video')
-        }), 200
-        
-    except Exception as e:
-        error_msg = f"Error starting SRT stream: {str(e)}"
-        logger.error(error_msg)
-        logger.error(traceback.format_exc())
-        return jsonify({
-            "error": error_msg,
-            "traceback": traceback.format_exc()
-        }), 500
-
-@stream_bp.route("/stop_srt", methods=["POST"])
-def stop_srt():
-    """Stop the SRT FFmpeg stream"""
-    try:
-        # Get app state
-        state = get_state()
-        
-        logger.info("Stopping SRT stream...")
-        
-        # Try to get the process ID from state or request
-        data = request.get_json(silent=True) or {}
-        process_id = data.get("pid") or getattr(state, 'ffmpeg_process_id', None)
-        
-        if not process_id:
-            logger.info("No PID provided, attempting to find FFmpeg processes...")
-            # Try to find ffmpeg processes
-            ffmpeg_processes = []
-            for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
-                try:
-                    if 'ffmpeg' in proc.info['name'].lower() or (proc.info['cmdline'] and 'ffmpeg' in ' '.join(proc.info['cmdline']).lower()):
-                        ffmpeg_processes.append(proc)
-                except:
-                    pass
-            
-            if not ffmpeg_processes:
-                return jsonify({"message": "No FFmpeg processes found running"}), 200
-            
-            # Sort by creation time (newest first) and take the first one
-            ffmpeg_processes.sort(key=lambda p: p.info['create_time'], reverse=True)
-            process_id = ffmpeg_processes[0].info['pid']
-            logger.info(f"Found FFmpeg process with PID: {process_id}")
-        
-        logger.info(f"Stopping FFmpeg process with PID: {process_id}")
-        
-        # Try to terminate the process
-        try:
-            process = psutil.Process(process_id)
-            process.terminate()
-            
-            # Wait for it to terminate
-            try:
-                process.wait(timeout=5)
-                logger.info(f"Process {process_id} terminated gracefully")
-            except:
-                # Force kill if it doesn't terminate
-                logger.warning(f"Process {process_id} did not terminate gracefully, force killing")
-                process.kill()
-            
-            # Clear stored process ID
-            if hasattr(state, 'ffmpeg_process_id') and state.ffmpeg_process_id == process_id:
-                state.ffmpeg_process_id = None
-                
-            return jsonify({
-                "message": "SRT stream stopped successfully",
-                "pid": process_id
-            }), 200
-            
-        except Exception as e:
-            error_msg = f"Error stopping process {process_id}: {str(e)}"
-            logger.error(error_msg)
-            
-            # Try to find and kill all ffmpeg processes as a fallback
-            try:
-                subprocess.run(["pkill", "-f", "ffmpeg"], 
-                               stdout=subprocess.DEVNULL, 
-                               stderr=subprocess.DEVNULL)
-                logger.info("Tried pkill -f ffmpeg as fallback")
-            except:
-                pass
-                
-            # Clear stored process ID anyway
-            if hasattr(state, 'ffmpeg_process_id'):
-                state.ffmpeg_process_id = None
-                
-            return jsonify({
-                "message": "Attempted to stop all FFmpeg processes",
-                "error": error_msg
-            }), 200
-    
-    except Exception as e:
-        error_msg = f"Error stopping SRT stream: {str(e)}"
-        logger.error(error_msg)
-        logger.error(traceback.format_exc())
-        
-        # Try to kill ffmpeg processes anyway
-        try:
-            subprocess.run(["pkill", "-f", "ffmpeg"], 
-                          stdout=subprocess.DEVNULL, 
-                          stderr=subprocess.DEVNULL)
-        except:
-            pass
-            
-        return jsonify({
-            "error": error_msg,
-            "message": "Attempted emergency shutdown of all FFmpeg processes",
-            "traceback": traceback.format_exc()
-        }), 500
-    
-# Add these endpoints to your existing stream_management.py file
-
 @stream_bp.route("/start_group_srt", methods=["POST"])
 def start_group_srt():
     """Start SRT streaming for a specific group with group-specific configuration"""
@@ -789,13 +401,9 @@ def start_group_srt():
                     current_time - client_data.get("last_seen", 0) <= 60):
                     active_clients += 1
         
-        # Determine split count based on active clients and screen count
-        if active_clients <= 1:
-            split_count = 0
-            logger.info("Creating only full stream for group (1 or fewer clients)")
-        else:
-            split_count = min(active_clients, screen_count)
-            logger.info(f"Creating {split_count} split streams for group {group_name}")
+        split_count = screen_count  # Always create all configured streams
+        logger.info(f"Creating ALL {split_count} split streams for group {group_name} (configured screens: {screen_count}, active clients: {active_clients})")
+        
         
         # Get SRT IP (use Docker container's host IP)
         srt_ip = getattr(state, 'srt_ip', '127.0.0.1')
@@ -923,9 +531,9 @@ def start_group_srt():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-@stream_bp.route("/stop_group_srt", methods=["POST"])
-def stop_group_srt():
-    """Stop SRT streaming for a specific group"""
+@stream_bp.route("/stop_group", methods=["POST"])
+def stop_group():
+    """Stop both SRT streaming and Docker container for a specific group"""
     try:
         # Get app state
         state = get_state()
@@ -942,42 +550,165 @@ def stop_group_srt():
             
         group = state.groups[group_id]
         group_name = group.get("name", group_id)
-        process_id = group.get("ffmpeg_process_id")
         
-        if not process_id:
-            return jsonify({"error": f"No SRT stream running for group '{group_name}'"}), 400
-        
-        logger.info(f"Stopping SRT stream for group '{group_name}' (PID: {process_id})")
-        
-        try:
-            process = psutil.Process(process_id)
-            process.terminate()
-            
-            try:
-                process.wait(timeout=5)
-                logger.info(f"SRT process for group {group_name} terminated gracefully")
-            except:
-                logger.warning(f"SRT process for group {group_name} did not terminate gracefully, force killing")
-                process.kill()
-                
-        except Exception as e:
-            logger.error(f"Error stopping SRT process for group {group_name}: {e}")
-        
-        # Update group state
-        with state.groups_lock if hasattr(state, 'groups_lock') else threading.RLock():
-            state.groups[group_id]["ffmpeg_process_id"] = None
-            state.groups[group_id]["status"] = "inactive"
-            state.groups[group_id]["available_streams"] = []
-        
-        return jsonify({
-            "message": f"SRT stream stopped for group '{group_name}'",
+        results = {
             "group_id": group_id,
             "group_name": group_name,
-            "process_id": process_id
+            "srt_stopped": False,
+            "docker_stopped": False,
+            "messages": [],
+            "errors": []
+        }
+        
+        # Step 1: Stop SRT stream if running
+        ffmpeg_process_id = group.get("ffmpeg_process_id")
+        if ffmpeg_process_id:
+            try:
+                logger.info(f"Stopping SRT stream for group '{group_name}' (PID: {ffmpeg_process_id})")
+                
+                process = psutil.Process(ffmpeg_process_id)
+                process.terminate()
+                
+                try:
+                    process.wait(timeout=5)
+                    logger.info(f"SRT process for group {group_name} terminated gracefully")
+                    results["messages"].append(f"SRT stream stopped gracefully (PID: {ffmpeg_process_id})")
+                except:
+                    logger.warning(f"SRT process for group {group_name} did not terminate gracefully, force killing")
+                    process.kill()
+                    results["messages"].append(f"SRT stream force-killed (PID: {ffmpeg_process_id})")
+                
+                results["srt_stopped"] = True
+                
+            except Exception as e:
+                error_msg = f"Failed to stop SRT stream: {str(e)}"
+                logger.error(f"Error stopping SRT process for group {group_name}: {e}")
+                results["errors"].append(error_msg)
+        else:
+            results["messages"].append("No SRT stream was running")
+        
+        # Step 2: Stop Docker container if running
+        container_id = group.get("docker_container_id")
+        if container_id:
+            try:
+                logger.info(f"Stopping Docker container for group '{group_name}' (ID: {container_id})")
+                
+                # Validate container ID format (basic check)
+                if not container_id.strip().replace('-', '').isalnum():
+                    raise ValueError("Invalid container ID format")
+                
+                # Stop the container
+                success, output, error = run_command(["docker", "stop", container_id])
+                
+                if success:
+                    logger.info(f"Docker container stopped for group '{group_name}'. ID: {container_id}")
+                    results["messages"].append(f"Docker container stopped (ID: {container_id})")
+                    results["docker_stopped"] = True
+                else:
+                    error_msg = f"Failed to stop Docker container: {error}"
+                    logger.error(error_msg)
+                    results["errors"].append(error_msg)
+                    
+            except Exception as e:
+                error_msg = f"Failed to stop Docker container: {str(e)}"
+                logger.error(f"Error stopping Docker container for group {group_name}: {e}")
+                results["errors"].append(error_msg)
+        else:
+            results["messages"].append("No Docker container was running")
+        
+        # Step 3: Update group state (always do this to clean up)
+        try:
+            with state.groups_lock if hasattr(state, 'groups_lock') else threading.RLock():
+                state.groups[group_id]["ffmpeg_process_id"] = None
+                state.groups[group_id]["docker_container_id"] = None
+                state.groups[group_id]["status"] = "inactive"
+                state.groups[group_id]["available_streams"] = []
+                
+            results["messages"].append("Group state updated to inactive")
+            logger.info(f"Group '{group_name}' state updated to inactive")
+            
+        except Exception as e:
+            error_msg = f"Failed to update group state: {str(e)}"
+            logger.error(error_msg)
+            results["errors"].append(error_msg)
+        
+        # Determine response status
+        if results["errors"]:
+            if results["srt_stopped"] or results["docker_stopped"]:
+                # Partial success
+                results["status"] = "partial_success"
+                return jsonify(results), 207  # Multi-Status
+            else:
+                # Complete failure
+                results["status"] = "failed"
+                return jsonify(results), 500
+        else:
+            # Complete success
+            results["status"] = "success"
+            results["message"] = f"Group '{group_name}' stopped successfully"
+            return jsonify(results), 200
+            
+    except Exception as e:
+        error_msg = f"Error stopping group: {str(e)}"
+        logger.error(error_msg)
+        traceback.print_exc()
+        return jsonify({
+            "error": error_msg,
+            "group_id": group_id if 'group_id' in locals() else None,
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+@stream_bp.route("/stop_group_docker_only", methods=["POST"])
+def stop_group_docker_only():
+    """Stop only Docker container for a specific group (if SRT was running externally)"""
+    try:
+        state = get_state()
+        data = request.get_json() or {}
+        group_id = data.get("group_id")
+        
+        if not group_id:
+            return jsonify({"error": "Missing group_id parameter"}), 400
+            
+        if not hasattr(state, 'groups') or group_id not in state.groups:
+            return jsonify({"error": f"Group {group_id} not found"}), 404
+            
+        group = state.groups[group_id]
+        group_name = group.get("name", group_id)
+        container_id = group.get("docker_container_id")
+        
+        if not container_id:
+            return jsonify({"error": f"No Docker container running for group '{group_name}'"}), 400
+            
+        # Validate container ID format (basic check)
+        if not container_id.strip().replace('-', '').isalnum():
+            return jsonify({"error": "Invalid container ID format"}), 400
+            
+        # Stop the container
+        success, output, error = run_command(["docker", "stop", container_id])
+        
+        if not success:
+            logger.error(f"Failed to stop Docker container for group {group_id}: {error}")
+            return jsonify({"error": error}), 500
+            
+        # Update only Docker-related state
+        with state.groups_lock if hasattr(state, 'groups_lock') else threading.RLock():
+            state.groups[group_id]["docker_container_id"] = None
+            # Only set to inactive if no SRT stream is running either
+            if not group.get("ffmpeg_process_id"):
+                state.groups[group_id]["status"] = "inactive"
+            
+        logger.info(f"Docker container stopped for group '{group_name}'. ID: {container_id}")
+        
+        return jsonify({
+            "message": f"Docker container stopped for group '{group_name}'",
+            "group_id": group_id,
+            "group_name": group_name,
+            "container_id": container_id
         }), 200
         
     except Exception as e:
-        logger.error(f"Error stopping group SRT: {e}")
+        logger.error(f"Error stopping Docker only: {e}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 

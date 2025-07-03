@@ -147,13 +147,11 @@ def get_groups():
                 group["total_clients"] = total_clients
                 
                 # Update available streams based on active clients
-                if active_clients > 1:
-                    streams = [f"live/{group_id}/test"]  # Full stream
-                    for i in range(min(active_clients, group.get("screen_count", 2))):
-                        streams.append(f"live/{group_id}/test{i}")
-                    group["available_streams"] = streams
-                else:
-                    group["available_streams"] = [f"live/{group_id}/test"]
+                streams = [f"live/{group_id}/test"]  # Full stream
+                screen_count = group.get("screen_count", 2)
+                for i in range(screen_count):
+                    streams.append(f"live/{group_id}/test{i}")
+                group["available_streams"] = streams
                 
                 # Format creation time
                 group["created_at_formatted"] = time.strftime(

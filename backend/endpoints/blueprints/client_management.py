@@ -117,7 +117,7 @@ def register_client():
             
         client_id = data.get("client_id")
         client_info = data.get("client_info", {})
-        preferred_group = data.get("group_id")  # Optional group preference
+        preferred_group = data.get("group_id") 
         
         logger.info(f"Registering client with ID: {client_id}")
         
@@ -416,12 +416,10 @@ def available_streams_endpoint():
 
 def get_group_available_streams(group_id: str) -> Dict[str, Any]:
     """
-    Get the list of available streams for a specific group based on connected clients.
+    Get available streams for a specific group - ALWAYS show all potential streams
     """
-    # Get app state
     state = get_state()
     
-    # Check if group exists
     if not hasattr(state, 'groups') or group_id not in state.groups:
         return {
             "available_streams": [],
@@ -455,21 +453,20 @@ def get_group_available_streams(group_id: str) -> Dict[str, Any]:
         # Always include the full stream for this group
         available_streams = [f"live/{group_id}/test"]
         
-        # Add split streams based on client count and screen_count
-        if active_clients >= 2:
-            # If we have at least 2 active clients, make split streams available
-            # But limit to our configured screen_count
-            for i in range(min(active_clients, screen_count)):
-                available_streams.append(f"live/{group_id}/test{i}")
+        # FIXED: ALWAYS show all potential split streams based on screen_count
+        # This allows testing and manual assignment regardless of client count
+        for i in range(screen_count):
+            available_streams.append(f"live/{group_id}/test{i}")
         
         return {
             "available_streams": available_streams,
             "active_clients": active_clients,
             "max_screens": screen_count,
             "group_name": group.get("name", group_id),
-            "full_stream": f"live/{group_id}/test"  # Always available
+            "full_stream": f"live/{group_id}/test",  # Always available
+            "note": f"Showing all {screen_count} potential streams (Active: {active_clients})"
         }
-
+    
 def format_time_ago(seconds_ago: int) -> str:
     """Format a time difference in seconds into a human-readable string"""
     if seconds_ago < 60:
@@ -481,52 +478,6 @@ def format_time_ago(seconds_ago: int) -> str:
         hours = seconds_ago // 3600
         return f"{hours} hour{'s' if hours != 1 else ''} ago"
 
-# Keep existing endpoints for backward compatibility
-@client_bp.route("/assign_video", methods=["POST"])
-def assign_video():
-    """Assign a specific video to a client - Legacy endpoint"""
-    # This endpoint is kept for backward compatibility
-    # but groups should use the streaming approach instead
-    state = get_state()
-
-    try:
-        data = request.get_json()
-        logger.info(f"Received assign_video request: {data}")
-        
-        if not data:
-            return jsonify({"error": "Missing request data"}), 400
-            
-        client_id = data.get("client_id")
-        video_name = data.get("video_name") or data.get("video_file")
-        
-        if not client_id:
-            return jsonify({"error": "Missing required parameter: client_id"}), 400
-            
-        available_videos = get_available_videos()
-        video_names = [v['client_name'] for v in available_videos]
-        
-        if video_name and video_name not in video_names:
-            return jsonify({
-                "error": f"Video {video_name} is not available. Available videos: {video_names}"
-            }), 400
-            
-        with state.clients_lock if hasattr(state, 'clients_lock') else threading.RLock():
-            if client_id not in state.clients:
-                return jsonify({"error": f"Client not registered: {client_id}"}), 404
-                
-            logger.info(f"Client before update: {state.clients[client_id]}")
-            state.clients[client_id]["video_file"] = video_name
-            logger.info(f"Client after update: {state.clients[client_id]}")
-            
-        return jsonify({
-            "message": f"Client {client_id} assigned to video {video_name}",
-            "client": state.clients[client_id],
-            "available_videos": video_names
-        }), 200
-    except Exception as e:
-        logger.error(f"Error assigning video: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
 
 @client_bp.route("/rename_client", methods=["POST"])
 def rename_client():
@@ -659,5 +610,228 @@ def client_status():
         
     except Exception as e:
         logger.error(f"Error checking client status: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+    
+@client_bp.route("/remove_client", methods=["POST"])
+def remove_client():
+    """Remove a client from the system"""
+    try:
+        logger.info("==== REMOVE CLIENT REQUEST RECEIVED ====")
+        
+        # Get app state
+        state = get_state()
+        
+        # Initialize state objects if needed
+        if not hasattr(state, 'clients_lock'):
+            state.clients_lock = threading.RLock()
+        
+        if not hasattr(state, 'clients'):
+            state.clients = {}
+            
+        if not hasattr(state, 'groups'):
+            state.groups = {}
+        
+        # Parse and validate request data
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+            
+        client_id = data.get("client_id")
+        
+        if not client_id:
+            return jsonify({"error": "Missing client_id parameter"}), 400
+            
+        logger.info(f"Removing client with ID: {client_id}")
+        
+        with state.clients_lock:
+            # Check if client exists
+            if client_id not in state.clients:
+                return jsonify({"error": f"Client not found: {client_id}"}), 404
+            
+            client = state.clients[client_id]
+            client_name = client.get('display_name') or client.get('hostname') or client_id
+            client_group_id = client.get('group_id')
+            
+            # Remove client from its group if assigned
+            if client_group_id and hasattr(state, 'groups_lock'):
+                with state.groups_lock:
+                    if client_group_id in state.groups:
+                        group_clients = state.groups[client_group_id].get('clients', {})
+                        if client_id in group_clients:
+                            del group_clients[client_id]
+                            logger.info(f"Removed client {client_id} from group {client_group_id}")
+            
+            # Remove client from the main clients dictionary
+            del state.clients[client_id]
+            
+            logger.info(f"Successfully removed client: {client_name} ({client_id})")
+            
+        return jsonify({
+            "message": f"Client '{client_name}' removed successfully",
+            "removed_client_id": client_id,
+            "removed_client_name": client_name
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error removing client: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@client_bp.route("/remove_multiple_clients", methods=["POST"])
+def remove_multiple_clients():
+    """Remove multiple clients from the system"""
+    try:
+        logger.info("==== REMOVE MULTIPLE CLIENTS REQUEST RECEIVED ====")
+        
+        # Get app state
+        state = get_state()
+        
+        # Initialize state objects if needed
+        if not hasattr(state, 'clients_lock'):
+            state.clients_lock = threading.RLock()
+        
+        if not hasattr(state, 'clients'):
+            state.clients = {}
+            
+        if not hasattr(state, 'groups'):
+            state.groups = {}
+        
+        # Parse and validate request data
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+            
+        client_ids = data.get("client_ids")
+        
+        if not client_ids or not isinstance(client_ids, list):
+            return jsonify({"error": "Missing or invalid client_ids parameter (must be a list)"}), 400
+            
+        logger.info(f"Removing {len(client_ids)} clients: {client_ids}")
+        
+        removed_clients = []
+        not_found_clients = []
+        
+        with state.clients_lock:
+            for client_id in client_ids:
+                if client_id not in state.clients:
+                    not_found_clients.append(client_id)
+                    continue
+                
+                client = state.clients[client_id]
+                client_name = client.get('display_name') or client.get('hostname') or client_id
+                client_group_id = client.get('group_id')
+                
+                # Remove client from its group if assigned
+                if client_group_id and hasattr(state, 'groups_lock'):
+                    with state.groups_lock:
+                        if client_group_id in state.groups:
+                            group_clients = state.groups[client_group_id].get('clients', {})
+                            if client_id in group_clients:
+                                del group_clients[client_id]
+                                logger.info(f"Removed client {client_id} from group {client_group_id}")
+                
+                # Remove client from the main clients dictionary
+                del state.clients[client_id]
+                
+                removed_clients.append({
+                    "id": client_id,
+                    "name": client_name
+                })
+                
+                logger.info(f"Successfully removed client: {client_name} ({client_id})")
+        
+        return jsonify({
+            "message": f"Successfully removed {len(removed_clients)} clients",
+            "removed_clients": removed_clients,
+            "not_found_clients": not_found_clients,
+            "total_removed": len(removed_clients),
+            "total_not_found": len(not_found_clients)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error removing multiple clients: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@client_bp.route("/remove_inactive_clients", methods=["POST"])
+def remove_inactive_clients():
+    """Remove all inactive clients from the system"""
+    try:
+        logger.info("==== REMOVE INACTIVE CLIENTS REQUEST RECEIVED ====")
+        
+        # Get app state
+        state = get_state()
+        
+        # Initialize state objects if needed
+        if not hasattr(state, 'clients_lock'):
+            state.clients_lock = threading.RLock()
+        
+        if not hasattr(state, 'clients'):
+            state.clients = {}
+            
+        if not hasattr(state, 'groups'):
+            state.groups = {}
+        
+        # Parse request data for optional parameters
+        data = request.get_json() or {}
+        inactive_threshold = data.get("inactive_threshold", 300)  # Default 5 minutes
+        
+        logger.info(f"Removing clients inactive for more than {inactive_threshold} seconds")
+        
+        current_time = time.time()
+        removed_clients = []
+        
+        with state.clients_lock:
+            # Find inactive clients
+            clients_to_remove = []
+            
+            for client_id, client_data in state.clients.items():
+                last_seen = client_data.get('last_seen', 0)
+                time_since_seen = current_time - last_seen
+                
+                if time_since_seen > inactive_threshold:
+                    clients_to_remove.append(client_id)
+            
+            # Remove inactive clients
+            for client_id in clients_to_remove:
+                client = state.clients[client_id]
+                client_name = client.get('display_name') or client.get('hostname') or client_id
+                client_group_id = client.get('group_id')
+                last_seen = client.get('last_seen', 0)
+                time_since_seen = current_time - last_seen
+                
+                # Remove client from its group if assigned
+                if client_group_id and hasattr(state, 'groups_lock'):
+                    with state.groups_lock:
+                        if client_group_id in state.groups:
+                            group_clients = state.groups[client_group_id].get('clients', {})
+                            if client_id in group_clients:
+                                del group_clients[client_id]
+                                logger.info(f"Removed client {client_id} from group {client_group_id}")
+                
+                # Remove client from the main clients dictionary
+                del state.clients[client_id]
+                
+                removed_clients.append({
+                    "id": client_id,
+                    "name": client_name,
+                    "last_seen": last_seen,
+                    "inactive_for_seconds": int(time_since_seen)
+                })
+                
+                logger.info(f"Removed inactive client: {client_name} ({client_id}) - inactive for {int(time_since_seen)}s")
+        
+        return jsonify({
+            "message": f"Successfully removed {len(removed_clients)} inactive clients",
+            "removed_clients": removed_clients,
+            "total_removed": len(removed_clients),
+            "inactive_threshold_seconds": inactive_threshold
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error removing inactive clients: {e}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
