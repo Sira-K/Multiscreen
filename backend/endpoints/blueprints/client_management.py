@@ -42,7 +42,7 @@ def get_available_videos():
                         
                         available_videos.append({
                             'client_name': client_filename,  # Name client expects
-                            'server_path': f"resized_videos/{filename}",  # Actual server path
+                            'server_path': f"uploads/{filename}",  # Actual server path
                             'source': 'resized'
                         })
             except Exception as e:

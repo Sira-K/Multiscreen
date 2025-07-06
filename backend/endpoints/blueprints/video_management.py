@@ -144,24 +144,24 @@ def resize_video_async(job_id: str, input_path: str, output_path: str, original_
 @video_bp.route('/get_videos', methods=['GET'])
 def get_videos():
     """
-    Get a list of all video files in the resized videos directory
+    Get a list of all video files in the uploads directory
     Returns:
         JSON response with list of video files
     """
     try:
-        # Get the download folder from app config (where resized videos are stored)
-        download_folder = current_app.config.get('DOWNLOAD_FOLDER', 'resized_video')
+        # Get the upload folder from app config (where uploaded videos are stored)
+        upload_folder = current_app.config.get('UPLOAD_FOLDER', 'uploads')
         
         # Debug log
-        logger.info(f"Looking for videos in: {download_folder}")
+        logger.info(f"Looking for videos in: {upload_folder}")
         
         # Ensure the directory exists
-        if not os.path.exists(download_folder):
-            os.makedirs(download_folder)
-            logger.warning(f"Created resized videos directory {download_folder}")
+        if not os.path.exists(upload_folder):
+            os.makedirs(upload_folder)
+            logger.warning(f"Created uploads directory {upload_folder}")
         
         # Get all files in the directory
-        files = os.listdir(download_folder)
+        files = os.listdir(upload_folder)
         
         # Filter for video files (mp4, mkv, avi, mov, webm)
         video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.webm')
@@ -170,17 +170,17 @@ def get_videos():
         # Create a list of video file objects
         videos = []
         for video_file in video_files:
-            video_path = os.path.join(download_folder, video_file)
+            video_path = os.path.join(upload_folder, video_file)
             file_size = os.path.getsize(video_path)
             
             videos.append({
                 'name': video_file,
-                'path': f"/resized_videos/{video_file}",
+                'path': f"/uploads/{video_file}",
                 'size': file_size,
                 'size_mb': round(file_size / (1024 * 1024), 2)  # Size in MB
             })
         
-        logger.info(f"Found {len(videos)} resized video files")
+        logger.info(f"Found {len(videos)} video files in uploads")
         
         return jsonify({
             'success': True,
@@ -195,146 +195,83 @@ def get_videos():
             'message': f"Error getting videos: {str(e)}",
             'videos': []
         }), 500
-
+    
+    
 @video_bp.route('/upload_video', methods=['POST'])
 def upload_video():
     """
-    Upload a video file and start async processing to 2K
-    Now supports both single and multiple file uploads
-    Expects:
-        file: The video file(s) in the request files
-    Returns:
-        JSON response with job ID(s) for tracking processing
+    Upload video files directly without any processing/resizing
     """
     try:
-        # Check if files are present in the request
+        # Check if files are present
         if 'file' not in request.files:
             return jsonify({'success': False, 'message': 'No file part in the request'}), 400
         
-        # Handle both single file and multiple files
         files = request.files.getlist('file')
         
         if not files or all(file.filename == '' for file in files):
             return jsonify({'success': False, 'message': 'No files selected'}), 400
         
-        # Get folders from app config
+        # Get upload folder
         upload_folder = current_app.config.get('UPLOAD_FOLDER', 'raw_video_file')
-        download_folder = current_app.config.get('DOWNLOAD_FOLDER', 'resized_video')
-        
-        # Create folders if they don't exist
         os.makedirs(upload_folder, exist_ok=True)
-        os.makedirs(download_folder, exist_ok=True)
         
         upload_results = []
         failed_uploads = []
         
         for file in files:
             try:
-                # Validate each file
+                # Validate file
                 is_valid, error_message = validate_upload(file)
                 if not is_valid:
-                    failed_uploads.append({
-                        'filename': file.filename,
-                        'error': error_message
-                    })
+                    failed_uploads.append({'filename': file.filename, 'error': error_message})
                     continue
                 
-                # Save the original file
+                # Save file directly (no processing)
                 filename = secure_filename(file.filename)
                 
-                # Handle duplicate filenames
+                # Handle duplicates
                 base_name, ext = os.path.splitext(filename)
                 counter = 1
-                original_filename = filename
-                
                 while os.path.exists(os.path.join(upload_folder, filename)):
                     filename = f"{base_name}_{counter}{ext}"
                     counter += 1
                 
-                raw_file_path = os.path.join(upload_folder, filename)
+                file_path = os.path.join(upload_folder, filename)
+                file.save(file_path)  # Just save the file directly
                 
-                logger.info(f"Saving uploaded file {original_filename} as {filename} to {raw_file_path}")
-                file.save(raw_file_path)
-                
-                # Get file size
-                raw_size = os.path.getsize(raw_file_path)
-                
-                # Generate job ID and setup processing job
-                job_id = str(uuid.uuid4())
-                resized_filename = f"2k_{filename}"
-                resized_file_path = os.path.join(download_folder, resized_filename)
-                
-                # Initialize job tracking
-                processing_jobs[job_id] = {
-                    'status': 'queued',
-                    'progress': 0,
-                    'original_filename': original_filename,
-                    'saved_filename': filename,
-                    'resized_filename': resized_filename,
-                    'original_size': raw_size,
-                    'original_size_mb': round(raw_size / (1024 * 1024), 2),
-                    'created_at': time.time()
-                }
-                
-                # Start processing in background thread
-                thread = threading.Thread(
-                    target=resize_video_async,
-                    args=(job_id, raw_file_path, resized_file_path, original_filename)
-                )
-                thread.daemon = True
-                thread.start()
+                file_size = os.path.getsize(file_path)
                 
                 upload_results.append({
-                    'original_filename': original_filename,
+                    'original_filename': file.filename,
                     'saved_filename': filename,
-                    'job_id': job_id,
-                    'size_mb': round(raw_size / (1024 * 1024), 2)
+                    'size_mb': round(file_size / (1024 * 1024), 2),
+                    'status': 'completed'
                 })
                 
-                logger.info(f"Started background processing for job {job_id} (file: {original_filename})")
+                logger.info(f"Successfully uploaded: {filename}")
                 
             except Exception as e:
-                logger.error(f"Error processing file {file.filename}: {str(e)}")
-                failed_uploads.append({
-                    'filename': file.filename,
-                    'error': f"Processing error: {str(e)}"
-                })
+                failed_uploads.append({'filename': file.filename, 'error': str(e)})
         
-        # Prepare response
-        if upload_results and not failed_uploads:
-            # All files uploaded successfully
+        # Return results
+        if upload_results:
             return jsonify({
                 'success': True,
-                'message': f"Successfully uploaded {len(upload_results)} file(s). Processing started.",
-                'uploads': upload_results,
-                'total_uploaded': len(upload_results)
-            }), 200
-        elif upload_results and failed_uploads:
-            # Some files uploaded, some failed
-            return jsonify({
-                'success': True,
-                'message': f"Uploaded {len(upload_results)} file(s) successfully, {len(failed_uploads)} failed.",
-                'uploads': upload_results,
-                'failed': failed_uploads,
-                'total_uploaded': len(upload_results),
-                'total_failed': len(failed_uploads)
+                'message': f"Successfully uploaded {len(upload_results)} file(s)",
+                'uploads': upload_results
             }), 200
         else:
-            # All files failed
             return jsonify({
                 'success': False,
-                'message': f"All {len(failed_uploads)} file(s) failed to upload.",
-                'failed': failed_uploads,
-                'total_failed': len(failed_uploads)
+                'message': "All uploads failed",
+                'failed': failed_uploads
             }), 400
         
     except Exception as e:
-        logger.error(f"Error uploading videos: {str(e)}")
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'message': f"Error uploading videos: {str(e)}"
-        }), 500
+        logger.error(f"Upload error: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+    
 
 @video_bp.route('/batch_upload_status', methods=['GET'])
 def get_batch_upload_status():
@@ -382,7 +319,7 @@ def get_batch_upload_status():
                         'resized_filename': job['resized_filename'],
                         'size': job.get('size', 0),
                         'size_mb': job.get('size_mb', 0),
-                        'path': f"/resized_videos/{job['resized_filename']}"
+                        'path': f"/uploads/{job['resized_filename']}"
                     })
                 elif job['status'] == 'failed':
                     job_statuses[job_id]['error'] = job.get('error', 'Unknown error')
@@ -455,7 +392,7 @@ def get_processing_status(job_id: str):
                 'resized_filename': job['resized_filename'],
                 'size': job.get('size', 0),
                 'size_mb': job.get('size_mb', 0),
-                'path': f"/resized_videos/{job['resized_filename']}"
+                'path': f"/uploads/{job['resized_filename']}"
             })
         elif job['status'] == 'failed':
             response_data['error'] = job.get('error', 'Unknown error')
@@ -568,7 +505,7 @@ def serve_video_compatible(filename):
             'message': f"Error serving video: {str(e)}"
         }), 500
 
-@video_bp.route('/resized_videos/<filename>', methods=['GET'])
+@video_bp.route('/uploads/<filename>', methods=['GET'])
 def serve_resized_video(filename):
     """
     Serve a resized video file from the download folder
@@ -726,14 +663,14 @@ def get_video_status():
         
         # Count files in each folder
         raw_videos = []
-        resized_videos = []
+        uploads = []
         
         if os.path.exists(upload_folder):
             raw_videos = [f for f in os.listdir(upload_folder) 
                          if f.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))]
         
         if os.path.exists(download_folder):
-            resized_videos = [f for f in os.listdir(download_folder) 
+            uploads = [f for f in os.listdir(download_folder) 
                             if f.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm'))]
         
         # Check processing jobs
@@ -754,14 +691,14 @@ def get_video_status():
             },
             'file_counts': {
                 'raw_videos': len(raw_videos),
-                'resized_videos': len(resized_videos),
+                'uploads': len(uploads),
                 'active_processing_jobs': len(active_jobs),
                 'completed_jobs': len(completed_jobs),
                 'failed_jobs': len(failed_jobs),
                 'total_jobs': len(processing_jobs)
             },
             'raw_video_files': raw_videos,
-            'resized_video_files': resized_videos,
+            'resized_video_files': uploads,
             'processing_jobs': {
                 'active': active_jobs,
                 'completed': completed_jobs,
