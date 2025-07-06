@@ -1,11 +1,50 @@
-
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { ArrowUp, ArrowDown, Monitor, Wifi, WifiOff, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { clientApi } from '@/lib/api';
+
+const mockClients = [
+  {
+    id: "client_001",
+    name: "Conference Room A - Screen 1", 
+    ip: "192.168.1.101",
+    status: 'active' as const,
+    connectedStream: "stream_1",
+    lastSeen: "30 seconds ago",
+    order: 1
+  },
+  {
+    id: "client_002",
+    name: "Conference Room A - Screen 2",
+    ip: "192.168.1.102", 
+    status: 'active' as const,
+    connectedStream: "stream_2",
+    lastSeen: "45 seconds ago",
+    order: 2
+  },
+  {
+    id: "client_003",
+    name: "Conference Room B - Screen 1",
+    ip: "192.168.1.201",
+    status: 'inactive' as const,
+    connectedStream: "stream_1", 
+    lastSeen: "2 minutes ago",
+    order: 3
+  },
+  {
+    id: "client_004", 
+    name: "Lobby Display",
+    ip: "192.168.1.301",
+    status: 'active' as const,
+    connectedStream: "stream_3",
+    lastSeen: "10 seconds ago", 
+    order: 4
+  }
+];
 
 interface Client {
   id: string;
@@ -59,6 +98,27 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
     client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     client.ip.includes(searchTerm)
   );
+  
+  useEffect(() => {
+    const fetchClients = async () => {
+      try {
+        // Use mock data for testing
+        if (process.env.NODE_ENV === 'development') {
+          setClients(mockClients);
+          return;
+        }
+        
+        const response = await clientApi.getClients();
+        setClients(response.clients || []);
+      } catch (error) {
+        console.error('Error fetching clients:', error);
+        // Fallback to mock data on error
+        setClients(mockClients);
+      }
+    };
+    
+    fetchClients();
+  }, []);
 
   return (
     <div className="space-y-6">

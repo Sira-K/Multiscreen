@@ -32,7 +32,7 @@ const Index = () => {
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
       <div className="container mx-auto px-6 py-8">
         <header className="mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">SRT Streaming Casdontrol Panel</h1>
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">SRT Streaming Control Panel</h1>
           <p className="text-gray-600">Manage streams, clients, and video files for your digital signage system</p>
         </header>
 
@@ -62,11 +62,7 @@ const Index = () => {
           </TabsList>
 
           <TabsContent value="streams" className="mt-0">
-            <StreamsTab 
-              streams={streams} 
-              setStreams={setStreams}
-              clients={clients}
-            />
+            <StreamsTab/>
           </TabsContent>
 
           <TabsContent value="clients" className="mt-0">

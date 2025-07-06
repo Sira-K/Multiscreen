@@ -4,456 +4,514 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Plus, X, Users, Monitor, Wifi, WifiOff, AlertCircle } from "lucide-react";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import FlaskStreamControlButton from "@/components/ui/StreamControlButton"; // Updated import
-import { useFlaskWebSocketStreamControl } from "@/hooks/useWebSocketStreamControl"; // Updated import
+import GroupCard from '@/components/ui/GroupCard';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Plus, X, Play, Square, Users, Monitor, AlertCircle, CheckCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { groupApi, videoApi } from '@/lib/api';
+import { clientApi } from '@/lib/api';
 
-interface Stream {
+
+
+interface Group {
   id: string;
   name: string;
-  url: string;
-  port: number;
-  status: 'active' | 'inactive';
-  clients: string[];
-  // Add Flask-specific fields
-  groupId?: string;
-  groupName?: string;
+  description: string;
+  screen_count: number;
+  orientation: string;
+  status: 'active' | 'inactive' | 'starting' | 'stopping';
+  docker_container_id?: string;
+  ffmpeg_process_id?: number;
+  available_streams: string[];
+  current_video?: string;
+  active_clients: number;
+  total_clients: number;
+  srt_port: number;
+  created_at_formatted: string;
 }
 
-interface Client {
-  id: string;
+interface Video {
   name: string;
-  ip: string;
-  status: 'active' | 'inactive';
-  connectedStream: string | null;
-  lastSeen: string;
-  order: number;
+  path: string;
+  size_mb: number;
 }
 
-interface StreamsTabProps {
-  streams: Stream[];
-  setStreams: React.Dispatch<React.SetStateAction<Stream[]>>;
-  clients: Client[];
-  wsUrl?: string; // Flask WebSocket URL
-}
 
-const StreamsTab = ({ streams, setStreams, clients, wsUrl }: StreamsTabProps) => {
+const StreamsTab = () => {
+  console.log('🚀 StreamsTab component rendered');
+  
   const { toast } = useToast();
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [newStreamName, setNewStreamName] = useState('');
-  const [newStreamPort, setNewStreamPort] = useState('');
+  
+  // State management
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [videos, setVideos] = useState<Video[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [operationInProgress, setOperationInProgress] = useState<string | null>(null);
+  const [clients, setClients] = useState<any[]>([]);
+  const [selectedVideos, setSelectedVideos] = useState<Record<string, string>>({});
+  
+  // Form state for creating new groups
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupDescription, setNewGroupDescription] = useState('');
+  const [newGroupScreenCount, setNewGroupScreenCount] = useState(2);
+  const [newGroupOrientation, setNewGroupOrientation] = useState('horizontal');
 
-  // Initialize Flask WebSocket connection
-  const {
-    isConnected,
-    isLoading,
-    connectionStatus,
-    startStream,
-    stopStream,
-    streamStatuses,
-    getStreamStatus,
-    setOnStreamStatusChange,
-    setOnClientStatusChange,
-    reconnect
-  } = useFlaskWebSocketStreamControl({
-    wsUrl: wsUrl || 'http://localhost:3001' // Flask SocketIO URL
-  });
-
-  // Set up real-time event handlers
+  // Load initial data
   useEffect(() => {
-    // Handle stream status changes from Flask WebSocket
-    setOnStreamStatusChange((streamId: string, status: 'active' | 'inactive') => {
-      setStreams(prev => prev.map(stream => {
-        // Match by either id or groupId
-        if (stream.id === streamId || stream.groupId === streamId) {
-          return { ...stream, status };
-        }
-        return stream;
-      }));
-    });
+    console.log('🔥 useEffect triggered - calling loadInitialData');
+    loadInitialData();
+  }, []);
 
-    // Handle client connection changes from Flask WebSocket
-    setOnClientStatusChange((streamId: string, connectedClients: string[]) => {
-      setStreams(prev => prev.map(stream => {
-        // Match by either id or groupId
-        if (stream.id === streamId || stream.groupId === streamId) {
-          return { ...stream, clients: connectedClients };
-        }
-        return stream;
-      }));
-    });
-  }, [setOnStreamStatusChange, setOnClientStatusChange, setStreams]);
-
-  const addStream = () => {
-    if (!newStreamName || !newStreamPort) {
+  const loadInitialData = async () => {
+    console.log('🔄 Starting loadInitialData...');
+    try {
+      setLoading(true);
+      
+      console.log('📡 Making API calls to load groups, videos, and clients...');
+      
+      const [groupsResponse, videosResponse, clientsResponse] = await Promise.all([
+        groupApi.getGroups(),
+        videoApi.getVideos(),
+        clientApi.getClients()
+      ]);
+      
+      console.log('✅ Groups response:', groupsResponse);
+      console.log('✅ Videos response:', videosResponse); // DEBUG: Check this
+      console.log('✅ Clients response:', clientsResponse);
+      
+      setGroups(groupsResponse.groups || []);
+      setVideos(videosResponse.videos || []); // DEBUG: Check if videos is empty
+      setClients(clientsResponse.clients || []);
+      
+      console.log('📊 Final state:', {
+        groupsCount: (groupsResponse.groups || []).length,
+        videosCount: (videosResponse.videos || []).length, // DEBUG: Check this count
+        clientsCount: (clientsResponse.clients || []).length
+      });
+      
+    } catch (error) {
+      console.error('❌ Error loading initial data:', error);
+      // Add more specific error logging
+      if (error.message.includes('videos')) {
+        console.error('🎥 Specific video loading error:', error);
+      }
       toast({
-        title: "Error",
-        description: "Please fill in all fields",
+        title: "Loading Error",
+        description: "Failed to load data. Check console for details.",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVideoSelect = (groupId: string, videoName: string) => {
+    setSelectedVideos(prev => ({
+      ...prev,
+      [groupId]: videoName
+    }));
+  };
+
+  const createGroup = async () => {
+    if (!newGroupName.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Group name is required",
         variant: "destructive"
       });
       return;
     }
 
-    const newStream: Stream = {
-      id: Date.now().toString(),
-      name: newStreamName,
-      url: `srt://192.168.1.100:${newStreamPort}`,
-      port: parseInt(newStreamPort),
-      status: 'inactive',
-      clients: [],
-      // Add group information for Flask backend
-      groupId: Date.now().toString(),
-      groupName: newStreamName
-    };
+    try {
+      setOperationInProgress('create');
+      
+      const response = await groupApi.createGroup({
+        name: newGroupName.trim(),
+        description: newGroupDescription.trim(),
+        screen_count: newGroupScreenCount,
+        orientation: newGroupOrientation
+      });
 
-    setStreams([...streams, newStream]);
-    setNewStreamName('');
-    setNewStreamPort('');
-    setIsDialogOpen(false);
-    toast({
-      title: "Stream Added",
-      description: `${newStreamName} has been created successfully`
-    });
+      toast({
+        title: "Group Created",
+        description: `Successfully created group "${newGroupName}"`
+      });
+
+      // Reset form
+      setNewGroupName('');
+      setNewGroupDescription('');
+      setNewGroupScreenCount(2);
+      setNewGroupOrientation('horizontal');
+      setShowCreateForm(false);
+
+      // Reload groups to get updated data
+      await loadInitialData();
+
+    } catch (error: any) {
+      console.error('Error creating group:', error);
+      toast({
+        title: "Creation Failed",
+        description: error?.message || "Failed to create group",
+        variant: "destructive"
+      });
+    } finally {
+      setOperationInProgress(null);
+    }
   };
 
-  const removeStream = (streamId: string) => {
-    // Stop stream first if it's active
-    const stream = streams.find(s => s.id === streamId);
-    if (stream?.status === 'active') {
-      // Use groupId if available, otherwise use streamId
-      const targetId = stream.groupId || streamId;
-      stopStream(targetId);
+  const startGroup = async (groupId: string, groupName: string) => {
+    try {
+      setOperationInProgress(groupId);
+      
+      console.log(`🎬 Starting group ${groupId} with video:`, selectedVideos[groupId]);
+      
+      const response = await groupApi.startGroup(groupId, selectedVideos[groupId]);
+      
+      toast({
+        title: "Group Started",
+        description: `Successfully started "${groupName}" with ${selectedVideos[groupId] || 'default video'}`
+      });
+
+      await loadInitialData();
+      
+    } catch (error: any) {
+      console.error('Error starting group:', error);
+      toast({
+        title: "Start Failed",
+        description: error?.message || `Failed to start group "${groupName}"`,
+        variant: "destructive"
+      });
+    } finally {
+      setOperationInProgress(null);
     }
+};
+
+  const stopGroup = async (groupId: string, groupName: string) => {
+    try {
+      setOperationInProgress(groupId);
+      
+      console.log(`🛑 Stopping group ${groupId}`);
+      
+      const response = await groupApi.stopGroup(groupId);
+      
+      toast({
+        title: "Group Stopped",
+        description: `Successfully stopped "${groupName}"`
+      });
+
+      // Reload data to get updated status
+      await loadInitialData();
+      
+    } catch (error: any) {
+      console.error('Error stopping group:', error);
+      toast({
+        title: "Stop Failed",
+        description: error?.message || `Failed to stop group "${groupName}"`,
+        variant: "destructive"
+      });
+    } finally {
+      setOperationInProgress(null);
+    }
+  };
+
+  const deleteGroup = async (groupId: string, groupName: string) => {
+    if (!confirm(`Are you sure you want to delete "${groupName}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      setOperationInProgress(groupId);
+      
+      await groupApi.deleteGroup(groupId);
+      
+      toast({
+        title: "Group Deleted",
+        description: `Successfully deleted "${groupName}"`
+      });
+
+      // Reload groups
+      await loadInitialData();
+      
+    } catch (error: any) {
+      console.error('Error deleting group:', error);
+      toast({
+        title: "Delete Failed",
+        description: error?.message || `Failed to delete group "${groupName}"`,
+        variant: "destructive"
+      });
+    } finally {
+      setOperationInProgress(null);
+    }
+  };
+
+  const loadClients = async () => {
+    try {
+      const response = await clientApi.getClients();
+      setClients(response.clients || []);
+    } catch (error) {
+      console.error('Error loading clients:', error);
+    }
+  };
+
+
+  const assignClientToStream = async (clientId: string, streamId: string, groupId: string) => {
+    try {
+      setOperationInProgress(`assign-${clientId}`);
+      
+      await clientApi.assignStream(clientId, streamId);
+      
+      // Refresh clients to show updated assignments
+      await loadClients();
+      
+      toast({
+        title: "Client Assigned",
+        description: `Client assigned to ${streamId}`,
+        variant: "default"
+      });
+      
+    } catch (error) {
+      console.error('Error assigning client:', error);
+      toast({
+        title: "Assignment Error",
+        description: "Failed to assign client to stream",
+        variant: "destructive"
+      });
+    } finally {
+      setOperationInProgress(null);
+    }
+  };
+
+  const getStatusBadge = (group: Group) => {
+    const isOperating = operationInProgress === group.id;
     
-    setStreams(streams.filter(stream => stream.id !== streamId));
-    toast({
-      title: "Stream Removed",
-      description: "Stream has been deleted successfully"
-    });
-  };
+    if (isOperating) {
+      return (
+        <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">
+          <div className="w-3 h-3 border-2 border-yellow-600 border-t-transparent rounded-full animate-spin mr-1" />
+          Processing...
+        </Badge>
+      );
+    }
 
-  const toggleStreamStatus = (streamId: string) => {
-    // This will be called by FlaskStreamControlButton for optimistic updates
-    // The real state update will come from WebSocket
-    const stream = streams.find(s => s.id === streamId);
-    if (stream) {
-      setStreams(prev => prev.map(s => 
-        s.id === streamId 
-          ? { ...s, status: s.status === 'active' ? 'inactive' : 'active' }
-          : s
-      ));
+    switch (group.status) {
+      case 'active':
+        return (
+          <Badge className="bg-green-100 text-green-800 border-green-200">
+            <CheckCircle className="w-3 h-3 mr-1" />
+            Active
+          </Badge>
+        );
+      case 'starting':
+        return (
+          <Badge className="bg-blue-100 text-blue-800 border-blue-200">
+            <div className="w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mr-1" />
+            Starting
+          </Badge>
+        );
+      case 'stopping':
+        return (
+          <Badge className="bg-orange-100 text-orange-800 border-orange-200">
+            <div className="w-3 h-3 border-2 border-orange-600 border-t-transparent rounded-full animate-spin mr-1" />
+            Stopping
+          </Badge>
+        );
+      default:
+        return (
+          <Badge className="bg-gray-100 text-gray-800 border-gray-200">
+            <AlertCircle className="w-3 h-3 mr-1" />
+            Inactive
+          </Badge>
+        );
     }
   };
 
-  const addClientToStream = (streamId: string, clientId: string) => {
-    // Remove client from any other stream first (one stream per client rule)
-    const updatedStreams = streams.map(stream => ({
-      ...stream,
-      clients: stream.clients.filter(c => c !== clientId)
-    }));
-    
-    // Add client to the target stream
-    setStreams(updatedStreams.map(stream => 
-      stream.id === streamId 
-        ? { ...stream, clients: [...stream.clients, clientId] }
-        : stream
-    ));
-    
-    toast({
-      title: "Client Assigned",
-      description: "Client has been assigned to the stream"
-    });
-  };
-
-  const removeClientFromStream = (streamId: string, clientId: string) => {
-    setStreams(streams.map(stream => 
-      stream.id === streamId 
-        ? { ...stream, clients: stream.clients.filter(c => c !== clientId) }
-        : stream
-    ));
-    toast({
-      title: "Client Removed",
-      description: "Client has been removed from the stream"
-    });
-  };
-
-  const getClientName = (clientId: string) => {
-    return clients.find(c => c.id === clientId)?.name || clientId;
-  };
-
-  const getUnassignedClients = (streamId: string) => {
-    const allAssignedClients = streams.flatMap(stream => stream.clients);
-    return clients.filter(client => !allAssignedClients.includes(client.id));
-  };
-
-  const getConnectionStatusColor = () => {
-    switch (connectionStatus) {
-      case 'connected': return 'text-green-600';
-      case 'connecting': return 'text-yellow-600';
-      case 'disconnected': return 'text-gray-600';
-      case 'error': return 'text-red-600';
+  const getLayoutDescription = (group: Group) => {
+    if (group.orientation === 'grid') {
+      // Assume 2x2 for now, could be enhanced to store grid dimensions
+      const rows = Math.sqrt(group.screen_count);
+      const cols = Math.sqrt(group.screen_count);
+      return `${rows}×${cols} Grid (${group.screen_count} screens)`;
     }
+    return `${group.orientation} (${group.screen_count} screens)`;
   };
 
-  const getConnectionStatusIcon = () => {
-    switch (connectionStatus) {
-      case 'connected': return <Wifi className="w-4 h-4" />;
-      case 'connecting': return <Wifi className="w-4 h-4 animate-pulse" />;
-      case 'disconnected':
-      case 'error': return <WifiOff className="w-4 h-4" />;
-    }
-  };
+  console.log('🎨 StreamsTab rendering, loading:', loading, 'groups:', groups.length);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-gray-600">Loading groups and videos...</p>
+          <p className="text-sm text-gray-400 mt-2">Check browser console for debug info</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      {/* Connection Status Alert */}
-      {connectionStatus !== 'connected' && (
-        <Alert className={connectionStatus === 'error' ? 'border-red-200 bg-red-50' : 'border-yellow-200 bg-yellow-50'}>
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription className="flex items-center justify-between">
-            <span>
-              {connectionStatus === 'connecting' && 'Connecting to Flask stream server...'}
-              {connectionStatus === 'disconnected' && 'Disconnected from Flask stream server. Trying to reconnect...'}
-              {connectionStatus === 'error' && 'Failed to connect to Flask stream server. Real-time updates unavailable.'}
-            </span>
-            {connectionStatus === 'error' && (
-              <Button size="sm" variant="outline" onClick={reconnect}>
-                Retry Connection
-              </Button>
-            )}
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {/* Header with Add Stream Button */}
-      <div className="flex justify-between items-center">
+      {/* Header and Create Button */}
+      <div className="flex justify-between items-start">
         <div>
-          <div className="flex items-center gap-2 mb-2">
-            <h2 className="text-2xl font-semibold text-black">Stream Management</h2>
-            <div className={`flex items-center gap-1 ${getConnectionStatusColor()}`}>
-              {getConnectionStatusIcon()}
-              <span className="text-sm capitalize">{connectionStatus}</span>
-            </div>
-          </div>
-          <p className="text-gray-400">Manage your SRT streaming endpoints with real-time monitoring</p>
+          <h2 className="text-2xl font-semibold text-gray-900 mb-2">Stream Management</h2>
+          <p className="text-gray-600">Manage streaming groups and control video streams</p>
         </div>
-        <Button 
-          onClick={() => setIsDialogOpen(!isDialogOpen)} 
-          className="bg-blue-600 hover:bg-blue-700 text-white"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          Add New Stream
-        </Button>
+        
+        <Dialog open={showCreateForm} onOpenChange={setShowCreateForm}>
+          <DialogTrigger asChild>
+            <Button
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+              disabled={operationInProgress === 'create'}
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Create Group
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="sm:max-w-[425px]">
+            <DialogHeader>
+              <DialogTitle>Create New Group</DialogTitle>
+              <DialogDescription>
+                Create a new streaming group with custom configuration.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="groupName" className="text-right">
+                  Name*
+                </Label>
+                <Input
+                  id="groupName"
+                  value={newGroupName}
+                  onChange={(e) => setNewGroupName(e.target.value)}
+                  placeholder="Enter group name"
+                  className="col-span-3"
+                  disabled={operationInProgress === 'create'}
+                />
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="description" className="text-right">
+                  Description
+                </Label>
+                <Input
+                  id="description"
+                  value={newGroupDescription}
+                  onChange={(e) => setNewGroupDescription(e.target.value)}
+                  placeholder="Optional description"
+                  className="col-span-3"
+                  disabled={operationInProgress === 'create'}
+                />
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="screenCount" className="text-right">
+                  Screens
+                </Label>
+                <Input
+                  id="screenCount"
+                  type="number"
+                  min="1"
+                  max="16"
+                  value={newGroupScreenCount}
+                  onChange={(e) => setNewGroupScreenCount(parseInt(e.target.value) || 2)}
+                  className="col-span-3"
+                  disabled={operationInProgress === 'create'}
+                />
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="orientation" className="text-right">
+                  Layout
+                </Label>
+                <Select value={newGroupOrientation} onValueChange={setNewGroupOrientation} disabled={operationInProgress === 'create'}>
+                  <SelectTrigger className="col-span-3">
+                    <SelectValue placeholder="Select layout" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="horizontal">Horizontal</SelectItem>
+                    <SelectItem value="vertical">Vertical</SelectItem>
+                    <SelectItem value="grid">Grid</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowCreateForm(false)}
+                disabled={operationInProgress === 'create'}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={createGroup}
+                disabled={!newGroupName.trim() || operationInProgress === 'create'}
+                className="bg-green-600 hover:bg-green-700"
+              >
+                {operationInProgress === 'create' ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                    Creating...
+                  </>
+                ) : (
+                  'Create Group'
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
-      {/* Add New Stream Dialog */}
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Plus className="w-5 h-5" />
-              Create New Stream
-            </DialogTitle>
-            <DialogDescription>
-              Configure a new SRT stream for client connections
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="streamName">Stream Name</Label>
-              <Input
-                id="streamName"
-                value={newStreamName}
-                onChange={(e) => setNewStreamName(e.target.value)}
-                placeholder="e.g., Conference Room Display"
-              />
-            </div>
-            
-            <div className="grid gap-2">
-              <Label htmlFor="streamPort">Port</Label>
-              <Input
-                id="streamPort"
-                type="number"
-                value={newStreamPort}
-                onChange={(e) => setNewStreamPort(e.target.value)}
-                placeholder="e.g., 10080"
-              />
-            </div>
-          </div>
-          
-          <div className="flex justify-end gap-3">
-            <Button
-              variant="outline"
-              onClick={() => setIsDialogOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button 
-              onClick={addStream} 
-              className="bg-green-600 hover:bg-green-700 text-white"
-            >
+      {/* Groups List */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {groups.length === 0 ? (
+          <div className="col-span-full text-center py-12">
+            <Monitor className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">No Groups Found</h3>
+            <p className="text-gray-600 mb-4">Create your first streaming group to get started.</p>
+            <Button onClick={() => setShowCreateForm(true)} className="bg-blue-600 hover:bg-blue-700">
               <Plus className="w-4 h-4 mr-2" />
-              Create Stream
+              Create First Group
             </Button>
           </div>
-        </DialogContent>
-      </Dialog>
+        ) : (
+          groups.map((group) => (
+            <GroupCard
+              key={group.id}
+              group={group}
+              videos={videos}
+              clients={clients}
+              selectedVideo={selectedVideos[group.id]}
+              operationInProgress={operationInProgress}
+              onVideoSelect={handleVideoSelect}
+              onStart={startGroup}
+              onStop={stopGroup}
+              onDelete={deleteGroup}
+              onAssignClient={assignClientToStream}
+            />
+          ))
+        )}
+      </div>
 
-      {/* Streams List */}
-      {streams.length === 0 ? (
-        <Card className="bg-white border border-gray-200">
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <Monitor className="w-16 h-16 text-gray-400 mb-4" />
-            <h3 className="text-lg font-semibold text-gray-800 mb-2">No Streams Created</h3>
-            <p className="text-gray-600 text-center mb-6 max-w-md">
-              Get started by creating your first SRT stream. Streams allow you to broadcast content to multiple display clients simultaneously.
-            </p>
-            <Button 
-              onClick={() => setIsDialogOpen(true)} 
-              className="bg-blue-600 hover:bg-blue-700 text-white"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Create Your First Stream
-            </Button>
+      {/* Videos Info */}
+      {videos.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Available Videos ({videos.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+              {videos.map((video, index) => (
+                <div key={index} className="text-sm p-2 bg-gray-50 rounded">
+                  <div className="font-medium">{video.name}</div>
+                  <div className="text-gray-500">{video.size_mb} MB</div>
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {streams.map((stream) => {
-            // Get WebSocket status using groupId if available, otherwise streamId
-            const statusKey = stream.groupId || stream.id;
-            const wsStatus = getStreamStatus(statusKey);
-            
-            return (
-              <Card key={stream.id} className="bg-white border border-gray-200 shadow-sm">
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle className="text-gray-800 flex items-center gap-2">
-                        {stream.groupName || stream.name}
-                        <Badge 
-                          variant={stream.status === 'active' ? 'default' : 'secondary'}
-                          className={stream.status === 'active' 
-                            ? 'bg-green-100 text-green-800 border-green-200' 
-                            : 'bg-gray-100 text-gray-600 border-gray-200'
-                          }
-                        >
-                          {stream.status}
-                        </Badge>
-                        {wsStatus && (
-                          <Badge variant="outline" className="text-xs">
-                            {wsStatus.clientCount} clients
-                          </Badge>
-                        )}
-                      </CardTitle>
-                      <CardDescription className="text-gray-600">
-                        {stream.url}
-                        {stream.groupId && (
-                          <span className="block text-xs text-gray-500 mt-1">
-                            Group ID: {stream.groupId}
-                          </span>
-                        )}
-                      </CardDescription>
-                    </div>
-                    <div className="flex gap-2">
-                      <FlaskStreamControlButton
-                        streamId={stream.id}
-                        streamName={stream.name}
-                        isActive={stream.status === 'active'}
-                        onToggle={toggleStreamStatus}
-                        startStream={startStream}
-                        stopStream={stopStream}
-                        isLoading={isLoading}
-                        isConnected={isConnected}
-                        connectionStatus={connectionStatus}
-                        groupId={stream.groupId}
-                        groupName={stream.groupName}
-                        size="sm"
-                      />
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => removeStream(stream.id)}
-                        className="border-gray-300 text-gray-600 hover:bg-gray-50"
-                      >
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    <div>
-                      <div className="flex items-center gap-2 mb-3">
-                        <Users className="w-4 h-4 text-gray-500" />
-                        <span className="text-gray-700 font-medium text-sm">Connected Clients ({stream.clients.length})</span>
-                        {wsStatus && wsStatus.availableStreams.length > 0 && (
-                          <span className="text-xs text-gray-500">
-                            ({wsStatus.availableStreams.length} streams available)
-                          </span>
-                        )}
-                      </div>
-                      <div className="space-y-2">
-                        {stream.clients.map((clientId) => (
-                          <div key={clientId} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg border border-gray-200">
-                            <span className="text-gray-800 text-sm font-medium">{getClientName(clientId)}</span>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => removeClientFromStream(stream.id, clientId)}
-                              className="h-7 w-7 p-0 border-gray-300 text-gray-500 hover:bg-gray-100"
-                            >
-                              <X className="w-3 h-3" />
-                            </Button>
-                          </div>
-                        ))}
-                        {stream.clients.length === 0 && (
-                          <div className="text-center py-4 text-gray-500 text-sm">
-                            No clients connected
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <Label className="text-gray-700 font-medium text-sm">Available Clients</Label>
-                      <div className="flex flex-wrap gap-2 mt-2">
-                        {getUnassignedClients(stream.id).map((client) => (
-                          <Button
-                            key={client.id}
-                            size="sm"
-                            variant="outline"
-                            onClick={() => addClientToStream(stream.id, client.id)}
-                            className="border-blue-300 text-blue-700 hover:bg-blue-50"
-                          >
-                            <Plus className="w-3 h-3 mr-1" />
-                            {client.name}
-                          </Button>
-                        ))}
-                        {getUnassignedClients(stream.id).length === 0 && (
-                          <span className="text-gray-500 text-sm py-2">All clients are assigned</span>
-                        )}
-                      </div>
-                    </div>
-                    
-                    {/* Show Flask-specific stream information */}
-                    {wsStatus && wsStatus.currentVideo && (
-                      <div className="pt-2 border-t border-gray-200">
-                        <span className="text-xs text-gray-500">
-                          Current Video: {wsStatus.currentVideo}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
       )}
     </div>
   );
