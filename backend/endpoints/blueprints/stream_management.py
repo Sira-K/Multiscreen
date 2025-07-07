@@ -546,8 +546,9 @@ def start_group_complete():
                     
                     # Build filter complex
                     if UTILS_AVAILABLE:
+
                         filter_complex_str, output_mappings = build_ffmpeg_filter_chain(
-                            width, height, screen_count, orientation, srt_ip, srt_port, sei, group_id
+                            width, height, screen_count, orientation, srt_ip, sei
                         )
                     else:
                         filter_complex_str, output_mappings = build_simple_group_ffmpeg_filter_chain(
