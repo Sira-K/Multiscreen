@@ -23,6 +23,19 @@ interface Group {
   created_at_formatted: string;
 }
 
+interface Client {
+  client_id: string;
+  display_name?: string;
+  hostname?: string;
+  ip: string;
+  status: 'active' | 'inactive';
+  stream_id?: string | null;
+  group_id?: string | null;
+  group_name?: string | null;
+}
+
+
+
 interface Video {
   name: string;
   path: string;
@@ -32,7 +45,7 @@ interface Video {
 interface GroupCardProps {
   group: Group;
   videos: Video[];
-  clients: any[];
+  clients: Client[]; // Change from any[] to Client[]
   selectedVideo: string | undefined;
   operationInProgress: string | null;
   onVideoSelect: (groupId: string, videoName: string) => void;
@@ -54,6 +67,8 @@ const GroupCard: React.FC<GroupCardProps> = ({
   onDelete,
   onAssignClient,
 }) => {
+  console.log('🔍 GroupCard - clients data:', clients);
+  console.log('🔍 GroupCard - group:', group);
   const getStatusBadge = () => {
     const isOperating = operationInProgress === group.id;
     
@@ -139,14 +154,7 @@ const GroupCard: React.FC<GroupCardProps> = ({
           </div>
         )}
 
-        {process.env.NODE_ENV === 'development' && (
-          <div className="text-xs bg-gray-100 p-2 rounded mb-2">
-            <div>Debug Info:</div>
-            <div>Videos available: {videos.length}</div>
-            <div>Videos: {JSON.stringify(videos.map(v => v.name))}</div>
-            <div>Selected: {selectedVideo || 'none'}</div>
-          </div>
-        )}
+      
         {/* Video Selection */}
         {group.status === 'inactive' && (
           <div className="space-y-2">
@@ -192,32 +200,31 @@ const GroupCard: React.FC<GroupCardProps> = ({
         )}
 
         {/* Available Streams */}
-        {group.available_streams && group.available_streams.length > 0 && (
+        {group.status === 'active' && (
           <div className="space-y-2">
-            <div className="text-sm font-medium text-gray-700">Available Streams:</div>
-            <div className="flex flex-wrap gap-1">
-              {group.available_streams.map((streamId, index) => (
-                <Badge key={index} variant="outline" className="text-xs">
-                  {streamId.replace(`live/${group.id}/`, '')}
-                </Badge>
-              ))}
-            </div>
+            <div className="text-sm font-medium text-gray-700">Stream:</div>
+            <Badge variant="outline" className="text-xs">
+              Full Screen Video
+            </Badge>
           </div>
         )}
 
         {/* Client Management Section */}
-        {group.status === 'active' && (
           <div className="space-y-2">
-            <div className="text-sm font-medium text-gray-700">Connected Clients:</div>
+            <div className="text-sm font-medium text-gray-700">
+              Client Assignments: ({clients.filter(c => c.group_id === group.id).length})
+            </div>
             <div className="space-y-2">
               {/* Show clients already assigned to this group */}
               {clients
                 .filter(client => client.group_id === group.id)
                 .map(client => (
-                  <div key={client.client_id} className="flex items-center justify-between p-2 bg-gray-50 rounded border">
+                    <div key={`assigned-${client.client_id}`} className="flex items-center justify-between p-2 bg-gray-50 rounded border">
                     <div className="flex items-center gap-2">
                       <div className={`w-2 h-2 rounded-full ${client.status === 'active' ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                      <span className="text-sm font-medium">{client.client_id}</span>
+                      <span className="text-sm font-medium">
+                        {client.display_name || client.hostname || client.client_id}
+                      </span>
                       {client.stream_id && (
                         <Badge variant="outline" className="text-xs">
                           {client.stream_id.replace(`live/${group.id}/`, '')}
@@ -227,16 +234,34 @@ const GroupCard: React.FC<GroupCardProps> = ({
                     
                     <select
                       value={client.stream_id || ''}
-                      onChange={(e) => onAssignClient(client.client_id, e.target.value, group.id)}
+                      onChange={(e) => {
+                        console.log('🔧 Client assignment attempt:', {
+                          clientId: client.client_id,
+                          clientObject: client,
+                          streamId: e.target.value,
+                          groupId: group.id
+                        });
+                        onAssignClient(client.client_id, e.target.value, group.id);
+                      }}
                       className="text-xs p-1 border border-gray-300 rounded"
                       disabled={operationInProgress === `assign-${client.client_id}`}
                     >
-                      <option value="">Select stream...</option>
-                      {group.available_streams?.map(streamId => (
-                        <option key={streamId} value={streamId}>
-                          {streamId.replace(`live/${group.id}/`, '')}
-                        </option>
-                      ))}
+                      <option value="">Unassign</option>
+                      <option value={`live/${group.id}/test`}>Full Screen</option>
+                    </select>
+
+                    // In the unassigned clients section, replace the select:
+                    <select
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          onAssignClient(client.client_id, e.target.value, group.id);
+                        }
+                      }}
+                      className="text-xs p-1 border border-blue-300 rounded bg-white"
+                      defaultValue=""
+                    >
+                      <option value="">Assign to group...</option>
+                      <option value={`live/${group.id}/test`}>Full Screen</option>
                     </select>
                   </div>
                 ))
@@ -244,13 +269,14 @@ const GroupCard: React.FC<GroupCardProps> = ({
               
               {/* Show unassigned clients */}
               {clients
-                .filter(client => !client.group_id || client.group_id !== group.id)
+                .filter(client => (!client.group_id || client.group_id !== group.id) && client.status === 'active')
                 .slice(0, 3)
                 .map(client => (
-                  <div key={client.client_id} className="flex items-center justify-between p-2 bg-blue-50 rounded border border-blue-200">
-                    <div className="flex items-center gap-2">
+                      <div key={`unassigned-${client.client_id}`} className="flex items-center justify-between p-2 bg-blue-50 rounded border border-blue-200">                    <div className="flex items-center gap-2">
                       <div className={`w-2 h-2 rounded-full ${client.status === 'active' ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                      <span className="text-sm text-blue-700">{client.client_id}</span>
+                      <span className="text-sm text-blue-700">
+                        {client.display_name || client.hostname || client.client_id}
+                      </span>
                       <Badge variant="secondary" className="text-xs">Unassigned</Badge>
                     </div>
                     
@@ -264,18 +290,31 @@ const GroupCard: React.FC<GroupCardProps> = ({
                       defaultValue=""
                     >
                       <option value="">Assign to stream...</option>
-                      {group.available_streams?.map(streamId => (
-                        <option key={streamId} value={streamId}>
-                          {streamId.replace(`live/${group.id}/`, '')}
-                        </option>
-                      ))}
+                      {/* Use the same stream options as above */}
+                      {group.available_streams && group.available_streams.length > 0 ? (
+                        group.available_streams.map(streamId => (
+                          <option key={streamId} value={streamId}>
+                            {streamId.replace(`live/${group.id}/`, '')}
+                          </option>
+                        ))
+                      ) : (
+                        // Fallback streams for inactive groups
+                        Array.from({length: group.screen_count}, (_, i) => (
+                          <option key={i} value={`live/${group.id}/test${i}`}>
+                            Section {i + 1}
+                          </option>
+                        )).concat([
+                          <option key="full" value={`live/${group.id}/test`}>
+                            Full Video
+                          </option>
+                        ])
+                      )}
                     </select>
                   </div>
                 ))
               }
             </div>
           </div>
-        )}
 
         {/* Action Buttons */}
         <div className="flex gap-2">

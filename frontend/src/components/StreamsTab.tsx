@@ -55,7 +55,7 @@ const StreamsTab = () => {
   // Form state for creating new groups
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupDescription, setNewGroupDescription] = useState('');
-  const [newGroupScreenCount, setNewGroupScreenCount] = useState(2);
+  const [newGroupScreenCount, setNewGroupScreenCount] = useState(1);
   const [newGroupOrientation, setNewGroupOrientation] = useState('horizontal');
 
   // Load initial data
@@ -107,6 +107,7 @@ const StreamsTab = () => {
     }
   };
 
+  
   const handleVideoSelect = (groupId: string, videoName: string) => {
     setSelectedVideos(prev => ({
       ...prev,
@@ -494,7 +495,7 @@ const StreamsTab = () => {
           ))
         )}
       </div>
-
+        
       {/* Videos Info */}
       {videos.length > 0 && (
         <Card>

@@ -7,59 +7,25 @@ import { ArrowUp, ArrowDown, Monitor, Wifi, WifiOff, Search } from "lucide-react
 import { useToast } from "@/hooks/use-toast";
 import { clientApi } from '@/lib/api';
 
-const mockClients = [
-  {
-    id: "client_001",
-    name: "Conference Room A - Screen 1", 
-    ip: "192.168.1.101",
-    status: 'active' as const,
-    connectedStream: "stream_1",
-    lastSeen: "30 seconds ago",
-    order: 1
-  },
-  {
-    id: "client_002",
-    name: "Conference Room A - Screen 2",
-    ip: "192.168.1.102", 
-    status: 'active' as const,
-    connectedStream: "stream_2",
-    lastSeen: "45 seconds ago",
-    order: 2
-  },
-  {
-    id: "client_003",
-    name: "Conference Room B - Screen 1",
-    ip: "192.168.1.201",
-    status: 'inactive' as const,
-    connectedStream: "stream_1", 
-    lastSeen: "2 minutes ago",
-    order: 3
-  },
-  {
-    id: "client_004", 
-    name: "Lobby Display",
-    ip: "192.168.1.301",
-    status: 'active' as const,
-    connectedStream: "stream_3",
-    lastSeen: "10 seconds ago", 
-    order: 4
-  }
-];
 
 interface Client {
-  id: string;
-  name: string;
+  client_id: string;  // Changed from 'id'
+  display_name?: string;  // Optional display name
+  hostname?: string;  // Changed from 'name' 
   ip: string;
   status: 'active' | 'inactive';
-  connectedStream: string | null;
-  lastSeen: string;
-  order: number;
+  stream_id?: string | null;  // Changed from 'connectedStream'
+  last_seen_formatted?: string;  // Changed from 'lastSeen'
+  group_id?: string | null;
+  group_name?: string | null;
+  order?: number;  // Make optional since API might not provide this
 }
 
 interface ClientsTabProps {
   clients: Client[];
   setClients: React.Dispatch<React.SetStateAction<Client[]>>;
 }
+
 
 const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
   const { toast } = useToast();
@@ -68,7 +34,7 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
 
 
   const moveClient = (clientId: string, direction: 'up' | 'down') => {
-    const clientIndex = clients.findIndex(c => c.id === clientId);
+    const clientIndex = clients.findIndex(c => c.client_id === clientId);
     if (
       (direction === 'up' && clientIndex === 0) ||
       (direction === 'down' && clientIndex === clients.length - 1)
@@ -90,34 +56,36 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
     setClients(newClients);
     toast({
       title: "Client Reordered",
-      description: `${newClients[targetIndex].name} moved ${direction}`
+      description: `${newClients[targetIndex].display_name || newClients[targetIndex].hostname} moved ${direction}`
     });
   };
 
   const filteredClients = clients.filter(client =>
-    client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (client.display_name || client.hostname || client.client_id).toLowerCase().includes(searchTerm.toLowerCase()) ||
     client.ip.includes(searchTerm)
   );
   
   useEffect(() => {
     const fetchClients = async () => {
       try {
-        // Use mock data for testing
-        if (process.env.NODE_ENV === 'development') {
-          setClients(mockClients);
-          return;
-        }
-        
         const response = await clientApi.getClients();
         setClients(response.clients || []);
       } catch (error) {
         console.error('Error fetching clients:', error);
-        // Fallback to mock data on error
-        setClients(mockClients);
+        // Remove this fallback to mock data:
+        // setClients(mockClients);
+        setClients([]); // Show empty array instead of mock data
       }
     };
     
     fetchClients();
+
+    // Auto-refresh every 5 seconds to show new clients
+    const interval = setInterval(fetchClients, 5000);
+    
+    // Cleanup interval on component unmount
+    return () => clearInterval(interval);
+    
   }, []);
 
   return (
@@ -161,7 +129,7 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
           <div className="space-y-3">
             {filteredClients.map((client, index) => (
               <div
-                key={client.id}
+                key={client.client_id}
                 className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors"
               >
                 <div className="flex items-center gap-4">
@@ -169,7 +137,7 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => moveClient(client.id, 'up')}
+                      onClick={() => moveClient(client.client_id, 'up')}
                       disabled={index === 0}
                       className="h-6 w-8 p-0 border-gray-300 text-gray-500 disabled:opacity-30 hover:bg-gray-200"
                     >
@@ -178,7 +146,7 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => moveClient(client.id, 'down')}
+                      onClick={() => moveClient(client.client_id, 'down')}
                       disabled={index === filteredClients.length - 1}
                       className="h-6 w-8 p-0 border-gray-300 text-gray-500 disabled:opacity-30 hover:bg-gray-200"
                     >
@@ -192,7 +160,9 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <h3 className="font-medium text-gray-800">{client.name}</h3>
+                        <h3 className="font-medium text-gray-800">
+                          {client.display_name || client.hostname || client.client_id}
+                        </h3>
                         <Badge 
                           variant={client.status === 'active' ? 'default' : 'secondary'}
                           className={`flex items-center gap-1 ${client.status === 'active' 
@@ -205,11 +175,16 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
                         </Badge>
                       </div>
                       <div className="text-sm text-gray-600">
-                        IP: {client.ip} • Last seen: {client.lastSeen}
+                        IP: {client.ip} • Last seen: {client.last_seen_formatted || 'Unknown'}
                       </div>
-                      {client.connectedStream && (
+                      {client.stream_id && (
                         <div className="text-sm text-blue-600 mt-1 font-medium">
-                          Connected to: {client.connectedStream}
+                          Connected to: {client.stream_id}
+                        </div>
+                      )}
+                      {client.group_name && (
+                        <div className="text-sm text-purple-600 mt-1 font-medium">
+                          Group: {client.group_name}
                         </div>
                       )}
                     </div>
@@ -219,7 +194,7 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
                 <div className="flex items-center gap-3">
                   <div className="text-right">
                     <div className="text-sm text-gray-500 font-medium">Order</div>
-                    <div className="text-lg font-semibold text-gray-800">#{client.order}</div>
+                    <div className="text-lg font-semibold text-gray-800">#{client.order || index + 1}</div>
                   </div>
                   <div className={`w-3 h-3 rounded-full ${
                     client.status === 'active' ? 'bg-green-500' : 'bg-red-500'
@@ -239,6 +214,5 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
       </Card>
     </div>
   );
-};
-
+}
 export default ClientsTab;
