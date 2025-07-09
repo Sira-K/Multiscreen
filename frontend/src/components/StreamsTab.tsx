@@ -9,10 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, X, Play, Square, Users, Monitor, AlertCircle, CheckCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { groupApi, videoApi } from '@/lib/api';
-import { clientApi } from '@/lib/api';
-
-
+import { groupApi, videoApi, clientApi } from '@/lib/api';
 
 interface Group {
   id: string;
@@ -37,6 +34,16 @@ interface Video {
   size_mb: number;
 }
 
+interface Client {
+  client_id: string;
+  display_name?: string;
+  hostname?: string;
+  ip: string;
+  status: 'active' | 'inactive';
+  stream_id?: string | null;
+  group_id?: string | null;
+  group_name?: string | null;
+}
 
 const StreamsTab = () => {
   console.log('🚀 StreamsTab component rendered');
@@ -49,7 +56,7 @@ const StreamsTab = () => {
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [operationInProgress, setOperationInProgress] = useState<string | null>(null);
-  const [clients, setClients] = useState<any[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
   const [selectedVideos, setSelectedVideos] = useState<Record<string, string>>({});
   
   // Form state for creating new groups
@@ -78,25 +85,28 @@ const StreamsTab = () => {
       ]);
       
       console.log('✅ Groups response:', groupsResponse);
-      console.log('✅ Videos response:', videosResponse); // DEBUG: Check this
+      console.log('✅ Videos response:', videosResponse);
       console.log('✅ Clients response:', clientsResponse);
       
       setGroups(groupsResponse.groups || []);
-      setVideos(videosResponse.videos || []); // DEBUG: Check if videos is empty
-      setClients(clientsResponse.clients || []);
+      setVideos(videosResponse.videos || []);
+      
+      // Map the client data to match your interface
+      const mappedClients = (clientsResponse.clients || []).map(client => ({
+        ...client,
+        client_id: client.id || client.client_id, // Map id to client_id
+      }));
+      
+      setClients(mappedClients);
       
       console.log('📊 Final state:', {
         groupsCount: (groupsResponse.groups || []).length,
-        videosCount: (videosResponse.videos || []).length, // DEBUG: Check this count
-        clientsCount: (clientsResponse.clients || []).length
+        videosCount: (videosResponse.videos || []).length,
+        clientsCount: mappedClients.length
       });
       
     } catch (error) {
       console.error('❌ Error loading initial data:', error);
-      // Add more specific error logging
-      if (error.message.includes('videos')) {
-        console.error('🎥 Specific video loading error:', error);
-      }
       toast({
         title: "Loading Error",
         description: "Failed to load data. Check console for details.",
@@ -107,7 +117,6 @@ const StreamsTab = () => {
     }
   };
 
-  
   const handleVideoSelect = (groupId: string, videoName: string) => {
     setSelectedVideos(prev => ({
       ...prev,
@@ -128,28 +137,30 @@ const StreamsTab = () => {
     try {
       setOperationInProgress('create');
       
-      const response = await groupApi.createGroup({
+      const groupData = {
         name: newGroupName.trim(),
         description: newGroupDescription.trim(),
         screen_count: newGroupScreenCount,
         orientation: newGroupOrientation
-      });
+      };
 
+      await groupApi.createGroup(groupData);
+      
       toast({
         title: "Group Created",
-        description: `Successfully created group "${newGroupName}"`
+        description: `Successfully created "${newGroupName}"`
       });
 
       // Reset form
       setNewGroupName('');
       setNewGroupDescription('');
-      setNewGroupScreenCount(2);
+      setNewGroupScreenCount(1);
       setNewGroupOrientation('horizontal');
       setShowCreateForm(false);
 
-      // Reload groups to get updated data
+      // Reload groups
       await loadInitialData();
-
+      
     } catch (error: any) {
       console.error('Error creating group:', error);
       toast({
@@ -163,18 +174,30 @@ const StreamsTab = () => {
   };
 
   const startGroup = async (groupId: string, groupName: string) => {
+    const selectedVideo = selectedVideos[groupId];
+    
+    if (!selectedVideo) {
+      toast({
+        title: "Video Required",
+        description: "Please select a video before starting the group",
+        variant: "destructive"
+      });
+      return;
+    }
+
     try {
       setOperationInProgress(groupId);
       
-      console.log(`🎬 Starting group ${groupId} with video:`, selectedVideos[groupId]);
+      console.log(`▶️ Starting group ${groupId} with video ${selectedVideo}`);
       
-      const response = await groupApi.startGroup(groupId, selectedVideos[groupId]);
+      const response = await groupApi.startGroup(groupId, selectedVideo);
       
       toast({
         title: "Group Started",
-        description: `Successfully started "${groupName}" with ${selectedVideos[groupId] || 'default video'}`
+        description: `Successfully started "${groupName}" with ${selectedVideo}`
       });
 
+      // Reload data to get updated status
       await loadInitialData();
       
     } catch (error: any) {
@@ -187,7 +210,7 @@ const StreamsTab = () => {
     } finally {
       setOperationInProgress(null);
     }
-};
+  };
 
   const stopGroup = async (groupId: string, groupName: string) => {
     try {
@@ -250,7 +273,12 @@ const StreamsTab = () => {
   const loadClients = async () => {
     try {
       const response = await clientApi.getClients();
-      setClients(response.clients || []);
+      // Map the client data to match your interface
+      const mappedClients = (response.clients || []).map(client => ({
+        ...client,
+        client_id: client.id || client.client_id, // Map id to client_id
+      }));
+      setClients(mappedClients);
     } catch (error) {
       console.error('Error loading clients:', error);
     }
@@ -261,7 +289,15 @@ const StreamsTab = () => {
     try {
       setOperationInProgress(`assign-${clientId}`);
       
+      console.log('🔄 Assigning client to group first, then stream:', { clientId, streamId, groupId });
+      
+      // Step 1: Assign client to group first
+      await clientApi.assignToGroup(clientId, groupId);
+      console.log('✅ Client assigned to group');
+      
+      // Step 2: Then assign the stream
       await clientApi.assignStream(clientId, streamId);
+      console.log('✅ Client assigned to stream');
       
       // Refresh clients to show updated assignments
       await loadClients();
@@ -330,7 +366,6 @@ const StreamsTab = () => {
 
   const getLayoutDescription = (group: Group) => {
     if (group.orientation === 'grid') {
-      // Assume 2x2 for now, could be enhanced to store grid dimensions
       const rows = Math.sqrt(group.screen_count);
       const cols = Math.sqrt(group.screen_count);
       return `${rows}×${cols} Grid (${group.screen_count} screens)`;
@@ -409,47 +444,50 @@ const StreamsTab = () => {
                 <Label htmlFor="screenCount" className="text-right">
                   Screens
                 </Label>
-                <Input
-                  id="screenCount"
-                  type="number"
-                  min="1"
-                  max="16"
-                  value={newGroupScreenCount}
-                  onChange={(e) => setNewGroupScreenCount(parseInt(e.target.value) || 2)}
-                  className="col-span-3"
+                <Select 
+                  value={newGroupScreenCount.toString()} 
+                  onValueChange={(value) => setNewGroupScreenCount(parseInt(value))}
                   disabled={operationInProgress === 'create'}
-                />
+                >
+                  <SelectTrigger className="col-span-3">
+                    <SelectValue placeholder="Select screen count" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[1, 2, 3, 4, 6, 8, 9].map(count => (
+                      <SelectItem key={count} value={count.toString()}>
+                        {count} Screen{count !== 1 ? 's' : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="orientation" className="text-right">
                   Layout
                 </Label>
-                <Select value={newGroupOrientation} onValueChange={setNewGroupOrientation} disabled={operationInProgress === 'create'}>
+                <Select 
+                  value={newGroupOrientation} 
+                  onValueChange={setNewGroupOrientation}
+                  disabled={operationInProgress === 'create'}
+                >
                   <SelectTrigger className="col-span-3">
                     <SelectValue placeholder="Select layout" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="horizontal">Horizontal</SelectItem>
-                    <SelectItem value="vertical">Vertical</SelectItem>
-                    <SelectItem value="grid">Grid</SelectItem>
+                    <SelectItem value="horizontal">Horizontal Split</SelectItem>
+                    <SelectItem value="vertical">Vertical Split</SelectItem>
+                    <SelectItem value="grid">Grid Layout</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
             <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setShowCreateForm(false)}
-                disabled={operationInProgress === 'create'}
-              >
+              <Button variant="outline" onClick={() => setShowCreateForm(false)}>
                 Cancel
               </Button>
-              <Button
-                type="button"
+              <Button 
                 onClick={createGroup}
-                disabled={!newGroupName.trim() || operationInProgress === 'create'}
-                className="bg-green-600 hover:bg-green-700"
+                disabled={operationInProgress === 'create' || !newGroupName.trim()}
               >
                 {operationInProgress === 'create' ? (
                   <>
