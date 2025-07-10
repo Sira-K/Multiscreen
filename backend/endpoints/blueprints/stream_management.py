@@ -159,7 +159,7 @@ def build_simple_group_ffmpeg_filter_chain(
                 "-pes_payload_size", "0",
                 "-bf", "0",
                 "-g", "1",
-                "-f", "mpegts", f"srt://{srt_ip}:{srt_port}?streamid=#!::r=live/{group_id}/test{i},m=publish"
+                "-f", "mpegts", f"srt://{srt_ip}:10080?streamid=#!::r=live/{group_id}/test{i},m=publish"
             ])
     elif orientation.lower() == "vertical":
         section_height = video_height // screen_count
@@ -180,7 +180,7 @@ def build_simple_group_ffmpeg_filter_chain(
                 "-pes_payload_size", "0",
                 "-bf", "0",
                 "-g", "1",
-                "-f", "mpegts", f"srt://{srt_ip}:{srt_port}?streamid=#!::r=live/{group_id}/test{i},m=publish"
+                "-f", "mpegts", f"srt://{srt_ip}:10080?streamid=#!::r=live/{group_id}/test{i},m=publish"
             ])
     
     # Always add the full video output
@@ -191,7 +191,7 @@ def build_simple_group_ffmpeg_filter_chain(
         "-pes_payload_size", "0",
         "-bf", "0",
         "-g", "1",
-        "-f", "mpegts", f"srt://{srt_ip}:{srt_port}?streamid=#!::r=live/{group_id}/test,m=publish"
+        "-f", "mpegts", f"srt://{srt_ip}:10080?streamid=#!::r=live/{group_id}/test,m=publish"
     ])
     
     # Remove the last semicolon from the filter complex
@@ -522,7 +522,7 @@ def start_group_complete():
                             width, height, framerate = result
                     
                     # Get SRT IP
-                    srt_ip = getattr(state, 'srt_ip', '127.0.0.1')
+                    srt_ip = getattr(state, 'srt_ip', '128.205.39.64')
                     sei = "681d5c8f-80cd-4847-930a-99b9484b4a32+000000"
                     
                     # Find FFmpeg
