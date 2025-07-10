@@ -7,18 +7,17 @@ import { ArrowUp, ArrowDown, Monitor, Wifi, WifiOff, Search } from "lucide-react
 import { useToast } from "@/hooks/use-toast";
 import { clientApi } from '@/lib/api';
 
-
 interface Client {
-  client_id: string;  // Changed from 'id'
-  display_name?: string;  // Optional display name
-  hostname?: string;  // Changed from 'name' 
+  client_id: string;
+  display_name?: string;
+  hostname?: string;
   ip: string;
   status: 'active' | 'inactive';
-  stream_id?: string | null;  // Changed from 'connectedStream'
-  last_seen_formatted?: string;  // Changed from 'lastSeen'
+  stream_id?: string | null;
+  last_seen_formatted?: string;
   group_id?: string | null;
   group_name?: string | null;
-  order?: number;  // Make optional since API might not provide this
+  order?: number;
 }
 
 interface ClientsTabProps {
@@ -26,12 +25,9 @@ interface ClientsTabProps {
   setClients: React.Dispatch<React.SetStateAction<Client[]>>;
 }
 
-
 const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
-
-
 
   const moveClient = (clientId: string, direction: 'up' | 'down') => {
     const clientIndex = clients.findIndex(c => c.client_id === clientId);
@@ -72,9 +68,7 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
         setClients(response.clients || []);
       } catch (error) {
         console.error('Error fetching clients:', error);
-        // Remove this fallback to mock data:
-        // setClients(mockClients);
-        setClients([]); // Show empty array instead of mock data
+        setClients([]);
       }
     };
     
@@ -127,92 +121,132 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {filteredClients.map((client, index) => (
-              <div
-                key={client.client_id}
-                className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="flex flex-col gap-1">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => moveClient(client.client_id, 'up')}
-                      disabled={index === 0}
-                      className="h-6 w-8 p-0 border-gray-300 text-gray-500 disabled:opacity-30 hover:bg-gray-200"
-                    >
-                      <ArrowUp className="w-3 h-3" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => moveClient(client.client_id, 'down')}
-                      disabled={index === filteredClients.length - 1}
-                      className="h-6 w-8 p-0 border-gray-300 text-gray-500 disabled:opacity-30 hover:bg-gray-200"
-                    >
-                      <ArrowDown className="w-3 h-3" />
-                    </Button>
-                  </div>
-                  
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center justify-center w-10 h-10 bg-gray-200 rounded-lg">
-                      <Monitor className="w-5 h-5 text-gray-600" />
-                    </div>
-                    <div>
+            {filteredClients.length === 0 ? (
+              <div className="text-center py-8">
+                <Monitor className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                <h3 className="text-lg font-medium text-gray-700 mb-2">No Clients Found</h3>
+                <p className="text-gray-500">
+                  {searchTerm ? 'No clients match your search criteria.' : 'No clients are currently connected.'}
+                </p>
+              </div>
+            ) : (
+              filteredClients.map((client, index) => (
+                <div
+                  key={client.client_id || `client-${index}`}
+                  className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className={`w-3 h-3 rounded-full ${
+                      client.status === 'active' ? 'bg-green-500' : 'bg-red-500'
+                    }`} />
+                    
+                    <div className="flex-1">
                       <div className="flex items-center gap-2">
-                        <h3 className="font-medium text-gray-800">
+                        <h3 className="font-medium text-gray-900">
                           {client.display_name || client.hostname || client.client_id}
                         </h3>
-                        <Badge 
-                          variant={client.status === 'active' ? 'default' : 'secondary'}
-                          className={`flex items-center gap-1 ${client.status === 'active' 
-                            ? 'bg-green-100 text-green-800 border-green-200' 
-                            : 'bg-red-100 text-red-800 border-red-200'
-                          }`}
-                        >
-                          {client.status === 'active' ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-                          {client.status}
-                        </Badge>
+                        {client.status === 'active' ? (
+                          <Wifi className="w-4 h-4 text-green-500" />
+                        ) : (
+                          <WifiOff className="w-4 h-4 text-red-500" />
+                        )}
                       </div>
-                      <div className="text-sm text-gray-600">
-                        IP: {client.ip} • Last seen: {client.last_seen_formatted || 'Unknown'}
+                      
+                      <div className="flex items-center gap-4 text-sm text-gray-600 mt-1">
+                        <span>IP: {client.ip}</span>
+                        {client.group_name && (
+                          <Badge variant="secondary" className="text-xs">
+                            {client.group_name}
+                          </Badge>
+                        )}
+                        {client.stream_id && (
+                          <Badge variant="outline" className="text-xs">
+                            {client.stream_id}
+                          </Badge>
+                        )}
+                        {client.last_seen_formatted && (
+                          <span className="text-xs">
+                            Last seen: {client.last_seen_formatted}
+                          </span>
+                        )}
                       </div>
-                      {client.stream_id && (
-                        <div className="text-sm text-blue-600 mt-1 font-medium">
-                          Connected to: {client.stream_id}
-                        </div>
-                      )}
-                      {client.group_name && (
-                        <div className="text-sm text-purple-600 mt-1 font-medium">
-                          Group: {client.group_name}
-                        </div>
-                      )}
                     </div>
                   </div>
-                </div>
 
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <div className="text-sm text-gray-500 font-medium">Order</div>
-                    <div className="text-lg font-semibold text-gray-800">#{client.order || index + 1}</div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => moveClient(client.client_id, 'up')}
+                      disabled={index === 0}
+                      className="p-2"
+                    >
+                      <ArrowUp className="w-4 h-4" />
+                    </Button>
+                    
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => moveClient(client.client_id, 'down')}
+                      disabled={index === filteredClients.length - 1}
+                      className="p-2"
+                    >
+                      <ArrowDown className="w-4 h-4" />
+                    </Button>
                   </div>
-                  <div className={`w-3 h-3 rounded-full ${
-                    client.status === 'active' ? 'bg-green-500' : 'bg-red-500'
-                  }`}></div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
-
-          {filteredClients.length === 0 && (
-            <div className="text-center py-8 text-gray-500">
-              <Monitor className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p>No clients found matching your search criteria.</p>
-            </div>
-          )}
         </CardContent>
       </Card>
+
+      {/* Client Statistics */}
+      {clients.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Card className="bg-white border border-gray-200">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Total Clients</p>
+                  <p className="text-2xl font-bold text-gray-900">{clients.length}</p>
+                </div>
+                <Monitor className="w-8 h-8 text-blue-500" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white border border-gray-200">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Active Clients</p>
+                  <p className="text-2xl font-bold text-green-600">
+                    {clients.filter(c => c.status === 'active').length}
+                  </p>
+                </div>
+                <Wifi className="w-8 h-8 text-green-500" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white border border-gray-200">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Inactive Clients</p>
+                  <p className="text-2xl font-bold text-red-600">
+                    {clients.filter(c => c.status === 'inactive').length}
+                  </p>
+                </div>
+                <WifiOff className="w-8 h-8 text-red-500" />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
-}
+};
+
 export default ClientsTab;

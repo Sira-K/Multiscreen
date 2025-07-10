@@ -34,8 +34,6 @@ interface Client {
   group_name?: string | null;
 }
 
-
-
 interface Video {
   name: string;
   path: string;
@@ -45,7 +43,7 @@ interface Video {
 interface GroupCardProps {
   group: Group;
   videos: Video[];
-  clients: Client[]; // Change from any[] to Client[]
+  clients: Client[];
   selectedVideo: string | undefined;
   operationInProgress: string | null;
   onVideoSelect: (groupId: string, videoName: string) => void;
@@ -69,6 +67,7 @@ const GroupCard: React.FC<GroupCardProps> = ({
 }) => {
   console.log('🔍 GroupCard - clients data:', clients);
   console.log('🔍 GroupCard - group:', group);
+
   const getStatusBadge = () => {
     const isOperating = operationInProgress === group.id;
     
@@ -122,6 +121,12 @@ const GroupCard: React.FC<GroupCardProps> = ({
     return `${group.orientation} (${group.screen_count} screens)`;
   };
 
+  // Filter clients for this group
+  const assignedClients = clients.filter(client => client.group_id === group.id);
+  const unassignedClients = clients.filter(client => 
+    (!client.group_id || client.group_id !== group.id) && client.status === 'active'
+  ).slice(0, 3);
+
   return (
     <Card className="hover:shadow-md transition-shadow">
       <CardHeader>
@@ -154,7 +159,6 @@ const GroupCard: React.FC<GroupCardProps> = ({
           </div>
         )}
 
-      
         {/* Video Selection */}
         {group.status === 'inactive' && (
           <div className="space-y-2">
@@ -210,111 +214,109 @@ const GroupCard: React.FC<GroupCardProps> = ({
         )}
 
         {/* Client Management Section */}
-          <div className="space-y-2">
-            <div className="text-sm font-medium text-gray-700">
-              Client Assignments: ({clients.filter(c => c.group_id === group.id).length})
-            </div>
-            <div className="space-y-2">
-              {/* Show clients already assigned to this group */}
-              {clients
-                .filter(client => client.group_id === group.id)
-                .map(client => (
-                    <div key={`assigned-${client.client_id}`} className="flex items-center justify-between p-2 bg-gray-50 rounded border">
-                    <div className="flex items-center gap-2">
-                      <div className={`w-2 h-2 rounded-full ${client.status === 'active' ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                      <span className="text-sm font-medium">
-                        {client.display_name || client.hostname || client.client_id}
-                      </span>
-                      {client.stream_id && (
-                        <Badge variant="outline" className="text-xs">
-                          {client.stream_id.replace(`live/${group.id}/`, '')}
-                        </Badge>
-                      )}
-                    </div>
-                    
-                    <select
-                      value={client.stream_id || ''}
-                      onChange={(e) => {
-                        console.log('🔧 Client assignment attempt:', {
-                          clientId: client.client_id,
-                          clientObject: client,
-                          streamId: e.target.value,
-                          groupId: group.id
-                        });
-                        onAssignClient(client.client_id, e.target.value, group.id);
-                      }}
-                      className="text-xs p-1 border border-gray-300 rounded"
-                      disabled={operationInProgress === `assign-${client.client_id}`}
-                    >
-                      <option value="">Unassign</option>
-                      <option value={`live/${group.id}/test`}>Full Screen</option>
-                    </select>
-
-                    // In the unassigned clients section, replace the select:
-                    <select
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          onAssignClient(client.client_id, e.target.value, group.id);
-                        }
-                      }}
-                      className="text-xs p-1 border border-blue-300 rounded bg-white"
-                      defaultValue=""
-                    >
-                      <option value="">Assign to group...</option>
-                      <option value={`live/${group.id}/test`}>Full Screen</option>
-                    </select>
-                  </div>
-                ))
-              }
-              
-              {/* Show unassigned clients */}
-              {clients
-                .filter(client => (!client.group_id || client.group_id !== group.id) && client.status === 'active')
-                .slice(0, 3)
-                .map(client => (
-                      <div key={`unassigned-${client.client_id}`} className="flex items-center justify-between p-2 bg-blue-50 rounded border border-blue-200">                    <div className="flex items-center gap-2">
-                      <div className={`w-2 h-2 rounded-full ${client.status === 'active' ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                      <span className="text-sm text-blue-700">
-                        {client.display_name || client.hostname || client.client_id}
-                      </span>
-                      <Badge variant="secondary" className="text-xs">Unassigned</Badge>
-                    </div>
-                    
-                    <select
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          onAssignClient(client.client_id, e.target.value, group.id);
-                        }
-                      }}
-                      className="text-xs p-1 border border-blue-300 rounded bg-white"
-                      defaultValue=""
-                    >
-                      <option value="">Assign to stream...</option>
-                      {/* Use the same stream options as above */}
-                      {group.available_streams && group.available_streams.length > 0 ? (
-                        group.available_streams.map(streamId => (
-                          <option key={streamId} value={streamId}>
-                            {streamId.replace(`live/${group.id}/`, '')}
-                          </option>
-                        ))
-                      ) : (
-                        // Fallback streams for inactive groups
-                        Array.from({length: group.screen_count}, (_, i) => (
-                          <option key={i} value={`live/${group.id}/test${i}`}>
-                            Section {i + 1}
-                          </option>
-                        )).concat([
-                          <option key="full" value={`live/${group.id}/test`}>
-                            Full Video
-                          </option>
-                        ])
-                      )}
-                    </select>
-                  </div>
-                ))
-              }
-            </div>
+        <div className="space-y-2">
+          <div className="text-sm font-medium text-gray-700">
+            Client Assignments: ({assignedClients.length})
           </div>
+          <div className="space-y-2">
+            {/* Show clients already assigned to this group */}
+            {assignedClients.map(client => (
+              <div key={`assigned-${client.client_id}`} className="flex items-center justify-between p-2 bg-gray-50 rounded border">
+                <div className="flex items-center gap-2">
+                  <div className={`w-2 h-2 rounded-full ${client.status === 'active' ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                  <span className="text-sm font-medium">
+                    {client.display_name || client.hostname || client.client_id}
+                  </span>
+                  {client.stream_id && (
+                    <Badge variant="outline" className="text-xs">
+                      {client.stream_id.replace(`live/${group.id}/`, '')}
+                    </Badge>
+                  )}
+                </div>
+                
+                <select
+                  value={client.stream_id || ''}
+                  onChange={(e) => {
+                    console.log('🔧 Debug assigned client dropdown change:', {
+                      clientObject: client,
+                      clientId: client?.client_id,
+                      streamValue: e.target.value
+                    });
+                    
+                    if (client?.client_id) {
+                      onAssignClient(client.client_id, e.target.value, group.id);
+                    } else {
+                      console.error('❌ Missing client_id:', client);
+                    }
+                  }}
+                  className="text-xs p-1 border border-gray-300 rounded"
+                  disabled={operationInProgress === `assign-${client.client_id}`}
+                >
+                  <option value="">Unassign</option>
+                  <option value={`live/${group.id}/test`}>Full Screen</option>
+                  {/* Add more stream options if available */}
+                  {group.available_streams && group.available_streams.map(streamId => (
+                    <option key={streamId} value={streamId}>
+                      {streamId.replace(`live/${group.id}/`, '')}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+              
+            {/* Show unassigned clients */}
+            {unassignedClients.map(client => (
+              <div key={`unassigned-${client.client_id}`} className="flex items-center justify-between p-2 bg-blue-50 rounded border border-blue-200">
+                <div className="flex items-center gap-2">
+                  <div className={`w-2 h-2 rounded-full ${client.status === 'active' ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                  <span className="text-sm text-blue-700">
+                    {client.display_name || client.hostname || client.client_id}
+                  </span>
+                  <Badge variant="secondary" className="text-xs">Unassigned</Badge>
+                </div>
+                
+                <select
+                  onChange={(e) => {
+                    console.log('🔧 Debug unassigned dropdown change:', {
+                      clientObject: client,
+                      clientId: client?.client_id,
+                      streamValue: e.target.value
+                    });
+                    
+                    if (e.target.value && client?.client_id) {
+                      onAssignClient(client.client_id, e.target.value, group.id);
+                    } else {
+                      console.error('❌ Missing client_id:', client);
+                    }
+                  }}
+                  className="text-xs p-1 border border-blue-300 rounded bg-white"
+                  defaultValue=""
+                >
+                  <option value="">Assign to stream...</option>
+                  {/* Use the same stream options as above */}
+                  {group.available_streams && group.available_streams.length > 0 ? (
+                    group.available_streams.map(streamId => (
+                      <option key={streamId} value={streamId}>
+                        {streamId.replace(`live/${group.id}/`, '')}
+                      </option>
+                    ))
+                  ) : (
+                    // Fallback streams for inactive groups
+                    Array.from({length: group.screen_count}, (_, i) => (
+                      <option key={i} value={`live/${group.id}/test${i}`}>
+                        Section {i + 1}
+                      </option>
+                    )).concat([
+                      <option key="full" value={`live/${group.id}/test`}>
+                        Full Video
+                      </option>
+                    ])
+                  )}
+                </select>
+              </div>
+            ))}
+          </div>
+        </div>
 
         {/* Action Buttons */}
         <div className="flex gap-2">
