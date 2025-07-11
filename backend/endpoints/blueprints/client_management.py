@@ -311,6 +311,76 @@ def get_clients():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+@client_bp.route("/assign_client_to_group", methods=["POST"])
+def assign_client_to_group():
+    """Assign a client to a specific group"""
+    try:
+        state = get_state()
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+            
+        client_id = data.get("client_id")
+        group_id = data.get("group_id")
+        
+        logger.info(f"Assigning client {client_id} to group {group_id}")
+        
+        if not client_id:
+            return jsonify({"error": "Missing client_id"}), 400
+            
+        # Initialize groups and clients if needed
+        if not hasattr(state, 'groups'):
+            state.groups = {}
+        if not hasattr(state, 'clients'):
+            state.clients = {}
+            
+        # Validate group exists (if group_id is provided)
+        if group_id and group_id not in state.groups:
+            return jsonify({"error": "Group not found"}), 404
+            
+        # Validate client exists
+        if client_id not in state.clients:
+            return jsonify({"error": "Client not found"}), 404
+        
+        with state.clients_lock if hasattr(state, 'clients_lock') else threading.RLock():
+            with state.groups_lock if hasattr(state, 'groups_lock') else threading.RLock():
+                client = state.clients[client_id]
+                old_group_id = client.get("group_id")
+                
+                # Remove from old group
+                if old_group_id and old_group_id in state.groups:
+                    if client_id in state.groups[old_group_id].get("clients", {}):
+                        del state.groups[old_group_id]["clients"][client_id]
+                        logger.info(f"Removed client {client_id} from old group {old_group_id}")
+                
+                # Add to new group
+                if group_id:
+                    if "clients" not in state.groups[group_id]:
+                        state.groups[group_id]["clients"] = {}
+                    state.groups[group_id]["clients"][client_id] = {
+                        "assigned_at": time.time(),
+                        "stream_id": None
+                    }
+                    client["group_id"] = group_id
+                    logger.info(f"Assigned client {client_id} to group {group_id}")
+                else:
+                    client["group_id"] = None
+                    client["stream_id"] = None
+                    logger.info(f"Removed client {client_id} from all groups")
+        
+        message = f"Client {client_id} assigned to group {group_id}" if group_id else f"Client {client_id} removed from all groups"
+        
+        return jsonify({
+            "message": message,
+            "client": state.clients[client_id]
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error assigning client to group: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
 @client_bp.route("/assign_stream", methods=["POST"])
 def assign_stream():
     """Assign a specific stream to a client - Updated with group support"""
@@ -477,7 +547,6 @@ def format_time_ago(seconds_ago: int) -> str:
     else:
         hours = seconds_ago // 3600
         return f"{hours} hour{'s' if hours != 1 else ''} ago"
-
 
 @client_bp.route("/rename_client", methods=["POST"])
 def rename_client():

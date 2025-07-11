@@ -45,6 +45,46 @@ app.register_blueprint(stream_bp)
 # Initialize application state
 load_config(state)
 
+def initialize_app_state():
+    """Initialize app state and recover existing groups from Docker"""
+    try:
+        from blueprints.docker_management import recover_groups_from_docker
+        
+        logger.info("Initializing application state...")
+        
+        # Initialize basic state
+        state = get_state()
+        if not hasattr(state, 'groups'):
+            state.groups = {}
+        if not hasattr(state, 'groups_lock'):
+            state.groups_lock = threading.RLock()
+        
+        # Recover groups from existing Docker containers
+        logger.info("Attempting to recover groups from existing Docker containers...")
+        recovered_groups = recover_groups_from_docker()
+        
+        if recovered_groups:
+            logger.info(f"Successfully recovered {len(recovered_groups)} groups:")
+            for group_id, group in recovered_groups.items():
+                logger.info(f"  - {group['name']} (ID: {group_id[:8]}..., Status: {group['status']})")
+        else:
+            logger.info("No existing groups found in Docker containers")
+        
+        # Log current state
+        total_groups = len(state.groups)
+        active_containers = len([g for g in state.groups.values() if g.get('docker_container_id')])
+        
+        logger.info(f"Application state initialized:")
+        logger.info(f"  - Total groups: {total_groups}")
+        logger.info(f"  - Active containers: {active_containers}")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error initializing app state: {e}")
+        traceback.print_exc()
+        return False
+    
 def get_system_status():
     """Get overall system status including groups and clients"""
     try:
@@ -208,15 +248,22 @@ def cleanup_on_shutdown():
 import atexit
 atexit.register(cleanup_on_shutdown)
 
-if __name__ == '__main__':
-    logger.info("=" * 60)
-    logger.info("Starting Multi-Screen SRT Control Server - REST API Only")
-    logger.info("=" * 60)
-    logger.info(f"Groups initialized: {hasattr(state, 'groups')}")
-    logger.info(f"Total groups: {len(getattr(state, 'groups', {}))}")
-    logger.info(f"SRT IP: {getattr(state, 'srt_ip', 'Not set')}")
-    logger.info(f"API Type: REST Only")
-    logger.info("=" * 60)
+if __name__ == "__main__":
+    import logging
+    import traceback
     
-    # Run with regular Flask (no SocketIO)
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # Setup logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    
+    # Initialize application state and recover groups
+    logger.info("Starting Multi-Screen Display Server...")
+    
+    if initialize_app_state():
+        logger.info("Application state initialized successfully")
+    else:
+        logger.warning("Application state initialization had issues, but continuing...")
+    
+    # Start the Flask app
+    app.run(host="0.0.0.0", port=5000, debug=True)
+
