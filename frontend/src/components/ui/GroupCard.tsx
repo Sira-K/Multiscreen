@@ -1,10 +1,11 @@
-// src/components/GroupCard.tsx
+// src/components/GroupCard.tsx - Modified with proper operations
 import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Play, Square, Monitor, Users, CheckCircle, AlertCircle } from "lucide-react";
+import { groupApi } from '@/lib/api'; // Add this import
 
 interface Group {
   id: string;
@@ -51,6 +52,9 @@ interface GroupCardProps {
   onStop: (groupId: string, groupName: string) => void;
   onDelete: (groupId: string, groupName: string) => void;
   onAssignClient: (clientId: string, streamId: string, groupId: string) => void;
+  // Add these new props for proper operations
+  onRefreshGroups?: () => Promise<void>;
+  setOperationInProgress?: (groupId: string | null) => void;
 }
 
 const GroupCard: React.FC<GroupCardProps> = ({
@@ -64,6 +68,8 @@ const GroupCard: React.FC<GroupCardProps> = ({
   onStop,
   onDelete,
   onAssignClient,
+  onRefreshGroups,
+  setOperationInProgress,
 }) => {
   console.log(`🔍 Group "${group.name}" status:`, {
     status: group.status,
@@ -72,10 +78,140 @@ const GroupCard: React.FC<GroupCardProps> = ({
     showingStopButton: group.status === 'active'
   });
 
-
-
   console.log('🔍 GroupCard - clients data:', clients);
   console.log('🔍 GroupCard - group:', group);
+
+  // Enhanced start function with proper API call and refresh
+  const handleStartGroup = async (groupId: string, groupName: string) => {
+    console.log(`🚀 Starting group "${groupName}" (${groupId}) with video: ${selectedVideo}`);
+    
+    if (!selectedVideo) {
+      console.error('❌ No video selected');
+      return;
+    }
+
+    try {
+      if (setOperationInProgress) {
+        setOperationInProgress(groupId);
+      }
+      
+      // Call the API directly with proper parameters
+      console.log('🔄 Calling start API...');
+      const result = await groupApi.startGroup(groupId, selectedVideo);
+      console.log('✅ Start API result:', result);
+      
+      // Refresh groups to get updated status
+      if (onRefreshGroups) {
+        console.log('🔄 Refreshing groups after start...');
+        await onRefreshGroups();
+        
+        // Log the updated status
+        console.log(`📊 Group "${groupName}" should now be active`);
+      }
+      
+      // Call the original onStart for any additional handling
+      onStart(groupId, groupName);
+      
+    } catch (error) {
+      console.error(`❌ Failed to start group "${groupName}":`, error);
+      
+      // Still refresh to get current status
+      if (onRefreshGroups) {
+        try {
+          await onRefreshGroups();
+        } catch (refreshError) {
+          console.error('❌ Failed to refresh after start error:', refreshError);
+        }
+      }
+    } finally {
+      if (setOperationInProgress) {
+        setOperationInProgress(null);
+      }
+    }
+  };
+
+  // Enhanced stop function with proper API call and refresh
+  const handleStopGroup = async (groupId: string, groupName: string) => {
+    console.log(`🛑 Stopping group "${groupName}" (${groupId})`);
+    
+    try {
+      if (setOperationInProgress) {
+        setOperationInProgress(groupId);
+      }
+      
+      // Call the API directly
+      console.log('🔄 Calling stop API...');
+      const result = await groupApi.stopGroup(groupId);
+      console.log('✅ Stop API result:', result);
+      
+      // Refresh groups to get updated status
+      if (onRefreshGroups) {
+        console.log('🔄 Refreshing groups after stop...');
+        await onRefreshGroups();
+        
+        // Log the updated status
+        console.log(`📊 Group "${groupName}" should now be inactive`);
+      }
+      
+      // Call the original onStop for any additional handling
+      onStop(groupId, groupName);
+      
+    } catch (error) {
+      console.error(`❌ Failed to stop group "${groupName}":`, error);
+      
+      // Still refresh to get current status
+      if (onRefreshGroups) {
+        try {
+          await onRefreshGroups();
+        } catch (refreshError) {
+          console.error('❌ Failed to refresh after stop error:', refreshError);
+        }
+      }
+    } finally {
+      if (setOperationInProgress) {
+        setOperationInProgress(null);
+      }
+    }
+  };
+
+  // Enhanced delete function
+  const handleDeleteGroup = async (groupId: string, groupName: string) => {
+    console.log(`🗑️ Deleting group "${groupName}" (${groupId})`);
+    
+    try {
+      if (setOperationInProgress) {
+        setOperationInProgress(groupId);
+      }
+      
+      // Call the API directly
+      const result = await groupApi.deleteGroup(groupId);
+      console.log('✅ Delete API result:', result);
+      
+      // Refresh groups to remove deleted group
+      if (onRefreshGroups) {
+        await onRefreshGroups();
+      }
+      
+      // Call the original onDelete for any additional handling
+      onDelete(groupId, groupName);
+      
+    } catch (error) {
+      console.error(`❌ Failed to delete group "${groupName}":`, error);
+      
+      // Still refresh to get current status
+      if (onRefreshGroups) {
+        try {
+          await onRefreshGroups();
+        } catch (refreshError) {
+          console.error('❌ Failed to refresh after delete error:', refreshError);
+        }
+      }
+    } finally {
+      if (setOperationInProgress) {
+        setOperationInProgress(null);
+      }
+    }
+  };
 
   const getStatusBadge = () => {
     const isOperating = operationInProgress === group.id;
@@ -136,10 +272,17 @@ const GroupCard: React.FC<GroupCardProps> = ({
     (!client.group_id || client.group_id !== group.id) && client.status === 'active'
   ).slice(0, 3);
 
+  // Determine button states
+  const isActive = group.status === 'active';
+  const isTransitioning = group.status === 'starting' || group.status === 'stopping';
+  const isOperating = operationInProgress === group.id;
+  const canStart = !isActive && !isTransitioning && !isOperating && videos.length > 0 && selectedVideo;
+  const canStop = isActive && !isTransitioning && !isOperating;
+
   return (
     <Card className="hover:shadow-md transition-shadow">
       <div className="text-xs bg-gray-100 p-2 mb-2">
-        Debug: Status = "{group.status}" | Docker: {group.docker_container_id ? '✅' : '❌'} | SRT: {group.ffmpeg_process_id ? '✅' : '❌'}
+        Debug: Status = "{group.status}" | Docker: {group.docker_container_id ? '✅' : '❌'} | SRT: {group.ffmpeg_process_id ? '✅' : '❌'} | Operation: {isOperating ? '🔄' : '⏹️'}
       </div>
       <CardHeader>
         <div className="flex justify-between items-start">
@@ -171,6 +314,13 @@ const GroupCard: React.FC<GroupCardProps> = ({
           </div>
         )}
 
+        {/* Available Streams Info */}
+        {group.available_streams && group.available_streams.length > 0 && (
+          <div className="text-sm text-green-600">
+            <span className="font-medium">Active Streams:</span> {group.available_streams.length}
+          </div>
+        )}
+
         {/* Video Selection */}
         {group.status === 'inactive' && (
           <div className="space-y-2">
@@ -190,6 +340,7 @@ const GroupCard: React.FC<GroupCardProps> = ({
                     console.log('🎥 Video selected:', value);
                     onVideoSelect(group.id, value);
                   }}
+                  disabled={isOperating}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder={`Choose from ${videos.length} video${videos.length !== 1 ? 's' : ''}...`} />
@@ -213,17 +364,6 @@ const GroupCard: React.FC<GroupCardProps> = ({
               </>
             )}
           </div>
-        )}
-
-        {/* Available Streams */}
-        {group.status === 'active' ? (
-          <Button onClick={() => onStop(group.id, group.name)}>
-            Stop (Status: {group.status})
-          </Button>
-        ) : (
-          <Button onClick={() => onStart(group.id, group.name)}>
-            Start (Status: {group.status})
-          </Button>
         )}
 
         {/* Client Management Section */}
@@ -333,29 +473,29 @@ const GroupCard: React.FC<GroupCardProps> = ({
 
         {/* Action Buttons */}
         <div className="flex gap-2">
-          {group.status === 'active' ? (
+          {isActive || isTransitioning ? (
             <Button
-              onClick={() => onStop(group.id, group.name)}
-              disabled={operationInProgress === group.id}
+              onClick={() => handleStopGroup(group.id, group.name)}
+              disabled={!canStop}
               variant="destructive"
               size="sm"
               className="flex-1"
             >
-              {operationInProgress === group.id ? (
+              {isOperating ? (
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
               ) : (
                 <Square className="w-4 h-4 mr-2" />
               )}
-              Stop
+              {isTransitioning ? (group.status === 'stopping' ? 'Stopping...' : 'Starting...') : 'Stop'}
             </Button>
           ) : (
             <Button
-              onClick={() => onStart(group.id, group.name)}
-              disabled={operationInProgress === group.id || videos.length === 0 || !selectedVideo}
+              onClick={() => handleStartGroup(group.id, group.name)}
+              disabled={!canStart}
               className="bg-green-600 hover:bg-green-700 flex-1"
               size="sm"
             >
-              {operationInProgress === group.id ? (
+              {isOperating ? (
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
               ) : (
                 <Play className="w-4 h-4 mr-2" />
@@ -368,7 +508,7 @@ const GroupCard: React.FC<GroupCardProps> = ({
           )}
           
           <Button
-            onClick={() => onDelete(group.id, group.name)}
+            onClick={() => handleDeleteGroup(group.id, group.name)}
             disabled={operationInProgress === group.id || group.status === 'active'}
             variant="outline"
             size="sm"
