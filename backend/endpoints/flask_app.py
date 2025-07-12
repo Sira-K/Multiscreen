@@ -19,6 +19,7 @@ from blueprints.group_management import group_bp
 from blueprints.video_management import video_bp
 from blueprints.client_management import client_bp
 from blueprints.stream_management import stream_bp
+from blueprints.docker_management import docker_bp
 
 # Import application state and config functions  
 from models.app_state import state
@@ -41,9 +42,14 @@ app.register_blueprint(group_bp)
 app.register_blueprint(video_bp)
 app.register_blueprint(client_bp)
 app.register_blueprint(stream_bp)
+app.register_blueprint(docker_bp)
 
 # Initialize application state
 load_config(state)
+
+def get_state():
+    """Get application state from current app context"""
+    return app.config['APP_STATE']
 
 def initialize_app_state():
     """Initialize app state and recover existing groups from Docker"""
@@ -219,10 +225,10 @@ def not_found(error):
         "message": "The requested endpoint does not exist",
         "available_endpoints": [
             "/", "/ping", "/system_status", "/api/health",
-            "/get_groups", "/create_group", "/get_clients", "/assign_stream",
-            "/start_group_docker", "/stop_group_docker", 
-            "/start_group_complete", "/stop_group_complete",
-            "/get_videos", "/delete_group"
+            "/groups", "/create_group", "/groups/<id>", "/groups/<id>/start", "/groups/<id>/stop",
+            "/get_clients", "/assign_stream", "/get_videos",
+            "/start_group_docker", "/stop_group_docker", "/docker/status",
+            "/api/groups/<id>/status", "/api/system/sync"
         ]
     }), 404
 
@@ -243,6 +249,7 @@ def cleanup_on_shutdown():
         logger.info("Saved configuration")
     except Exception as e:
         logger.error(f"Error during cleanup: {e}")
+
 
 # Register cleanup function
 import atexit
