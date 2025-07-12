@@ -65,6 +65,15 @@ const GroupCard: React.FC<GroupCardProps> = ({
   onDelete,
   onAssignClient,
 }) => {
+  console.log(`🔍 Group "${group.name}" status:`, {
+    status: group.status,
+    docker_container_id: group.docker_container_id,
+    ffmpeg_process_id: group.ffmpeg_process_id,
+    showingStopButton: group.status === 'active'
+  });
+
+
+
   console.log('🔍 GroupCard - clients data:', clients);
   console.log('🔍 GroupCard - group:', group);
 
@@ -129,6 +138,9 @@ const GroupCard: React.FC<GroupCardProps> = ({
 
   return (
     <Card className="hover:shadow-md transition-shadow">
+      <div className="text-xs bg-gray-100 p-2 mb-2">
+        Debug: Status = "{group.status}" | Docker: {group.docker_container_id ? '✅' : '❌'} | SRT: {group.ffmpeg_process_id ? '✅' : '❌'}
+      </div>
       <CardHeader>
         <div className="flex justify-between items-start">
           <div>
@@ -204,13 +216,14 @@ const GroupCard: React.FC<GroupCardProps> = ({
         )}
 
         {/* Available Streams */}
-        {group.status === 'active' && (
-          <div className="space-y-2">
-            <div className="text-sm font-medium text-gray-700">Stream:</div>
-            <Badge variant="outline" className="text-xs">
-              Full Screen Video
-            </Badge>
-          </div>
+        {group.status === 'active' ? (
+          <Button onClick={() => onStop(group.id, group.name)}>
+            Stop (Status: {group.status})
+          </Button>
+        ) : (
+          <Button onClick={() => onStart(group.id, group.name)}>
+            Start (Status: {group.status})
+          </Button>
         )}
 
         {/* Client Management Section */}
