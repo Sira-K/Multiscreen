@@ -1,66 +1,32 @@
-// src/components/GroupCard.tsx - Modified with proper operations
+// frontend/src/components/ui/GroupCard.tsx - Updated for Hybrid Architecture
+
 import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Play, Square, Monitor, Users, CheckCircle, AlertCircle } from "lucide-react";
-import { groupApi } from '@/lib/api'; // Add this import
-
-interface Group {
-  id: string;
-  name: string;
-  description: string;
-  screen_count: number;
-  orientation: string;
-  status: 'active' | 'inactive' | 'starting' | 'stopping';
-  docker_container_id?: string;
-  ffmpeg_process_id?: number;
-  available_streams: string[];
-  current_video?: string;
-  active_clients: number;
-  total_clients: number;
-  srt_port: number;
-  created_at_formatted: string;
-}
-
-interface Client {
-  client_id: string;
-  display_name?: string;
-  hostname?: string;
-  ip: string;
-  status: 'active' | 'inactive';
-  stream_id?: string | null;
-  group_id?: string | null;
-  group_name?: string | null;
-}
-
-interface Video {
-  name: string;
-  path: string;
-  size_mb: number;
-}
+import { Play, Square, Monitor, Users, CheckCircle, AlertCircle, Container, Wifi } from "lucide-react";
+import type { Group, Client, Video } from '@/types';
 
 interface GroupCardProps {
   group: Group;
   videos: Video[];
-  clients: Client[];
+  clients: Client[];  // Clients assigned to this group
+  unassignedClients: Client[];  // Clients not assigned to any group
   selectedVideo: string | undefined;
   operationInProgress: string | null;
   onVideoSelect: (groupId: string, videoName: string) => void;
   onStart: (groupId: string, groupName: string) => void;
   onStop: (groupId: string, groupName: string) => void;
   onDelete: (groupId: string, groupName: string) => void;
-  onAssignClient: (clientId: string, streamId: string, groupId: string) => void;
-  // Add these new props for proper operations
-  onRefreshGroups?: () => Promise<void>;
-  setOperationInProgress?: (groupId: string | null) => void;
+  onAssignClient: (clientId: string, groupId: string) => void;
 }
 
 const GroupCard: React.FC<GroupCardProps> = ({
   group,
   videos,
   clients,
+  unassignedClients,
   selectedVideo,
   operationInProgress,
   onVideoSelect,
@@ -68,454 +34,258 @@ const GroupCard: React.FC<GroupCardProps> = ({
   onStop,
   onDelete,
   onAssignClient,
-  onRefreshGroups,
-  setOperationInProgress,
 }) => {
-  console.log(`🔍 Group "${group.name}" status:`, {
-    status: group.status,
-    docker_container_id: group.docker_container_id,
-    ffmpeg_process_id: group.ffmpeg_process_id,
-    showingStopButton: group.status === 'active'
+  console.log(`🔍 GroupCard (Hybrid) - Group "${group.name}":`, {
+    docker_running: group.docker_running,
+    docker_status: group.docker_status,
+    total_clients: clients.length,
+    active_clients: clients.filter(c => c.is_active).length,
+    ports: group.ports
   });
 
-  console.log('🔍 GroupCard - clients data:', clients);
-  console.log('🔍 GroupCard - group:', group);
-
-  // Enhanced start function with proper API call and refresh
-  const handleStartGroup = async (groupId: string, groupName: string) => {
-    console.log(`🚀 Starting group "${groupName}" (${groupId}) with video: ${selectedVideo}`);
-    
-    if (!selectedVideo) {
-      console.error('❌ No video selected');
-      return;
-    }
-
-    try {
-      if (setOperationInProgress) {
-        setOperationInProgress(groupId);
-      }
-      
-      // Call the API directly with proper parameters
-      console.log('🔄 Calling start API...');
-      const result = await groupApi.startGroup(groupId, selectedVideo);
-      console.log('✅ Start API result:', result);
-      
-      // Refresh groups to get updated status
-      if (onRefreshGroups) {
-        console.log('🔄 Refreshing groups after start...');
-        await onRefreshGroups();
-        
-        // Log the updated status
-        console.log(`📊 Group "${groupName}" should now be active`);
-      }
-      
-      // Call the original onStart for any additional handling
-      onStart(groupId, groupName);
-      
-    } catch (error) {
-      console.error(`❌ Failed to start group "${groupName}":`, error);
-      
-      // Still refresh to get current status
-      if (onRefreshGroups) {
-        try {
-          await onRefreshGroups();
-        } catch (refreshError) {
-          console.error('❌ Failed to refresh after start error:', refreshError);
-        }
-      }
-    } finally {
-      if (setOperationInProgress) {
-        setOperationInProgress(null);
-      }
+  // Determine if streaming can be started (Docker must be running)
+  const canStartStreaming = group.docker_running && !operationInProgress;
+  const canStopStreaming = group.docker_running && operationInProgress !== group.id;
+  
+  // Status indicators
+  const getDockerStatusBadge = () => {
+    if (group.docker_running) {
+      return <Badge variant="default" className="bg-green-100 text-green-800">Docker Running</Badge>;
+    } else {
+      return <Badge variant="destructive">Docker Stopped</Badge>;
     }
   };
 
-  // Enhanced stop function with proper API call and refresh
-  const handleStopGroup = async (groupId: string, groupName: string) => {
-    console.log(`🛑 Stopping group "${groupName}" (${groupId})`);
-    
-    try {
-      if (setOperationInProgress) {
-        setOperationInProgress(groupId);
-      }
-      
-      // Call the API directly
-      console.log('🔄 Calling stop API...');
-      const result = await groupApi.stopGroup(groupId);
-      console.log('✅ Stop API result:', result);
-      
-      // Refresh groups to get updated status
-      if (onRefreshGroups) {
-        console.log('🔄 Refreshing groups after stop...');
-        await onRefreshGroups();
-        
-        // Log the updated status
-        console.log(`📊 Group "${groupName}" should now be inactive`);
-      }
-      
-      // Call the original onStop for any additional handling
-      onStop(groupId, groupName);
-      
-    } catch (error) {
-      console.error(`❌ Failed to stop group "${groupName}":`, error);
-      
-      // Still refresh to get current status
-      if (onRefreshGroups) {
-        try {
-          await onRefreshGroups();
-        } catch (refreshError) {
-          console.error('❌ Failed to refresh after stop error:', refreshError);
-        }
-      }
-    } finally {
-      if (setOperationInProgress) {
-        setOperationInProgress(null);
-      }
+  const getStreamingStatusBadge = () => {
+    if (group.streaming_active) {
+      return <Badge variant="default" className="bg-blue-100 text-blue-800">Streaming Active</Badge>;
+    } else if (group.docker_running) {
+      return <Badge variant="outline">Ready to Stream</Badge>;
+    } else {
+      return <Badge variant="secondary">Cannot Stream</Badge>;
     }
   };
-
-  // Enhanced delete function
-  const handleDeleteGroup = async (groupId: string, groupName: string) => {
-    console.log(`🗑️ Deleting group "${groupName}" (${groupId})`);
-    
-    try {
-      if (setOperationInProgress) {
-        setOperationInProgress(groupId);
-      }
-      
-      // Call the API directly
-      const result = await groupApi.deleteGroup(groupId);
-      console.log('✅ Delete API result:', result);
-      
-      // Refresh groups to remove deleted group
-      if (onRefreshGroups) {
-        await onRefreshGroups();
-      }
-      
-      // Call the original onDelete for any additional handling
-      onDelete(groupId, groupName);
-      
-    } catch (error) {
-      console.error(`❌ Failed to delete group "${groupName}":`, error);
-      
-      // Still refresh to get current status
-      if (onRefreshGroups) {
-        try {
-          await onRefreshGroups();
-        } catch (refreshError) {
-          console.error('❌ Failed to refresh after delete error:', refreshError);
-        }
-      }
-    } finally {
-      if (setOperationInProgress) {
-        setOperationInProgress(null);
-      }
-    }
-  };
-
-  const getStatusBadge = () => {
-    const isOperating = operationInProgress === group.id;
-    
-    if (isOperating) {
-      return (
-        <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">
-          <div className="w-3 h-3 border-2 border-yellow-600 border-t-transparent rounded-full animate-spin mr-1" />
-          Processing...
-        </Badge>
-      );
-    }
-
-    switch (group.status) {
-      case 'active':
-        return (
-          <Badge className="bg-green-100 text-green-800 border-green-200">
-            <CheckCircle className="w-3 h-3 mr-1" />
-            Active
-          </Badge>
-        );
-      case 'starting':
-        return (
-          <Badge className="bg-blue-100 text-blue-800 border-blue-200">
-            <div className="w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mr-1" />
-            Starting
-          </Badge>
-        );
-      case 'stopping':
-        return (
-          <Badge className="bg-orange-100 text-orange-800 border-orange-200">
-            <div className="w-3 h-3 border-2 border-orange-600 border-t-transparent rounded-full animate-spin mr-1" />
-            Stopping
-          </Badge>
-        );
-      default:
-        return (
-          <Badge className="bg-gray-100 text-gray-800 border-gray-200">
-            <AlertCircle className="w-3 h-3 mr-1" />
-            Inactive
-          </Badge>
-        );
-    }
-  };
-
-  const getLayoutDescription = () => {
-    if (group.orientation === 'grid') {
-      const rows = Math.sqrt(group.screen_count);
-      const cols = Math.sqrt(group.screen_count);
-      return `${rows}×${cols} Grid (${group.screen_count} screens)`;
-    }
-    return `${group.orientation} (${group.screen_count} screens)`;
-  };
-
-  // Filter clients for this group
-  const assignedClients = clients.filter(client => client.group_id === group.id);
-  const unassignedClients = clients.filter(client => 
-    (!client.group_id || client.group_id !== group.id) && client.status === 'active'
-  ).slice(0, 3);
-
-  // Determine button states
-  const isActive = group.status === 'active';
-  const isTransitioning = group.status === 'starting' || group.status === 'stopping';
-  const isOperating = operationInProgress === group.id;
-  const canStart = !isActive && !isTransitioning && !isOperating && videos.length > 0 && selectedVideo;
-  const canStop = isActive && !isTransitioning && !isOperating;
 
   return (
-    <Card className="hover:shadow-md transition-shadow">
-      <div className="text-xs bg-gray-100 p-2 mb-2">
-        Debug: Status = "{group.status}" | Docker: {group.docker_container_id ? '✅' : '❌'} | SRT: {group.ffmpeg_process_id ? '✅' : '❌'} | Operation: {isOperating ? '🔄' : '⏹️'}
-      </div>
+    <Card className="bg-white border border-gray-200">
       <CardHeader>
         <div className="flex justify-between items-start">
           <div>
-            <CardTitle className="text-lg">{group.name}</CardTitle>
-            <CardDescription>{group.description || 'No description'}</CardDescription>
+            <CardTitle className="text-gray-800 flex items-center gap-2">
+              <Container className="h-5 w-5 text-blue-600" />
+              {group.name}
+            </CardTitle>
+            <CardDescription className="text-gray-600">
+              {group.description || 'No description'}
+            </CardDescription>
+            <div className="text-sm text-gray-500 mt-1">
+              ID: {group.id.substring(0, 8)}... • Created: {group.created_at_formatted}
+            </div>
           </div>
-          {getStatusBadge()}
+          <div className="flex flex-col gap-2">
+            {getDockerStatusBadge()}
+            {getStreamingStatusBadge()}
+          </div>
         </div>
       </CardHeader>
-      
+
       <CardContent className="space-y-4">
-        {/* Group Info */}
-        <div className="grid grid-cols-2 gap-4 text-sm">
-          <div className="flex items-center">
-            <Monitor className="w-4 h-4 mr-2 text-gray-500" />
-            {getLayoutDescription()}
+        {/* Configuration Info */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-3 bg-gray-50 rounded-lg">
+          <div>
+            <div className="text-sm font-medium text-gray-700">Screens</div>
+            <div className="text-lg font-semibold text-gray-900">{group.screen_count}</div>
           </div>
-          <div className="flex items-center">
-            <Users className="w-4 h-4 mr-2 text-gray-500" />
-            {group.active_clients || 0}/{group.total_clients || 0} clients
+          <div>
+            <div className="text-sm font-medium text-gray-700">Layout</div>
+            <div className="text-lg font-semibold text-gray-900 capitalize">{group.orientation}</div>
+          </div>
+          <div>
+            <div className="text-sm font-medium text-gray-700">SRT Port</div>
+            <div className="text-lg font-semibold text-gray-900">{group.ports.srt_port}</div>
+          </div>
+          <div>
+            <div className="text-sm font-medium text-gray-700">Clients</div>
+            <div className="text-lg font-semibold text-gray-900">
+              {clients.filter(c => c.is_active).length}/{clients.length}
+            </div>
           </div>
         </div>
 
-        {/* Current Video */}
-        {group.current_video && (
-          <div className="text-sm">
-            <span className="font-medium">Playing:</span> {group.current_video}
+        {/* Docker Container Info */}
+        <div className="p-3 bg-blue-50 rounded-lg">
+          <div className="flex items-center gap-2 mb-2">
+            <Container className="h-4 w-4 text-blue-600" />
+            <span className="font-medium text-blue-800">Docker Container</span>
           </div>
-        )}
-
-        {/* Available Streams Info */}
-        {group.available_streams && group.available_streams.length > 0 && (
-          <div className="text-sm text-green-600">
-            <span className="font-medium">Active Streams:</span> {group.available_streams.length}
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <div>
+              <span className="text-blue-700">Status:</span> 
+              <span className="ml-1 font-medium">{group.docker_status}</span>
+            </div>
+            <div>
+              <span className="text-blue-700">Container:</span> 
+              <span className="ml-1 font-mono text-xs">{group.container_id.substring(0, 12)}...</span>
+            </div>
           </div>
-        )}
+          <div className="mt-2 text-xs text-blue-600">
+            Ports: RTMP:{group.ports.rtmp_port} | HTTP:{group.ports.http_port} | API:{group.ports.api_port} | SRT:{group.ports.srt_port}
+          </div>
+        </div>
 
         {/* Video Selection */}
-        {group.status === 'inactive' && (
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-gray-700">Video File (Optional)</label>
+          <Select 
+            value={selectedVideo || ''} 
+            onValueChange={(value) => onVideoSelect(group.id, value)}
+            disabled={operationInProgress === group.id}
+          >
+            <SelectTrigger className="bg-white border-gray-300">
+              <SelectValue placeholder="Select video file or use test pattern" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="">Test Pattern (Default)</SelectItem>
+              {videos.map((video) => (
+                <SelectItem key={video.name} value={video.path}>
+                  {video.name} ({video.size_mb.toFixed(1)} MB)
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Assigned Clients */}
+        {clients.length > 0 && (
           <div className="space-y-2">
-            <div className="text-sm font-medium text-gray-700">
-              Select Video: ({videos.length} available)
-            </div>
-            
-            {videos.length === 0 ? (
-              <div className="text-sm text-red-600 p-2 border border-red-200 rounded">
-                ⚠️ No videos found. Upload videos first in the Video Files tab.
-              </div>
-            ) : (
-              <>
-                <Select
-                  value={selectedVideo || ''}
-                  onValueChange={(value) => {
-                    console.log('🎥 Video selected:', value);
-                    onVideoSelect(group.id, value);
-                  }}
-                  disabled={isOperating}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder={`Choose from ${videos.length} video${videos.length !== 1 ? 's' : ''}...`} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {videos.map((video, index) => (
-                      <SelectItem key={`${video.name}-${index}`} value={video.name}>
-                        <div className="flex flex-col">
-                          <span className="font-medium">{video.name}</span>
-                          <span className="text-xs text-gray-500">{video.size_mb} MB</span>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {selectedVideo && (
-                  <div className="text-xs text-green-600">
-                    ✓ {selectedVideo} selected
+            <label className="text-sm font-medium text-gray-700">Assigned Clients</label>
+            <div className="space-y-1">
+              {clients.map((client) => (
+                <div key={client.client_id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                  <div className="flex items-center gap-2">
+                    <Wifi className={`h-4 w-4 ${client.is_active ? 'text-green-500' : 'text-gray-400'}`} />
+                    <span className="text-sm font-medium">
+                      {client.display_name || client.hostname}
+                    </span>
+                    <span className="text-xs text-gray-500">({client.ip_address})</span>
                   </div>
-                )}
-              </>
-            )}
+                  <div className="flex items-center gap-2">
+                    <Badge variant={client.is_active ? "default" : "secondary"} className="text-xs">
+                      {client.is_active ? "Active" : "Inactive"}
+                    </Badge>
+                    {client.stream_assignment && (
+                      <Badge variant="outline" className="text-xs">
+                        {client.stream_assignment}
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
-        {/* Client Management Section */}
-        <div className="space-y-2">
-          <div className="text-sm font-medium text-gray-700">
-            Client Assignments: ({assignedClients.length})
-          </div>
+        {/* Assign Unassigned Clients */}
+        {unassignedClients.length > 0 && (
           <div className="space-y-2">
-            {/* Show clients already assigned to this group */}
-            {assignedClients.map(client => (
-              <div key={`assigned-${client.client_id}`} className="flex items-center justify-between p-2 bg-gray-50 rounded border">
-                <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${client.status === 'active' ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                  <span className="text-sm font-medium">
-                    {client.display_name || client.hostname || client.client_id}
-                  </span>
-                  {client.stream_id && (
-                    <Badge variant="outline" className="text-xs">
-                      {client.stream_id.replace(`live/${group.id}/`, '')}
-                    </Badge>
-                  )}
+            <label className="text-sm font-medium text-gray-700">Assign Clients</label>
+            <div className="space-y-1">
+              {unassignedClients.slice(0, 3).map((client) => (
+                <div key={client.client_id} className="flex items-center justify-between p-2 bg-yellow-50 rounded">
+                  <div className="flex items-center gap-2">
+                    <Wifi className={`h-4 w-4 ${client.is_active ? 'text-green-500' : 'text-gray-400'}`} />
+                    <span className="text-sm">
+                      {client.display_name || client.hostname}
+                    </span>
+                    <span className="text-xs text-gray-500">({client.ip_address})</span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onAssignClient(client.client_id, group.id)}
+                    disabled={operationInProgress === `assign-${client.client_id}`}
+                  >
+                    {operationInProgress === `assign-${client.client_id}` ? 'Assigning...' : 'Assign'}
+                  </Button>
                 </div>
-                
-                <select
-                  value={client.stream_id || ''}
-                  onChange={(e) => {
-                    console.log('🔧 Debug assigned client dropdown change:', {
-                      clientObject: client,
-                      clientId: client?.client_id,
-                      streamValue: e.target.value
-                    });
-                    
-                    if (client?.client_id) {
-                      onAssignClient(client.client_id, e.target.value, group.id);
-                    } else {
-                      console.error('❌ Missing client_id:', client);
-                    }
-                  }}
-                  className="text-xs p-1 border border-gray-300 rounded"
-                  disabled={operationInProgress === `assign-${client.client_id}`}
-                >
-                  <option value="">Unassign</option>
-                  <option value={`live/${group.id}/test`}>Full Screen</option>
-                  {/* Add more stream options if available */}
-                  {group.available_streams && group.available_streams.map(streamId => (
-                    <option key={streamId} value={streamId}>
-                      {streamId.replace(`live/${group.id}/`, '')}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ))}
-              
-            {/* Show unassigned clients */}
-            {unassignedClients.map(client => (
-              <div key={`unassigned-${client.client_id}`} className="flex items-center justify-between p-2 bg-blue-50 rounded border border-blue-200">
-                <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${client.status === 'active' ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                  <span className="text-sm text-blue-700">
-                    {client.display_name || client.hostname || client.client_id}
-                  </span>
-                  <Badge variant="secondary" className="text-xs">Unassigned</Badge>
+              ))}
+              {unassignedClients.length > 3 && (
+                <div className="text-xs text-gray-500 text-center py-1">
+                  ... and {unassignedClients.length - 3} more unassigned clients
                 </div>
-                
-                <select
-                  onChange={(e) => {
-                    console.log('🔧 Debug unassigned dropdown change:', {
-                      clientObject: client,
-                      clientId: client?.client_id,
-                      streamValue: e.target.value
-                    });
-                    
-                    if (e.target.value && client?.client_id) {
-                      onAssignClient(client.client_id, e.target.value, group.id);
-                    } else {
-                      console.error('❌ Missing client_id:', client);
-                    }
-                  }}
-                  className="text-xs p-1 border border-blue-300 rounded bg-white"
-                  defaultValue=""
-                >
-                  <option value="">Assign to stream...</option>
-                  {/* Use the same stream options as above */}
-                  {group.available_streams && group.available_streams.length > 0 ? (
-                    group.available_streams.map(streamId => (
-                      <option key={streamId} value={streamId}>
-                        {streamId.replace(`live/${group.id}/`, '')}
-                      </option>
-                    ))
-                  ) : (
-                    // Fallback streams for inactive groups
-                    Array.from({length: group.screen_count}, (_, i) => (
-                      <option key={i} value={`live/${group.id}/test${i}`}>
-                        Section {i + 1}
-                      </option>
-                    )).concat([
-                      <option key="full" value={`live/${group.id}/test`}>
-                        Full Video
-                      </option>
-                    ])
-                  )}
-                </select>
-              </div>
-            ))}
+              )}
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Error Messages */}
+        {!group.docker_running && (
+          <div className="p-3 bg-red-50 rounded-lg">
+            <div className="flex items-center gap-2 text-red-800">
+              <AlertCircle className="h-4 w-4" />
+              <span className="font-medium">Docker Container Required</span>
+            </div>
+            <p className="text-sm text-red-700 mt-1">
+              The Docker container must be running before streaming can be started.
+              The container may have stopped or failed to start.
+            </p>
+          </div>
+        )}
 
         {/* Action Buttons */}
-        <div className="flex gap-2">
-          {isActive || isTransitioning ? (
+        <div className="flex gap-2 pt-2">
+          {group.streaming_active ? (
             <Button
-              onClick={() => handleStopGroup(group.id, group.name)}
-              disabled={!canStop}
+              onClick={() => onStop(group.id, group.name)}
+              disabled={!canStopStreaming}
               variant="destructive"
-              size="sm"
               className="flex-1"
             >
-              {isOperating ? (
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-              ) : (
-                <Square className="w-4 h-4 mr-2" />
-              )}
-              {isTransitioning ? (group.status === 'stopping' ? 'Stopping...' : 'Starting...') : 'Stop'}
+              <Square className="h-4 w-4 mr-2" />
+              {operationInProgress === group.id ? 'Stopping...' : 'Stop Streaming'}
             </Button>
           ) : (
             <Button
-              onClick={() => handleStartGroup(group.id, group.name)}
-              disabled={!canStart}
-              className="bg-green-600 hover:bg-green-700 flex-1"
-              size="sm"
+              onClick={() => onStart(group.id, group.name)}
+              disabled={!canStartStreaming}
+              className="flex-1"
             >
-              {isOperating ? (
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-              ) : (
-                <Play className="w-4 h-4 mr-2" />
-              )}
-              Start
-              {!selectedVideo && videos.length > 0 && (
-                <span className="ml-1 text-xs">(Select video)</span>
-              )}
+              <Play className="h-4 w-4 mr-2" />
+              {operationInProgress === group.id ? 'Starting...' : 'Start Streaming'}
             </Button>
           )}
           
           <Button
-            onClick={() => handleDeleteGroup(group.id, group.name)}
-            disabled={operationInProgress === group.id || group.status === 'active'}
+            onClick={() => onDelete(group.id, group.name)}
+            disabled={operationInProgress === group.id}
             variant="outline"
-            size="sm"
+            className="text-red-600 hover:text-red-700 hover:bg-red-50"
           >
             Delete
           </Button>
         </div>
+
+        {/* Stream URLs for Active Streaming */}
+        {group.streaming_active && group.available_streams && group.available_streams.length > 0 && (
+          <div className="mt-4 p-3 bg-green-50 rounded-lg">
+            <div className="flex items-center gap-2 mb-2">
+              <CheckCircle className="h-4 w-4 text-green-600" />
+              <span className="font-medium text-green-800">Active Stream URLs</span>
+            </div>
+            <div className="space-y-1">
+              {group.available_streams.slice(0, 2).map((streamPath, index) => (
+                <div key={index} className="text-xs font-mono bg-white p-2 rounded border">
+                  srt://127.0.0.1:{group.ports.srt_port}?streamid=#!::r={streamPath},m=request
+                </div>
+              ))}
+              {group.available_streams.length > 2 && (
+                <div className="text-xs text-green-700">
+                  ... and {group.available_streams.length - 2} more streams
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

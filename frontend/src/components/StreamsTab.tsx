@@ -1,4 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+// frontend/src/components/StreamsTab.tsx - Updated for Hybrid Architecture
+
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,179 +12,84 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Plus, X, Play, Square, Users, Monitor, AlertCircle, CheckCircle, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { groupApi, videoApi, clientApi } from '@/lib/api';
-
-interface Group {
-  id: string;
-  name: string;
-  description: string;
-  screen_count: number;
-  orientation: string;
-  status: 'active' | 'inactive' | 'starting' | 'stopping';
-  docker_container_id?: string;
-  ffmpeg_process_id?: number;
-  available_streams: string[];
-  current_video?: string;
-  active_clients: number;
-  total_clients: number;
-  srt_port: number;
-  created_at_formatted: string;
-}
-
-interface Video {
-  name: string;
-  path: string;
-  size_mb: number;
-}
-
-interface Client {
-  client_id: string;
-  display_name?: string;
-  hostname?: string;
-  ip: string;
-  status: 'active' | 'inactive';
-  stream_id?: string | null;
-  group_id?: string | null;
-  group_name?: string | null;
-}
+import type { Group, Video, Client } from '@/types';
 
 const StreamsTab = () => {
-  console.log('🚀 StreamsTab component rendered');
+  console.log('🚀 StreamsTab component rendered (Hybrid Architecture)');
   
   const { toast } = useToast();
   
   // State management
   const [groups, setGroups] = useState<Group[]>([]);
   const [videos, setVideos] = useState<Video[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [operationInProgress, setOperationInProgress] = useState<string | null>(null);
-  const [clients, setClients] = useState<Client[]>([]);
   const [selectedVideos, setSelectedVideos] = useState<Record<string, string>>({});
   
   // Form state for creating new groups
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupDescription, setNewGroupDescription] = useState('');
   const [newGroupScreenCount, setNewGroupScreenCount] = useState(2);
-  const [newGroupOrientation, setNewGroupOrientation] = useState('horizontal');
+  const [newGroupOrientation, setNewGroupOrientation] = useState<'horizontal' | 'vertical' | 'grid'>('horizontal');
 
-  // Enhanced fetchGroups function with detailed logging
-  const fetchGroups = useCallback(async () => {
-    try {
-      console.log('🔄 Fetching groups...');
-      const response = await groupApi.getGroups();
-      console.log('📊 Groups response:', response);
-      
-      if (response && response.groups) {
-        setGroups(response.groups);
-        console.log(`✅ Updated ${response.groups.length} groups in state`);
-        
-        // Log status of each group for debugging
-        response.groups.forEach((group: Group) => {
-          console.log(`📋 Group "${group.name}": status=${group.status}, ffmpeg_pid=${group.ffmpeg_process_id}, docker=${group.docker_container_id ? 'Yes' : 'No'}`);
-        });
-      }
-    } catch (error) {
-      console.error('❌ Error fetching groups:', error);
-      toast({
-        title: "Loading Error",
-        description: "Failed to load groups. Check console for details.",
-        variant: "destructive"
-      });
-    }
-  }, [toast]);
-
-  const fetchVideos = useCallback(async () => {
-    try {
-      const response = await videoApi.getVideos();
-      if (response && response.videos) {
-        setVideos(response.videos);
-        console.log(`📹 Loaded ${response.videos.length} videos`);
-      }
-    } catch (error) {
-      console.error('❌ Error fetching videos:', error);
-    }
+  // Load initial data
+  useEffect(() => {
+    console.log('🔥 useEffect triggered - calling loadInitialData (Hybrid Architecture)');
+    loadInitialData();
   }, []);
 
-  const fetchClients = useCallback(async () => {
-    try {
-      const response = await clientApi.getClients();
-      if (response && response.clients) {
-        // Map the client data to match your interface
-        const mappedClients = (response.clients || []).map(client => ({
-          ...client,
-          client_id: client.id || client.client_id, // Map id to client_id
-        }));
-        setClients(mappedClients);
-        console.log(`👥 Loaded ${mappedClients.length} clients`);
-      }
-    } catch (error) {
-      console.error('❌ Error fetching clients:', error);
-    }
-  }, []);
-
-  // State synchronization function
-  const syncSystemState = useCallback(async () => {
-    try {
-      console.log('🔄 Syncing system state...');
-      
-      // Get current groups and their status from backend
-      const groupsResponse = await groupApi.getGroups();
-      const serverGroups = groupsResponse.groups || [];
-      
-      // For each group, check if processes are actually running
-      const syncedGroups = await Promise.all(
-        serverGroups.map(async (group) => {
-          try {
-            // Check if FFmpeg process is still running
-            const statusResponse = await fetch(`/api/groups/${group.id}/status`);
-            const statusData = await statusResponse.json();
-            
-            // Update group status based on actual system state
-            return {
-              ...group,
-              status: statusData.is_running ? 'active' : 'inactive',
-              ffmpeg_process_id: statusData.ffmpeg_process_id || null,
-              docker_container_id: statusData.docker_container_id || null
-            };
-          } catch (error) {
-            console.warn(`Failed to check status for group ${group.id}:`, error);
-            // If we can't check status, assume inactive for safety
-            return { ...group, status: 'inactive' };
-          }
-        })
-      );
-      
-      setGroups(syncedGroups);
-      console.log('✅ System state synchronized');
-      
-    } catch (error) {
-      console.error('❌ Failed to sync system state:', error);
-      // Fallback to basic group loading
-      try {
-        const groupsResponse = await groupApi.getGroups();
-        setGroups(groupsResponse.groups || []);
-      } catch (fallbackError) {
-        console.error('❌ Fallback group loading also failed:', fallbackError);
-      }
-    }
-  }, []);
-
-  // Load initial data with state sync
-  const loadInitialData = useCallback(async () => {
-    console.log('🔄 Starting loadInitialData...');
+  const loadInitialData = async () => {
+    console.log('🔄 Starting loadInitialData (Hybrid Architecture)...');
     try {
       setLoading(true);
       
       console.log('📡 Making API calls to load groups, videos, and clients...');
       
-      // Load all data
-      await Promise.all([
-        fetchGroups(),
-        fetchVideos(),
-        fetchClients()
+      // Load data in parallel
+      const [groupsResponse, videosResponse, clientsResponse] = await Promise.all([
+        groupApi.getGroups(),
+        videoApi.getVideos(),
+        clientApi.getClients()
       ]);
       
-      console.log('📊 Initial data loaded successfully');
+      console.log('✅ Groups response (Docker discovery):', groupsResponse);
+      console.log('✅ Videos response:', videosResponse);
+      console.log('✅ Clients response (hybrid state):', clientsResponse);
+      
+      // Set groups from Docker discovery
+      const discoveredGroups = groupsResponse.groups || [];
+      setGroups(discoveredGroups);
+      
+      // Set videos
+      setVideos(videosResponse.videos || []);
+      
+      // Set clients from app state
+      const clientsList = clientsResponse.clients || [];
+      setClients(clientsList);
+      
+      // Calculate client counts per group
+      const groupsWithCounts = discoveredGroups.map(group => {
+        const groupClients = clientsList.filter(client => client.group_id === group.id);
+        const activeGroupClients = groupClients.filter(client => client.is_active);
+        
+        return {
+          ...group,
+          total_clients: groupClients.length,
+          active_clients: activeGroupClients.length
+        };
+      });
+      
+      setGroups(groupsWithCounts);
+      
+      console.log('📊 Final state (Hybrid Architecture):', {
+        groupsCount: groupsWithCounts.length,
+        videosCount: videosResponse.videos?.length || 0,
+        clientsCount: clientsList.length,
+        architecture: 'hybrid_docker_discovery'
+      });
       
     } catch (error) {
       console.error('❌ Error loading initial data:', error);
@@ -194,59 +101,28 @@ const StreamsTab = () => {
     } finally {
       setLoading(false);
     }
-  }, [fetchGroups, fetchVideos, fetchClients, toast]);
+  };
 
-  // Manual refresh function for users
-  const refreshSystemState = async () => {
-    setOperationInProgress('refresh');
+  const refreshData = async () => {
+    console.log('🔄 Refreshing data (Hybrid Architecture)...');
+    setRefreshing(true);
     try {
-      await syncSystemState();
+      await loadInitialData();
       toast({
-        title: "State Refreshed",
-        description: "System state has been synchronized with server"
+        title: "Data Refreshed",
+        description: "All data has been updated from Docker and app state",
       });
     } catch (error) {
+      console.error('❌ Error refreshing data:', error);
       toast({
-        title: "Refresh Failed", 
-        description: "Failed to sync system state",
+        title: "Refresh Failed",
+        description: "Failed to refresh data",
         variant: "destructive"
       });
     } finally {
-      setOperationInProgress(null);
+      setRefreshing(false);
     }
   };
-
-  // Load initial data on mount
-  useEffect(() => {
-    console.log('🔥 useEffect triggered - calling loadInitialData');
-    loadInitialData();
-  }, [loadInitialData]);
-
-  // Periodic state checking (every 30 seconds)
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      // Only sync if no operations are in progress
-      if (!operationInProgress) {
-        console.log('⏰ Periodic groups refresh...');
-        await fetchGroups();
-      }
-    }, 30000); // Check every 30 seconds
-
-    return () => clearInterval(interval);
-  }, [operationInProgress, fetchGroups]);
-
-  // Page visibility API - sync when user returns to tab
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (!document.hidden && !operationInProgress) {
-        console.log('👁️ Page became visible, refreshing groups...');
-        fetchGroups();
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [operationInProgress, fetchGroups]);
 
   const createGroup = async () => {
     if (!newGroupName.trim()) {
@@ -261,23 +137,24 @@ const StreamsTab = () => {
     try {
       setOperationInProgress('create');
       
-      console.log('🏗️ Creating new group:', {
-        name: newGroupName,
-        description: newGroupDescription,
-        screen_count: newGroupScreenCount,
-        orientation: newGroupOrientation
-      });
+      console.log('🔨 Creating group with Docker container...');
       
-      const response = await groupApi.createGroup({
+      const groupData = {
         name: newGroupName.trim(),
         description: newGroupDescription.trim(),
         screen_count: newGroupScreenCount,
         orientation: newGroupOrientation
-      });
+      };
+      
+      console.log('📦 Group data:', groupData);
+      
+      const response = await groupApi.createGroup(groupData);
+      
+      console.log('✅ Group created successfully:', response);
       
       toast({
         title: "Group Created",
-        description: `Successfully created "${newGroupName}"`
+        description: `Successfully created "${newGroupName}" with Docker container`
       });
 
       // Reset form
@@ -287,13 +164,13 @@ const StreamsTab = () => {
       setNewGroupOrientation('horizontal');
       setShowCreateForm(false);
 
-      // Reload data to show new group
-      await fetchGroups();
+      // Reload data to show the new group
+      await loadInitialData();
       
     } catch (error: any) {
-      console.error('Error creating group:', error);
+      console.error('❌ Error creating group:', error);
       toast({
-        title: "Creation Failed",
+        title: "Create Failed",
         description: error?.message || "Failed to create group",
         variant: "destructive"
       });
@@ -302,56 +179,32 @@ const StreamsTab = () => {
     }
   };
 
-  // Legacy handlers for GroupCard compatibility (the real work is done in GroupCard now)
-  const handleStart = (groupId: string, groupName: string) => {
-    console.log(`🚀 Legacy start callback for group "${groupName}"`);
-    // The actual API call and refresh is now handled in GroupCard
-  };
-
-  const handleStop = (groupId: string, groupName: string) => {
-    console.log(`🛑 Legacy stop callback for group "${groupName}"`);
-    // The actual API call and refresh is now handled in GroupCard
-  };
-
-  const handleDelete = (groupId: string, groupName: string) => {
-    console.log(`🗑️ Legacy delete callback for group "${groupName}"`);
-    // The actual API call and refresh is now handled in GroupCard
-  };
-
-  const assignClientToStream = async (clientId: string, streamId: string, groupId: string) => {
+  const startGroup = async (groupId: string, groupName: string) => {
     try {
-      setOperationInProgress(`assign-${clientId}`);
+      setOperationInProgress(groupId);
       
-      console.log('🔄 Assigning client to group first, then stream:', { clientId, streamId, groupId });
+      console.log(`🚀 Starting group ${groupId} (requires Docker container running)`);
       
-      if (streamId) {
-        // Step 1: Assign client to group first
-        await clientApi.assignToGroup(clientId, groupId);
-        console.log('✅ Client assigned to group');
-        
-        // Step 2: Then assign the stream
-        await clientApi.assignStream(clientId, streamId);
-        console.log('✅ Client assigned to stream');
-      } else {
-        // Unassign client
-        await clientApi.assignStream(clientId, '');
-        await clientApi.assignToGroup(clientId, '');
-        console.log('✅ Client unassigned');
-      }
+      const videoFile = selectedVideos[groupId];
+      console.log(`📹 Video file for group ${groupId}:`, videoFile);
       
-      // Refresh clients to show updated assignments
-      await fetchClients();
+      const response = await groupApi.startGroup(groupId, videoFile);
+      
+      console.log('✅ Group started successfully:', response);
       
       toast({
-        title: "Client Assignment Updated",
-        description: streamId ? `Successfully assigned client to stream` : `Client unassigned from stream`
+        title: "Streaming Started",
+        description: `Successfully started streaming for "${groupName}"`
       });
+
+      // Reload data to get updated status
+      await loadInitialData();
       
     } catch (error: any) {
-      console.error('Error assigning client:', error);
+      console.error('❌ Error starting group:', error);
       toast({
-        title: "Assignment Failed",
-        description: error?.message || "Failed to assign client to stream",
+        title: "Start Failed",
+        description: error?.message || `Failed to start group "${groupName}"`,
         variant: "destructive"
       });
     } finally {
@@ -359,23 +212,107 @@ const StreamsTab = () => {
     }
   };
 
-  const handleVideoSelect = (groupId: string, videoName: string) => {
-    setSelectedVideos(prev => ({
-      ...prev,
-      [groupId]: videoName
-    }));
-    console.log(`🎥 Video selected for group ${groupId}: ${videoName}`);
+  const stopGroup = async (groupId: string, groupName: string) => {
+    try {
+      setOperationInProgress(groupId);
+      
+      console.log(`🛑 Stopping group ${groupId}`);
+      
+      const response = await groupApi.stopGroup(groupId);
+      
+      console.log('✅ Group stopped successfully:', response);
+      
+      toast({
+        title: "Streaming Stopped",
+        description: `Successfully stopped streaming for "${groupName}"`
+      });
+
+      // Reload data to get updated status
+      await loadInitialData();
+      
+    } catch (error: any) {
+      console.error('❌ Error stopping group:', error);
+      toast({
+        title: "Stop Failed",
+        description: error?.message || `Failed to stop group "${groupName}"`,
+        variant: "destructive"
+      });
+    } finally {
+      setOperationInProgress(null);
+    }
   };
 
-  console.log('🎨 StreamsTab rendering, loading:', loading, 'groups:', groups.length);
+  const deleteGroup = async (groupId: string, groupName: string) => {
+    if (!confirm(`Are you sure you want to delete "${groupName}"? This will stop streaming and remove the Docker container. This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      setOperationInProgress(groupId);
+      
+      console.log(`🗑️ Deleting group ${groupId} (will stop streams and remove Docker container)`);
+      
+      await groupApi.deleteGroup(groupId);
+      
+      toast({
+        title: "Group Deleted",
+        description: `Successfully deleted "${groupName}" and removed Docker container`
+      });
+
+      // Reload groups from Docker discovery
+      await loadInitialData();
+      
+    } catch (error: any) {
+      console.error('❌ Error deleting group:', error);
+      toast({
+        title: "Delete Failed",
+        description: error?.message || `Failed to delete group "${groupName}"`,
+        variant: "destructive"
+      });
+    } finally {
+      setOperationInProgress(null);
+    }
+  };
+
+  const assignClientToGroup = async (clientId: string, groupId: string) => {
+    try {
+      setOperationInProgress(`assign-${clientId}`);
+      
+      console.log('🔄 Assigning client to group (hybrid architecture):', { clientId, groupId });
+      
+      await clientApi.assignToGroup(clientId, groupId);
+      
+      console.log('✅ Client assigned to group');
+      
+      // Refresh data to show updated assignments
+      await loadInitialData();
+      
+      const group = groups.find(g => g.id === groupId);
+      const client = clients.find(c => c.client_id === clientId);
+      
+      toast({
+        title: "Client Assigned",
+        description: `Assigned ${client?.display_name || client?.hostname} to ${group?.name}`
+      });
+      
+    } catch (error: any) {
+      console.error('❌ Error assigning client:', error);
+      toast({
+        title: "Assignment Failed",
+        description: error?.message || "Failed to assign client to group",
+        variant: "destructive"
+      });
+    } finally {
+      setOperationInProgress(null);
+    }
+  };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex items-center justify-center p-8">
         <div className="text-center">
-          <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-gray-600">Loading groups and videos...</p>
-          <p className="text-sm text-gray-400 mt-2">Syncing system state...</p>
+          <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4 text-blue-500" />
+          <p className="text-gray-600">Loading groups from Docker discovery...</p>
         </div>
       </div>
     );
@@ -383,95 +320,79 @@ const StreamsTab = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header and Create Button */}
-      <div className="flex justify-between items-start">
+      {/* Header with refresh button */}
+      <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-2xl font-semibold text-gray-900 mb-2">Stream Management</h2>
-          <p className="text-gray-600">Manage streaming groups and control video streams</p>
+          <h2 className="text-2xl font-semibold text-black mb-2">
+            Stream Management 
+            <Badge variant="outline" className="ml-2">Hybrid Architecture</Badge>
+          </h2>
+          <p className="text-gray-600">
+            Manage groups (Docker containers) and streaming (FFmpeg processes)
+          </p>
         </div>
-        
-        <div className="flex gap-3">
-          {/* Refresh State Button */}
+        <div className="flex gap-2">
           <Button 
-            onClick={refreshSystemState}
-            disabled={operationInProgress === 'refresh'}
-            variant="outline"
+            onClick={refreshData} 
+            variant="outline" 
             size="sm"
+            disabled={refreshing}
           >
-            {operationInProgress === 'refresh' ? (
-              <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin mr-2" />
-            ) : (
-              <RefreshCw className="w-4 h-4 mr-2" />
-            )}
-            Refresh State
+            <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
           </Button>
-
-          {/* Create Group Button */}
           <Dialog open={showCreateForm} onOpenChange={setShowCreateForm}>
             <DialogTrigger asChild>
-              <Button
-                className="bg-blue-600 hover:bg-blue-700 text-white"
-                disabled={operationInProgress === 'create'}
-              >
-                <Plus className="w-4 h-4 mr-2" />
+              <Button size="sm">
+                <Plus className="h-4 w-4 mr-2" />
                 Create Group
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[425px]">
+            <DialogContent>
               <DialogHeader>
                 <DialogTitle>Create New Group</DialogTitle>
                 <DialogDescription>
-                  Create a new streaming group with custom configuration.
+                  This will create a new Docker container for SRT streaming
                 </DialogDescription>
               </DialogHeader>
               
-              <div className="grid gap-4 py-4">
-                <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="name" className="text-right">Name</Label>
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="name">Group Name *</Label>
                   <Input
                     id="name"
                     value={newGroupName}
                     onChange={(e) => setNewGroupName(e.target.value)}
-                    className="col-span-3"
                     placeholder="Enter group name"
                   />
                 </div>
                 
-                <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="description" className="text-right">Description</Label>
+                <div>
+                  <Label htmlFor="description">Description</Label>
                   <Input
                     id="description"
                     value={newGroupDescription}
                     onChange={(e) => setNewGroupDescription(e.target.value)}
-                    className="col-span-3"
                     placeholder="Optional description"
                   />
                 </div>
                 
-                <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="screens" className="text-right">Screens</Label>
-                  <Select value={newGroupScreenCount.toString()} onValueChange={(value) => setNewGroupScreenCount(parseInt(value))}>
-                    <SelectTrigger className="col-span-3">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="1">1 Screen</SelectItem>
-                      <SelectItem value="2">2 Screens</SelectItem>
-                      <SelectItem value="3">3 Screens</SelectItem>
-                      <SelectItem value="4">4 Screens</SelectItem>
-                      <SelectItem value="6">6 Screens</SelectItem>
-                      <SelectItem value="8">8 Screens</SelectItem>
-                      <SelectItem value="9">9 Screens</SelectItem>
-                      <SelectItem value="12">12 Screens</SelectItem>
-                      <SelectItem value="16">16 Screens</SelectItem>
-                    </SelectContent>
-                  </Select>
+                <div>
+                  <Label htmlFor="screen_count">Screen Count</Label>
+                  <Input
+                    id="screen_count"
+                    type="number"
+                    min="1"
+                    max="16"
+                    value={newGroupScreenCount}
+                    onChange={(e) => setNewGroupScreenCount(parseInt(e.target.value) || 1)}
+                  />
                 </div>
                 
-                <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="orientation" className="text-right">Layout</Label>
-                  <Select value={newGroupOrientation} onValueChange={setNewGroupOrientation}>
-                    <SelectTrigger className="col-span-3">
+                <div>
+                  <Label htmlFor="orientation">Layout Orientation</Label>
+                  <Select value={newGroupOrientation} onValueChange={(value: 'horizontal' | 'vertical' | 'grid') => setNewGroupOrientation(value)}>
+                    <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -482,19 +403,20 @@ const StreamsTab = () => {
                   </Select>
                 </div>
               </div>
-              
+
               <DialogFooter>
-                <Button variant="outline" onClick={() => setShowCreateForm(false)}>
+                <Button 
+                  variant="outline" 
+                  onClick={() => setShowCreateForm(false)}
+                  disabled={operationInProgress === 'create'}
+                >
                   Cancel
                 </Button>
                 <Button 
                   onClick={createGroup}
                   disabled={operationInProgress === 'create' || !newGroupName.trim()}
                 >
-                  {operationInProgress === 'create' ? (
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                  ) : null}
-                  Create Group
+                  {operationInProgress === 'create' ? 'Creating...' : 'Create Group'}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -502,64 +424,94 @@ const StreamsTab = () => {
         </div>
       </div>
 
-      {/* Groups Grid */}
-      {groups.length === 0 ? (
-        <Card className="text-center p-8">
-          <div className="flex flex-col items-center space-y-4">
-            <Monitor className="w-12 h-12 text-gray-400" />
-            <div>
-              <h3 className="text-lg font-medium text-gray-900 mb-2">No Groups Found</h3>
-              <p className="text-gray-600 mb-4">Create your first streaming group to get started</p>
-              <Button
-                onClick={() => setShowCreateForm(true)}
-                className="bg-blue-600 hover:bg-blue-700"
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Create First Group
-              </Button>
+      {/* Status Summary */}
+      <Card className="bg-white border border-gray-200">
+        <CardHeader>
+          <CardTitle className="text-gray-800">System Status</CardTitle>
+          <CardDescription className="text-gray-600">
+            Overview of groups and clients in hybrid architecture
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="text-center">
+              <div className="text-2xl font-bold text-blue-600">{groups.length}</div>
+              <div className="text-sm text-gray-600">Total Groups</div>
+              <div className="text-xs text-gray-500">Docker Containers</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-green-600">
+                {groups.filter(g => g.docker_running).length}
+              </div>
+              <div className="text-sm text-gray-600">Active Groups</div>
+              <div className="text-xs text-gray-500">Docker Running</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-purple-600">{clients.length}</div>
+              <div className="text-sm text-gray-600">Total Clients</div>
+              <div className="text-xs text-gray-500">Registered</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-orange-600">
+                {clients.filter(c => c.is_active).length}
+              </div>
+              <div className="text-sm text-gray-600">Active Clients</div>
+              <div className="text-xs text-gray-500">Connected</div>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Groups List */}
+      {groups.length === 0 ? (
+        <Card className="bg-white border border-gray-200">
+          <CardContent className="text-center py-8">
+            <Monitor className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-800 mb-2">No Groups Found</h3>
+            <p className="text-gray-600 mb-4">
+              No Docker containers with multi-screen labels were discovered.
+            </p>
+            <Button onClick={() => setShowCreateForm(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Create Your First Group
+            </Button>
+          </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+        <div className="grid gap-6">
           {groups.map((group) => (
             <GroupCard
               key={group.id}
               group={group}
               videos={videos}
-              clients={clients}
+              clients={clients.filter(c => c.group_id === group.id)}
+              unassignedClients={clients.filter(c => !c.group_id)}
               selectedVideo={selectedVideos[group.id]}
               operationInProgress={operationInProgress}
-              onVideoSelect={handleVideoSelect}
-              onStart={handleStart}
-              onStop={handleStop}
-              onDelete={handleDelete}
-              onAssignClient={assignClientToStream}
-              // Enhanced props for proper operations
-              onRefreshGroups={fetchGroups}
-              setOperationInProgress={setOperationInProgress}
+              onVideoSelect={(groupId, videoName) => 
+                setSelectedVideos(prev => ({ ...prev, [groupId]: videoName }))
+              }
+              onStart={startGroup}
+              onStop={stopGroup}
+              onDelete={deleteGroup}
+              onAssignClient={assignClientToGroup}
             />
           ))}
         </div>
       )}
 
-      {/* Debug Info - Remove in production */}
-      <div className="mt-8 p-4 bg-gray-100 rounded text-xs">
-        <h3 className="font-bold mb-2">Debug Info:</h3>
-        <p>Groups: {groups.length}</p>
-        <p>Videos: {videos.length}</p>
-        <p>Clients: {clients.length}</p>
-        <p>Operation in progress: {operationInProgress || 'None'}</p>
-        <p>Selected videos: {JSON.stringify(selectedVideos)}</p>
-        <div className="mt-2">
-          <p className="font-semibold">Group Status Summary:</p>
-          {groups.map(group => (
-            <p key={group.id} className="ml-2">
-              {group.name}: {group.status} (Docker: {group.docker_container_id ? '✅' : '❌'}, FFmpeg: {group.ffmpeg_process_id ? '✅' : '❌'})
-            </p>
-          ))}
-        </div>
-      </div>
+      {/* Architecture Info */}
+      <Card className="bg-blue-50 border border-blue-200">
+        <CardContent className="pt-6">
+          <div className="flex items-center gap-2 text-blue-800">
+            <CheckCircle className="h-4 w-4" />
+            <span className="font-medium">Hybrid Architecture Active</span>
+          </div>
+          <p className="text-sm text-blue-700 mt-1">
+            Groups are managed through Docker discovery. Clients are tracked in real-time app state.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 };
