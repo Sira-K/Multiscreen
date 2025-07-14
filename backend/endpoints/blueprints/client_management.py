@@ -1,99 +1,120 @@
-# blueprints/client_management.py - Updated with Group Support
+# blueprints/client_management.py - Updated for Hybrid Architecture
+"""
+Client management with hybrid architecture:
+- Clients stored in app state (real-time connections)
+- Groups discovered from Docker containers
+"""
+
 from flask import Blueprint, request, jsonify, current_app
-import traceback
 import time
 import threading
 import logging
-import os
-from typing import Dict, List, Any, Optional, Tuple
+import traceback
+from typing import Dict, List, Any, Optional
 
 # Create blueprint
-client_bp = Blueprint('client', __name__)
+client_bp = Blueprint('client_management', __name__)
 
 # Configure logging
 logger = logging.getLogger(__name__)
-
-# Type alias for client info
-ClientInfo = Dict[str, Any]
 
 def get_state():
     """Get application state from current app context"""
     return current_app.config['APP_STATE']
 
-def get_available_videos():
-    """Get list of available videos for client assignment"""
-    try:
-        # Check both resized and raw video folders
-        download_folder = current_app.config.get('DOWNLOAD_FOLDER', 'resized_video')
-        upload_folder = current_app.config.get('UPLOAD_FOLDER', 'raw_video_file')
-        
-        available_videos = []
-        
-        # Priority 1: Check resized videos folder
-        if os.path.exists(download_folder):
-            video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.webm')
-            try:
-                for filename in os.listdir(download_folder):
-                    if filename.lower().endswith(video_extensions):
-                        # Remove 2k_ prefix for client compatibility
-                        client_filename = filename
-                        if filename.startswith('2k_'):
-                            client_filename = filename[3:]  # Remove '2k_' prefix
-                        
-                        available_videos.append({
-                            'client_name': client_filename,  # Name client expects
-                            'server_path': f"uploads/{filename}",  # Actual server path
-                            'source': 'resized'
-                        })
-            except Exception as e:
-                logger.warning(f"Error scanning resized videos: {e}")
-        
-        # Priority 2: Check raw videos folder (fallback)
-        if not available_videos and os.path.exists(upload_folder):
-            video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.webm')
-            try:
-                for filename in os.listdir(upload_folder):
-                    if filename.lower().endswith(video_extensions):
-                        available_videos.append({
-                            'client_name': filename,  # Original name
-                            'server_path': f"uploads/{filename}",  # Old path for compatibility
-                            'source': 'raw'
-                        })
-            except Exception as e:
-                logger.warning(f"Error scanning raw videos: {e}")
-        
-        logger.info(f"Found {len(available_videos)} videos for client assignment")
-        return available_videos
-        
-    except Exception as e:
-        logger.error(f"Error getting available videos: {e}")
-        return []
-
-def validate_client_data(data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+def get_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
     """
-    Validate client registration data
+    Get group information from Docker discovery
     
     Args:
-        data: The client data to validate
+        group_id: The group ID to find
         
     Returns:
-        Tuple of (is_valid, error_message)
+        Group data dict or None if not found
     """
-    if not data:
-        return False, "No JSON data provided"
+    try:
+        from blueprints.docker_management import discover_groups
         
-    if not data.get("client_id"):
-        return False, "Missing client_id parameter"
+        discovery_result = discover_groups()
+        if not discovery_result.get("success", False):
+            logger.error(f"Failed to discover groups: {discovery_result.get('error')}")
+            return None
         
-    return True, None
+        # Find the specific group
+        for group in discovery_result.get("groups", []):
+            if group.get("id") == group_id:
+                return group
+        
+        logger.warning(f"Group {group_id} not found in Docker containers")
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error getting group from Docker: {e}")
+        return None
+
+def get_available_streams_for_group(group_id: str) -> Dict[str, Any]:
+    """
+    Get available streams for a specific group from Docker discovery
+    
+    Args:
+        group_id: Group ID to get streams for
+        
+    Returns:
+        Dict with available streams info
+    """
+    try:
+        # Get group info from Docker
+        group = get_group_from_docker(group_id)
+        
+        if not group:
+            return {
+                "available_streams": [],
+                "active_clients": 0,
+                "max_screens": 1,
+                "group_name": "Unknown"
+            }
+        
+        screen_count = group.get("screen_count", 2)
+        group_name = group.get("name", group_id)
+        
+        # Get app state for client counting
+        state = get_state()
+        
+        # Count active clients in this group
+        active_clients = state.get_active_clients_count(group_id)
+        
+        # Always include the full stream for this group
+        available_streams = [f"live/{group_name}/test"]
+        
+        # Add split streams based on client count and screen_count
+        if active_clients >= 2:
+            # If we have at least 2 active clients, make split streams available
+            # But limit to our configured screen_count
+            for i in range(min(active_clients, screen_count)):
+                available_streams.append(f"live/{group_name}/test{i}")
+        
+        return {
+            "available_streams": available_streams,
+            "active_clients": active_clients,
+            "max_screens": screen_count,
+            "group_name": group_name,
+            "full_stream": f"live/{group_name}/test"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting streams for group {group_id}: {e}")
+        return {
+            "available_streams": [],
+            "active_clients": 0,
+            "max_screens": 1,
+            "group_name": "Error"
+        }
 
 @client_bp.route("/register_client", methods=["POST"])
 def register_client():
-    """Register a client device with the server - Updated with group support"""
+    """Register a client device with the server"""
     try:
         logger.info("==== REGISTER CLIENT REQUEST RECEIVED ====")
-        logger.info(f"Request JSON: {request.get_json()}")
-        logger.info(f"Remote Address: {request.remote_addr}")
         
         # Get app state
         state = get_state()
@@ -104,210 +125,68 @@ def register_client():
         
         if not hasattr(state, 'clients'):
             state.clients = {}
-            
-        if not hasattr(state, 'groups'):
-            state.groups = {}
         
         # Parse and validate request data
         data = request.get_json()
-        is_valid, error_message = validate_client_data(data)
         
-        if not is_valid:
-            return jsonify({"error": error_message}), 400
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
             
-        client_id = data.get("client_id")
-        client_info = data.get("client_info", {})
-        preferred_group = data.get("group_id") 
+        hostname = data.get("hostname")
+        ip_address = data.get("ip_address")
+        display_name = data.get("display_name")
         
-        logger.info(f"Registering client with ID: {client_id}")
+        if not hostname:
+            return jsonify({"error": "Missing hostname"}), 400
+            
+        if not ip_address:
+            return jsonify({"error": "Missing ip_address"}), 400
         
-        # Get available videos for assignment
-        available_videos = get_available_videos()
+        # Use hostname as client_id for consistency
+        client_id = hostname
+        current_time = time.time()
+        
+        logger.info(f"Registering client: {client_id} ({ip_address})")
         
         with state.clients_lock:
             # Check if client already exists
-            existing_client = state.clients.get(client_id, {})
-            existing_group_id = existing_client.get("group_id")
+            existing_client = state.clients.get(client_id)
             
-            # Determine group assignment
-            assigned_group_id = existing_group_id or preferred_group
-            
-            # If no group specified and no existing assignment, try to find a suitable group
-            if not assigned_group_id and state.groups:
-                # Find a group that's active and has space
-                for group_id, group_data in state.groups.items():
-                    if (group_data.get("status") == "active" and 
-                        len(group_data.get("clients", {})) < group_data.get("screen_count", 2)):
-                        assigned_group_id = group_id
-                        logger.info(f"Auto-assigning client to available group: {group_id}")
-                        break
-            
-            # Determine video assignment
-            assigned_video = existing_client.get("video_file")
-            
-            # If no existing assignment and videos are available, assign the first one
-            if not assigned_video and available_videos:
-                assigned_video = available_videos[0]['client_name']
-                logger.info(f"Auto-assigning video to new client: {assigned_video}")
-            
-            # Create or update client record
-            state.clients[client_id] = {
-                "id": client_id,
-                "ip": client_info.get("ip_address") or request.remote_addr,
-                "hostname": client_info.get("hostname", "Unknown"),
-                "platform": client_info.get("platform", "Unknown"),
-                "mac_address": client_info.get("mac_address", "Unknown"),
-                "last_seen": time.time(),
-                "status": "active",
-                "client_type": client_info.get("client_type", "srt_stream"),  # Default to SRT streaming
-                # Group assignment
-                "group_id": assigned_group_id,
-                # Video file assignment (for file-based clients)
-                "video_file": assigned_video,
-                # Stream assignment (for SRT streaming clients) 
-                "stream_id": existing_client.get("stream_id", None),
-                # Display name
-                "display_name": existing_client.get("display_name", None)
-            }
-            
-            # Update group membership
-            if assigned_group_id and assigned_group_id in state.groups:
-                if not hasattr(state, 'groups_lock'):
-                    state.groups_lock = threading.RLock()
-                    
-                with state.groups_lock:
-                    if "clients" not in state.groups[assigned_group_id]:
-                        state.groups[assigned_group_id]["clients"] = {}
-                    
-                    state.groups[assigned_group_id]["clients"][client_id] = {
-                        "assigned_at": time.time(),
-                        "stream_id": existing_client.get("stream_id", None)
-                    }
-                    
-                    # Auto-assign stream within group if available
-                    group_streams = get_group_available_streams(assigned_group_id)
-                    if group_streams["available_streams"] and not state.clients[client_id].get("stream_id"):
-                        stream_id = group_streams["available_streams"][0]  # Assign first available
-                        state.clients[client_id]["stream_id"] = stream_id
-                        state.groups[assigned_group_id]["clients"][client_id]["stream_id"] = stream_id
-                        logger.info(f"Auto-assigned stream {stream_id} to client in group {assigned_group_id}")
-            
-            logger.info(f"Client state after registration: {state.clients[client_id]}")
-            logger.info(f"Total clients now: {len(state.clients)}")
-            
-        # Prepare response based on client type and group assignment
-        response_data = {
-            "message": f"Client {client_id} registered successfully"
-        }
+            if existing_client:
+                # Update existing client
+                existing_client.update({
+                    "ip_address": ip_address,
+                    "display_name": display_name or existing_client.get("display_name", hostname),
+                    "last_seen": current_time,
+                    "status": "active"
+                })
+                
+                logger.info(f"Updated existing client: {client_id}")
+                action = "updated"
+            else:
+                # Create new client
+                state.clients[client_id] = {
+                    "hostname": hostname,
+                    "ip_address": ip_address,
+                    "display_name": display_name or hostname,
+                    "registered_at": current_time,
+                    "last_seen": current_time,
+                    "status": "active",
+                    "group_id": None,  # Not assigned to any group initially
+                    "stream_assignment": None
+                }
+                
+                logger.info(f"Registered new client: {client_id}")
+                action = "registered"
         
-        # Add group information
-        if assigned_group_id:
-            response_data["group_id"] = assigned_group_id
-            if assigned_group_id in state.groups:
-                group = state.groups[assigned_group_id]
-                response_data["group_name"] = group.get("name", assigned_group_id)
-                response_data["srt_port"] = group.get("srt_port", 10080)
-        
-        # Add video file info for video clients
-        if assigned_video:
-            response_data["video_file"] = assigned_video
-            
-        # Add stream info for SRT clients  
-        if state.clients[client_id].get("stream_id"):
-            response_data["stream_id"] = state.clients[client_id]["stream_id"]
-            
-        return jsonify(response_data), 200
+        return jsonify({
+            "message": f"Client {action} successfully",
+            "client_id": client_id,
+            "client_info": state.clients[client_id]
+        }), 200
         
     except Exception as e:
         logger.error(f"Error registering client: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-@client_bp.route("/get_clients", methods=["GET"])
-def get_clients():
-    """Get a list of all registered clients with group and stream info"""
-    logger.info("==== GET_CLIENTS REQUEST RECEIVED ====")
-    state = get_state()
-
-    try:
-        # Get optional group filter
-        group_id = request.args.get('group_id')
-        
-        with state.clients_lock if hasattr(state, 'clients_lock') else threading.RLock():
-            # Consider a client inactive if not seen in the last minute
-            current_time = time.time()
-            client_list = []
-            
-            logger.info(f"Total clients in state: {len(state.clients) if hasattr(state, 'clients') else 0}")
-            
-            if not hasattr(state, 'clients'):
-                state.clients = {}
-            
-            for client_id, client_data in state.clients.items():
-                # Filter by group if specified
-                if group_id and client_data.get("group_id") != group_id:
-                    continue
-                    
-                # Create a copy of the client data for modification
-                client = dict(client_data)
-                
-                # Update status based on last seen time
-                inactive_threshold = 60  # seconds
-                if current_time - client_data.get("last_seen", 0) > inactive_threshold:
-                    client["status"] = "inactive"
-                else:
-                    client["status"] = "active"
-                    
-                # Add formatted last seen time
-                seconds_ago = int(current_time - client_data.get("last_seen", 0))
-                client["last_seen_formatted"] = format_time_ago(seconds_ago)
-                
-                # Add group information
-                client_group_id = client.get("group_id")
-                if client_group_id and hasattr(state, 'groups') and client_group_id in state.groups:
-                    group = state.groups[client_group_id]
-                    client["group_name"] = group.get("name", client_group_id)
-                    client["group_status"] = group.get("status", "unknown")
-                    client["srt_port"] = group.get("srt_port", 10080)
-                else:
-                    client["group_name"] = None
-                    client["group_status"] = None
-                    client["srt_port"] = 10080  # Default port
-                    
-                client_list.append(client)
-            
-            # Get available streams based on group or global
-            if group_id:
-                streams_info = get_group_available_streams(group_id)
-            else:
-                # Return all streams from all groups
-                all_streams = set()
-                total_active = 0
-                
-                if hasattr(state, 'groups'):
-                    for gid in state.groups.keys():
-                        group_streams = get_group_available_streams(gid)
-                        all_streams.update(group_streams["available_streams"])
-                        total_active += group_streams["active_clients"]
-                
-                streams_info = {
-                    "available_streams": list(all_streams),
-                    "active_clients": total_active,
-                    "max_screens": 4  # Default
-                }
-            
-            logger.info(f"Returning {len(client_list)} clients")
-                
-            return jsonify({
-                "clients": client_list,
-                "total": len(client_list),
-                "active": len([c for c in client_list if c["status"] == "active"]),
-                "available_streams": streams_info["available_streams"],
-                "max_screens": streams_info["max_screens"],
-                "group_filter": group_id
-            }), 200
-    except Exception as e:
-        logger.error(f"Error getting clients: {e}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -315,6 +194,8 @@ def get_clients():
 def assign_client_to_group():
     """Assign a client to a specific group"""
     try:
+        logger.info("==== ASSIGN CLIENT TO GROUP REQUEST RECEIVED ====")
+        
         state = get_state()
         
         data = request.get_json()
@@ -328,52 +209,44 @@ def assign_client_to_group():
         
         if not client_id:
             return jsonify({"error": "Missing client_id"}), 400
-            
-        # Initialize groups and clients if needed
-        if not hasattr(state, 'groups'):
-            state.groups = {}
+        
+        # Initialize clients if needed
         if not hasattr(state, 'clients'):
             state.clients = {}
-            
-        # Validate group exists (if group_id is provided)
-        if group_id and group_id not in state.groups:
-            return jsonify({"error": "Group not found"}), 404
             
         # Validate client exists
         if client_id not in state.clients:
             return jsonify({"error": "Client not found"}), 404
         
-        with state.clients_lock if hasattr(state, 'clients_lock') else threading.RLock():
-            with state.groups_lock if hasattr(state, 'groups_lock') else threading.RLock():
-                client = state.clients[client_id]
-                old_group_id = client.get("group_id")
-                
-                # Remove from old group
-                if old_group_id and old_group_id in state.groups:
-                    if client_id in state.groups[old_group_id].get("clients", {}):
-                        del state.groups[old_group_id]["clients"][client_id]
-                        logger.info(f"Removed client {client_id} from old group {old_group_id}")
-                
-                # Add to new group
-                if group_id:
-                    if "clients" not in state.groups[group_id]:
-                        state.groups[group_id]["clients"] = {}
-                    state.groups[group_id]["clients"][client_id] = {
-                        "assigned_at": time.time(),
-                        "stream_id": None
-                    }
-                    client["group_id"] = group_id
-                    logger.info(f"Assigned client {client_id} to group {group_id}")
-                else:
-                    client["group_id"] = None
-                    client["stream_id"] = None
-                    logger.info(f"Removed client {client_id} from all groups")
+        # Validate group exists (if group_id is provided) - check Docker
+        if group_id:
+            group = get_group_from_docker(group_id)
+            if not group:
+                return jsonify({"error": f"Group '{group_id}' not found in Docker containers"}), 404
         
-        message = f"Client {client_id} assigned to group {group_id}" if group_id else f"Client {client_id} removed from all groups"
+        with state.clients_lock:
+            client = state.clients[client_id]
+            old_group_id = client.get("group_id")
+            
+            # Update client's group assignment
+            if group_id:
+                client["group_id"] = group_id
+                client["assigned_at"] = time.time()
+                client["stream_assignment"] = None  # Reset stream assignment
+                logger.info(f"Assigned client {client_id} to group {group_id}")
+            else:
+                # Unassign from group
+                client["group_id"] = None
+                client["assigned_at"] = None
+                client["stream_assignment"] = None
+                logger.info(f"Unassigned client {client_id} from group")
         
         return jsonify({
-            "message": message,
-            "client": state.clients[client_id]
+            "message": f"Client assigned successfully",
+            "client_id": client_id,
+            "old_group_id": old_group_id,
+            "new_group_id": group_id,
+            "client_info": state.clients[client_id]
         }), 200
         
     except Exception as e:
@@ -381,307 +254,198 @@ def assign_client_to_group():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-@client_bp.route("/assign_stream", methods=["POST"])
-def assign_stream():
-    """Assign a specific stream to a client - Updated with group support"""
-    state = get_state()
-
+@client_bp.route("/get_clients", methods=["GET"])
+def get_clients():
+    """Get all registered clients with their group assignments"""
     try:
-        # Get and validate request data
-        data = request.get_json()
+        logger.info("==== GET CLIENTS REQUEST RECEIVED ====")
         
-        logger.info(f"Received assign_stream request: {data}")
+        # Get app state
+        state = get_state()
         
-        if not data:
-            return jsonify({"error": "Missing request data"}), 400
-            
-        client_id = data.get("client_id")
-        stream_id = data.get("stream_id") or data.get("stream_name")
+        # Initialize clients if needed
+        if not hasattr(state, 'clients'):
+            state.clients = {}
         
-        if not client_id:
-            return jsonify({"error": "Missing required parameter: client_id"}), 400
-            
-        with state.clients_lock if hasattr(state, 'clients_lock') else threading.RLock():
-            if client_id not in state.clients:
-                return jsonify({"error": f"Client not registered: {client_id}"}), 404
-                
-            client = state.clients[client_id]
-            client_group_id = client.get("group_id")
-            
-            # Get available streams for the client's group
-            if client_group_id:
-                streams_info = get_group_available_streams(client_group_id)
-            else:
-                # If no group, return error
-                return jsonify({"error": "Client must be assigned to a group before stream assignment"}), 400
-            
-            # Check if the requested stream is available for this group
-            if stream_id and stream_id not in streams_info["available_streams"]:
-                return jsonify({
-                    "error": f"Stream {stream_id} is not available for group {client_group_id}. Available streams: {streams_info['available_streams']}"
-                }), 400
-                
-            # Debug - print before state
-            logger.info(f"Client before update: {client}")
-            
-            # Set the stream_id and mark as SRT client
-            state.clients[client_id]["stream_id"] = stream_id
-            state.clients[client_id]["client_type"] = "srt_stream"
-            
-            # Update group assignment
-            if client_group_id and hasattr(state, 'groups') and client_group_id in state.groups:
-                with state.groups_lock if hasattr(state, 'groups_lock') else threading.RLock():
-                    if "clients" not in state.groups[client_group_id]:
-                        state.groups[client_group_id]["clients"] = {}
-                    state.groups[client_group_id]["clients"][client_id] = {
-                        "assigned_at": time.time(),
-                        "stream_id": stream_id
+        # Get groups from Docker for additional info
+        groups_info = {}
+        try:
+            from blueprints.docker_management import discover_groups
+            discovery_result = discover_groups()
+            if discovery_result.get("success", False):
+                for group in discovery_result.get("groups", []):
+                    groups_info[group.get("id")] = {
+                        "name": group.get("name"),
+                        "docker_running": group.get("docker_running", False)
                     }
-                
-            # Debug - print after state
-            logger.info(f"Client after update: {state.clients[client_id]}")
-            
-        return jsonify({
-            "message": f"Client {client_id} assigned to stream {stream_id} in group {client_group_id}",
-            "client": state.clients[client_id],
-            "available_streams": streams_info["available_streams"]
-        }), 200
-    except Exception as e:
-        logger.error(f"Error assigning stream: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-@client_bp.route("/available_streams", methods=["GET"])
-def available_streams_endpoint():
-    """Endpoint to get available streams based on group or global"""
-    try:
-        group_id = request.args.get('group_id')
+        except Exception as e:
+            logger.warning(f"Could not get group info: {e}")
         
-        if group_id:
-            streams_info = get_group_available_streams(group_id)
-        else:
-            # Return streams from all groups
-            state = get_state()
-            all_streams = set()
-            total_active = 0
-            
-            if hasattr(state, 'groups'):
-                for gid in state.groups.keys():
-                    group_streams = get_group_available_streams(gid)
-                    all_streams.update(group_streams["available_streams"])
-                    total_active += group_streams["active_clients"]
-            
-            streams_info = {
-                "available_streams": list(all_streams),
-                "active_clients": total_active,
-                "max_screens": 4,
-                "group_name": "All Groups"
-            }
-        
-        return jsonify(streams_info), 200
-    except Exception as e:
-        logger.error(f"Error getting available streams: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-def get_group_available_streams(group_id: str) -> Dict[str, Any]:
-    """
-    Get available streams for a specific group - ALWAYS show all potential streams
-    """
-    state = get_state()
-    
-    if not hasattr(state, 'groups') or group_id not in state.groups:
-        return {
-            "available_streams": [],
-            "active_clients": 0,
-            "max_screens": 1,
-            "group_name": "Unknown"
-        }
-    
-    group = state.groups[group_id]
-    screen_count = group.get("screen_count", 2)
-    
-    # Ensure clients_lock exists
-    if not hasattr(state, 'clients_lock'):
-        state.clients_lock = threading.RLock()
-    
-    # Ensure clients dict exists
-    if not hasattr(state, 'clients'):
-        state.clients = {}
-    
-    with state.clients_lock:
-        # Count active clients in this group
         current_time = time.time()
-        inactive_threshold = 60  # seconds
+        clients_list = []
         
-        active_clients = 0
-        for client_data in state.clients.values():
-            if (client_data.get("group_id") == group_id and 
-                current_time - client_data.get("last_seen", 0) <= inactive_threshold):
-                active_clients += 1
-        
-        # Always include the full stream for this group
-        available_streams = [f"live/{group_id}/test"]
-        
-        # FIXED: ALWAYS show all potential split streams based on screen_count
-        # This allows testing and manual assignment regardless of client count
-        for i in range(screen_count):
-            available_streams.append(f"live/{group_id}/test{i}")
-        
-        return {
-            "available_streams": available_streams,
-            "active_clients": active_clients,
-            "max_screens": screen_count,
-            "group_name": group.get("name", group_id),
-            "full_stream": f"live/{group_id}/test",  # Always available
-            "note": f"Showing all {screen_count} potential streams (Active: {active_clients})"
-        }
-    
-def format_time_ago(seconds_ago: int) -> str:
-    """Format a time difference in seconds into a human-readable string"""
-    if seconds_ago < 60:
-        return f"{seconds_ago} seconds ago"
-    elif seconds_ago < 3600:
-        minutes = seconds_ago // 60
-        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
-    else:
-        hours = seconds_ago // 3600
-        return f"{hours} hour{'s' if hours != 1 else ''} ago"
-
-@client_bp.route("/rename_client", methods=["POST"])
-def rename_client():
-    """Rename a client for easier identification"""
-    state = get_state()
-    try:
-        data = request.get_json()
-        client_id = data.get("client_id")
-        display_name = data.get("display_name")
-        
-        if not client_id:
-            return jsonify({"error": "Missing client_id parameter"}), 400
-            
-        if not display_name:
-            return jsonify({"error": "Missing display_name parameter"}), 400
-            
-        with state.clients_lock if hasattr(state, 'clients_lock') else threading.RLock():
-            if client_id not in state.clients:
-                return jsonify({"error": "Client not registered"}), 404
+        with state.clients_lock:
+            for client_id, client_data in state.clients.items():
+                # Calculate time since last seen
+                last_seen = client_data.get("last_seen", 0)
+                seconds_ago = int(current_time - last_seen)
+                is_active = seconds_ago <= 60  # Active if seen within 60 seconds
                 
-            state.clients[client_id]["display_name"] = display_name
-            
+                # Get group info
+                group_id = client_data.get("group_id")
+                group_info = None
+                if group_id and group_id in groups_info:
+                    group_info = groups_info[group_id]
+                
+                client_info = {
+                    "client_id": client_id,
+                    "hostname": client_data.get("hostname", client_id),
+                    "ip_address": client_data.get("ip_address", "unknown"),
+                    "display_name": client_data.get("display_name", client_id),
+                    "registered_at": client_data.get("registered_at", 0),
+                    "last_seen": last_seen,
+                    "seconds_ago": seconds_ago,
+                    "is_active": is_active,
+                    "status": "active" if is_active else "inactive",
+                    "group_id": group_id,
+                    "group_name": group_info.get("name") if group_info else None,
+                    "group_docker_running": group_info.get("docker_running") if group_info else None,
+                    "stream_assignment": client_data.get("stream_assignment")
+                }
+                
+                clients_list.append(client_info)
+        
+        # Sort by last seen (most recent first)
+        clients_list.sort(key=lambda x: x["last_seen"], reverse=True)
+        
+        # Count active clients
+        active_clients = len([c for c in clients_list if c["is_active"]])
+        
+        logger.info(f"Returning {len(clients_list)} clients ({active_clients} active)")
+        
         return jsonify({
-            "message": f"Client {client_id} renamed to '{display_name}'",
-            "client": state.clients[client_id]
+            "clients": clients_list,
+            "total_clients": len(clients_list),
+            "active_clients": active_clients,
+            "groups_available": len(groups_info),
+            "timestamp": current_time
         }), 200
+        
     except Exception as e:
-        logger.error(f"Error renaming client: {e}")
+        logger.error(f"Error getting clients: {e}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 @client_bp.route("/client_status", methods=["POST"])
 def client_status():
-    """Check what stream/video a client should be displaying - Updated with group support"""
-    state = get_state()
-    
+    """Check what stream a client should be displaying"""
     try:
+        # Get app state
+        state = get_state()
+        
+        # Parse request data
         data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+            
+        client_id = data.get("client_id") or data.get("hostname")
         
-        if not data or not data.get("client_id"):
-            return jsonify({"error": "Missing client_id parameter"}), 400
+        if not client_id:
+            return jsonify({"error": "Missing client_id or hostname"}), 400
         
-        client_id = data.get("client_id")
+        # Initialize clients if needed
+        if not hasattr(state, 'clients'):
+            state.clients = {}
         
-        # Get available videos for potential assignment
-        available_videos = get_available_videos()
-                
-        with state.clients_lock if hasattr(state, 'clients_lock') else threading.RLock():
-            if client_id not in state.clients:
-                # Auto-register unknown clients without group assignment
-                assigned_video = available_videos[0]['client_name'] if available_videos else None
-                
-                state.clients[client_id] = {
-                    "id": client_id,
-                    "ip": request.remote_addr,
-                    "hostname": "Unknown",
-                    "last_seen": time.time(),
-                    "status": "active",
-                    "client_type": "srt_stream",  # Default to SRT streaming
-                    "group_id": None,  # No group assignment for auto-registered clients
-                    "video_file": assigned_video,
-                    "stream_id": None
-                }
-                
-                logger.info(f"Auto-registered new client {client_id} (no group assignment)")
-            else:
-                # Update last seen timestamp
-                state.clients[client_id]["last_seen"] = time.time()
+        # Update client last seen time
+        current_time = time.time()
+        
+        with state.clients_lock:
+            if client_id in state.clients:
+                state.clients[client_id]["last_seen"] = current_time
                 state.clients[client_id]["status"] = "active"
-                
-                # Ensure client has a video assignment if videos are available
-                if not state.clients[client_id].get("video_file") and available_videos:
-                    state.clients[client_id]["video_file"] = available_videos[0]['client_name']
-                    logger.info(f"Assigned video to existing client {client_id}: {available_videos[0]['client_name']}")
-            
-            client_data = state.clients[client_id]
-            
-        # Determine response based on client type and group assignment
-        client_type = client_data.get("client_type", "srt_stream")
-        client_group_id = client_data.get("group_id")
+                client = state.clients[client_id]
+            else:
+                # Auto-register client if not found
+                ip_address = request.remote_addr
+                state.clients[client_id] = {
+                    "hostname": client_id,
+                    "ip_address": ip_address,
+                    "display_name": client_id,
+                    "registered_at": current_time,
+                    "last_seen": current_time,
+                    "status": "active",
+                    "group_id": None,
+                    "stream_assignment": None
+                }
+                client = state.clients[client_id]
+                logger.info(f"Auto-registered client: {client_id}")
         
-        if client_type == "srt_stream" and client_group_id:
-            # SRT streaming client with group assignment
-            group = state.groups.get(client_group_id, {}) if hasattr(state, 'groups') else {}
-            
-            response_data = {
+        # Get client's group assignment
+        group_id = client.get("group_id")
+        
+        if not group_id:
+            return jsonify({
                 "client_id": client_id,
-                "stream_id": client_data.get("stream_id"),
-                "group_id": client_group_id,
-                "group_name": group.get("name", client_group_id),
-                "srt_ip": getattr(state, 'srt_ip', '127.0.0.1'),
-                "srt_port": group.get("srt_port", 10080),
-                "orientation": group.get("orientation", "horizontal"),
-                "status": "active"
-            }
-        elif client_type == "srt_stream":
-            # SRT streaming client without group (legacy mode)
-            response_data = {
-                "client_id": client_id,
-                "stream_id": client_data.get("stream_id"),
+                "assigned": False,
+                "message": "Client not assigned to any group",
                 "group_id": None,
-                "srt_ip": getattr(state, 'srt_ip', '127.0.0.1'),
-                "srt_port": 10080,
-                "orientation": getattr(state, 'orientation', "horizontal"),
-                "status": "active",
-                "message": "Client not assigned to any group"
-            }
-        else:
-            # Video file client - return video assignment
-            video_file = client_data.get("video_file")
-            
-            response_data = {
+                "stream_url": None
+            }), 200
+        
+        # Verify group exists in Docker
+        group = get_group_from_docker(group_id)
+        if not group:
+            return jsonify({
                 "client_id": client_id,
-                "video_file": video_file,
-                "status": "active",
-                "available_videos": [v['client_name'] for v in available_videos]
-            }
-            
-            # Add download URL mapping for the assigned video
-            if video_file and available_videos:
-                # Find the server path for this video
-                for video in available_videos:
-                    if video['client_name'] == video_file:
-                        response_data["download_url"] = f"/{video['server_path']}"
-                        response_data["video_source"] = video['source']
-                        break
-            
-        logger.info(f"Client status response for {client_id}: {response_data}")
-        return jsonify(response_data), 200
+                "assigned": True,
+                "group_id": group_id,
+                "error": "Assigned group not found in Docker containers",
+                "stream_url": None
+            }), 404
+        
+        # Check if group's Docker container is running
+        if not group.get("docker_running", False):
+            return jsonify({
+                "client_id": client_id,
+                "assigned": True,
+                "group_id": group_id,
+                "group_name": group.get("name"),
+                "error": "Group's Docker container is not running",
+                "docker_status": group.get("docker_status", "unknown"),
+                "stream_url": None
+            }), 503
+        
+        # Get available streams for this group
+        streams_info = get_available_streams_for_group(group_id)
+        
+        # For now, assign the full stream (could be enhanced with automatic assignment logic)
+        stream_url = None
+        if streams_info.get("available_streams"):
+            # Use the full stream by default
+            full_stream = streams_info.get("full_stream")
+            if full_stream:
+                ports = group.get("ports", {})
+                srt_port = ports.get("srt_port", 10080)
+                stream_url = f"srt://127.0.0.1:{srt_port}?streamid=#!::r={full_stream},m=request"
+        
+        return jsonify({
+            "client_id": client_id,
+            "assigned": True,
+            "group_id": group_id,
+            "group_name": group.get("name"),
+            "docker_status": group.get("docker_status"),
+            "docker_running": group.get("docker_running"),
+            "stream_url": stream_url,
+            "available_streams": streams_info.get("available_streams", []),
+            "active_clients_in_group": streams_info.get("active_clients", 0)
+        }), 200
         
     except Exception as e:
         logger.error(f"Error checking client status: {e}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-    
+
 @client_bp.route("/remove_client", methods=["POST"])
 def remove_client():
     """Remove a client from the system"""
@@ -697,9 +461,6 @@ def remove_client():
         
         if not hasattr(state, 'clients'):
             state.clients = {}
-            
-        if not hasattr(state, 'groups'):
-            state.groups = {}
         
         # Parse and validate request data
         data = request.get_json()
@@ -711,32 +472,21 @@ def remove_client():
         
         if not client_id:
             return jsonify({"error": "Missing client_id parameter"}), 400
-            
-        logger.info(f"Removing client with ID: {client_id}")
+        
+        logger.info(f"Removing client: {client_id}")
         
         with state.clients_lock:
-            # Check if client exists
             if client_id not in state.clients:
-                return jsonify({"error": f"Client not found: {client_id}"}), 404
+                return jsonify({"error": f"Client '{client_id}' not found"}), 404
             
             client = state.clients[client_id]
             client_name = client.get('display_name') or client.get('hostname') or client_id
-            client_group_id = client.get('group_id')
-            
-            # Remove client from its group if assigned
-            if client_group_id and hasattr(state, 'groups_lock'):
-                with state.groups_lock:
-                    if client_group_id in state.groups:
-                        group_clients = state.groups[client_group_id].get('clients', {})
-                        if client_id in group_clients:
-                            del group_clients[client_id]
-                            logger.info(f"Removed client {client_id} from group {client_group_id}")
             
             # Remove client from the main clients dictionary
             del state.clients[client_id]
             
             logger.info(f"Successfully removed client: {client_name} ({client_id})")
-            
+        
         return jsonify({
             "message": f"Client '{client_name}' removed successfully",
             "removed_client_id": client_id,
@@ -748,159 +498,13 @@ def remove_client():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-@client_bp.route("/remove_multiple_clients", methods=["POST"])
-def remove_multiple_clients():
-    """Remove multiple clients from the system"""
-    try:
-        logger.info("==== REMOVE MULTIPLE CLIENTS REQUEST RECEIVED ====")
-        
-        # Get app state
-        state = get_state()
-        
-        # Initialize state objects if needed
-        if not hasattr(state, 'clients_lock'):
-            state.clients_lock = threading.RLock()
-        
-        if not hasattr(state, 'clients'):
-            state.clients = {}
-            
-        if not hasattr(state, 'groups'):
-            state.groups = {}
-        
-        # Parse and validate request data
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({"error": "No JSON data provided"}), 400
-            
-        client_ids = data.get("client_ids")
-        
-        if not client_ids or not isinstance(client_ids, list):
-            return jsonify({"error": "Missing or invalid client_ids parameter (must be a list)"}), 400
-            
-        logger.info(f"Removing {len(client_ids)} clients: {client_ids}")
-        
-        removed_clients = []
-        not_found_clients = []
-        
-        with state.clients_lock:
-            for client_id in client_ids:
-                if client_id not in state.clients:
-                    not_found_clients.append(client_id)
-                    continue
-                
-                client = state.clients[client_id]
-                client_name = client.get('display_name') or client.get('hostname') or client_id
-                client_group_id = client.get('group_id')
-                
-                # Remove client from its group if assigned
-                if client_group_id and hasattr(state, 'groups_lock'):
-                    with state.groups_lock:
-                        if client_group_id in state.groups:
-                            group_clients = state.groups[client_group_id].get('clients', {})
-                            if client_id in group_clients:
-                                del group_clients[client_id]
-                                logger.info(f"Removed client {client_id} from group {client_group_id}")
-                
-                # Remove client from the main clients dictionary
-                del state.clients[client_id]
-                
-                removed_clients.append({
-                    "id": client_id,
-                    "name": client_name
-                })
-                
-                logger.info(f"Successfully removed client: {client_name} ({client_id})")
-        
-        return jsonify({
-            "message": f"Successfully removed {len(removed_clients)} clients",
-            "removed_clients": removed_clients,
-            "not_found_clients": not_found_clients,
-            "total_removed": len(removed_clients),
-            "total_not_found": len(not_found_clients)
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error removing multiple clients: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-@client_bp.route("/remove_inactive_clients", methods=["POST"])
-def remove_inactive_clients():
-    """Remove all inactive clients from the system"""
-    try:
-        logger.info("==== REMOVE INACTIVE CLIENTS REQUEST RECEIVED ====")
-        
-        # Get app state
-        state = get_state()
-        
-        # Initialize state objects if needed
-        if not hasattr(state, 'clients_lock'):
-            state.clients_lock = threading.RLock()
-        
-        if not hasattr(state, 'clients'):
-            state.clients = {}
-            
-        if not hasattr(state, 'groups'):
-            state.groups = {}
-        
-        # Parse request data for optional parameters
-        data = request.get_json() or {}
-        inactive_threshold = data.get("inactive_threshold", 300)  # Default 5 minutes
-        
-        logger.info(f"Removing clients inactive for more than {inactive_threshold} seconds")
-        
-        current_time = time.time()
-        removed_clients = []
-        
-        with state.clients_lock:
-            # Find inactive clients
-            clients_to_remove = []
-            
-            for client_id, client_data in state.clients.items():
-                last_seen = client_data.get('last_seen', 0)
-                time_since_seen = current_time - last_seen
-                
-                if time_since_seen > inactive_threshold:
-                    clients_to_remove.append(client_id)
-            
-            # Remove inactive clients
-            for client_id in clients_to_remove:
-                client = state.clients[client_id]
-                client_name = client.get('display_name') or client.get('hostname') or client_id
-                client_group_id = client.get('group_id')
-                last_seen = client.get('last_seen', 0)
-                time_since_seen = current_time - last_seen
-                
-                # Remove client from its group if assigned
-                if client_group_id and hasattr(state, 'groups_lock'):
-                    with state.groups_lock:
-                        if client_group_id in state.groups:
-                            group_clients = state.groups[client_group_id].get('clients', {})
-                            if client_id in group_clients:
-                                del group_clients[client_id]
-                                logger.info(f"Removed client {client_id} from group {client_group_id}")
-                
-                # Remove client from the main clients dictionary
-                del state.clients[client_id]
-                
-                removed_clients.append({
-                    "id": client_id,
-                    "name": client_name,
-                    "last_seen": last_seen,
-                    "inactive_for_seconds": int(time_since_seen)
-                })
-                
-                logger.info(f"Removed inactive client: {client_name} ({client_id}) - inactive for {int(time_since_seen)}s")
-        
-        return jsonify({
-            "message": f"Successfully removed {len(removed_clients)} inactive clients",
-            "removed_clients": removed_clients,
-            "total_removed": len(removed_clients),
-            "inactive_threshold_seconds": inactive_threshold
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error removing inactive clients: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+def format_time_ago(seconds_ago: int) -> str:
+    """Format a time difference in seconds into a human-readable string"""
+    if seconds_ago < 60:
+        return f"{seconds_ago} seconds ago"
+    elif seconds_ago < 3600:
+        minutes = seconds_ago // 60
+        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+    else:
+        hours = seconds_ago // 3600
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
