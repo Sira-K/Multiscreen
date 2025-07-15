@@ -56,6 +56,7 @@ const StreamsTab = () => {
       ]);
       
       console.log('✅ Groups response (Docker discovery):', groupsResponse);
+      console.log('✅ Raw groups data:', groupsResponse.groups);
       console.log('✅ Videos response:', videosResponse);
       console.log('✅ Clients response (hybrid state):', clientsResponse);
       
@@ -76,7 +77,7 @@ const StreamsTab = () => {
         const activeGroupClients = groupClients.filter(client => client.is_active);
         
         return {
-          ...group,
+          ...group,  // Keep ALL original group fields
           total_clients: groupClients.length,
           active_clients: activeGroupClients.length
         };
@@ -88,7 +89,8 @@ const StreamsTab = () => {
         groupsCount: groupsWithCounts.length,
         videosCount: videosResponse.videos?.length || 0,
         clientsCount: clientsList.length,
-        architecture: 'hybrid_docker_discovery'
+        architecture: 'hybrid_docker_discovery',
+        finalGroups: groupsWithCounts
       });
       
     } catch (error) {
@@ -479,24 +481,27 @@ const StreamsTab = () => {
         </Card>
       ) : (
         <div className="grid gap-6">
-          {groups.map((group) => (
-            <GroupCard
-              key={group.id}
-              group={group}
-              videos={videos}
-              clients={clients.filter(c => c.group_id === group.id)}
-              unassignedClients={clients.filter(c => !c.group_id)}
-              selectedVideo={selectedVideos[group.id]}
-              operationInProgress={operationInProgress}
-              onVideoSelect={(groupId, videoName) => 
-                setSelectedVideos(prev => ({ ...prev, [groupId]: videoName }))
-              }
-              onStart={startGroup}
-              onStop={stopGroup}
-              onDelete={deleteGroup}
-              onAssignClient={assignClientToGroup}
-            />
-          ))}
+          {groups.map((group) => {
+            console.log(`🔍 About to render GroupCard for group:`, group);
+            return (
+              <GroupCard
+                key={group.id}
+                group={group}
+                videos={videos}
+                clients={clients.filter(c => c.group_id === group.id)}
+                unassignedClients={clients.filter(c => !c.group_id)}
+                selectedVideo={selectedVideos[group.id]}
+                operationInProgress={operationInProgress}
+                onVideoSelect={(groupId, videoName) => 
+                  setSelectedVideos(prev => ({ ...prev, [groupId]: videoName }))
+                }
+                onStart={startGroup}
+                onStop={stopGroup}
+                onDelete={deleteGroup}
+                onAssignClient={assignClientToGroup}
+              />
+            );
+          })}
         </div>
       )}
 
