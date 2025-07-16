@@ -1,4 +1,4 @@
-// frontend/src/components/StreamsTab.tsx - Updated for Hybrid Architecture
+// frontend/src/components/StreamsTab.tsx - Updated with proper stream status tracking
 
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,8 +15,6 @@ import { groupApi, videoApi, clientApi } from '@/lib/api';
 import type { Group, Video, Client } from '@/types';
 
 const StreamsTab = () => {
-  console.log('🚀 StreamsTab component rendered (Hybrid Architecture)');
-  
   const { toast } = useToast();
   
   // State management
@@ -28,6 +26,7 @@ const StreamsTab = () => {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [operationInProgress, setOperationInProgress] = useState<string | null>(null);
   const [selectedVideos, setSelectedVideos] = useState<Record<string, string>>({});
+  const [streamingStatus, setStreamingStatus] = useState<Record<string, boolean>>({});
   
   // Form state for creating new groups
   const [newGroupName, setNewGroupName] = useState('');
@@ -37,16 +36,12 @@ const StreamsTab = () => {
 
   // Load initial data
   useEffect(() => {
-    console.log('🔥 useEffect triggered - calling loadInitialData (Hybrid Architecture)');
     loadInitialData();
   }, []);
 
   const loadInitialData = async () => {
-    console.log('🔄 Starting loadInitialData (Hybrid Architecture)...');
     try {
       setLoading(true);
-      
-      console.log('📡 Making API calls to load groups, videos, and clients...');
       
       // Load data in parallel
       const [groupsResponse, videosResponse, clientsResponse] = await Promise.all([
@@ -55,14 +50,8 @@ const StreamsTab = () => {
         clientApi.getClients()
       ]);
       
-      console.log('✅ Groups response (Docker discovery):', groupsResponse);
-      console.log('✅ Raw groups data:', groupsResponse.groups);
-      console.log('✅ Videos response:', videosResponse);
-      console.log('✅ Clients response (hybrid state):', clientsResponse);
-      
       // Set groups from Docker discovery
       const discoveredGroups = groupsResponse.groups || [];
-      setGroups(discoveredGroups);
       
       // Set videos
       setVideos(videosResponse.videos || []);
@@ -71,13 +60,13 @@ const StreamsTab = () => {
       const clientsList = clientsResponse.clients || [];
       setClients(clientsList);
       
-      // Calculate client counts per group
+      // Calculate client counts per group and streaming status
       const groupsWithCounts = discoveredGroups.map(group => {
         const groupClients = clientsList.filter(client => client.group_id === group.id);
         const activeGroupClients = groupClients.filter(client => client.is_active);
         
         return {
-          ...group,  // Keep ALL original group fields
+          ...group,
           total_clients: groupClients.length,
           active_clients: activeGroupClients.length
         };
@@ -85,16 +74,15 @@ const StreamsTab = () => {
       
       setGroups(groupsWithCounts);
       
-      console.log('📊 Final state (Hybrid Architecture):', {
-        groupsCount: groupsWithCounts.length,
-        videosCount: videosResponse.videos?.length || 0,
-        clientsCount: clientsList.length,
-        architecture: 'hybrid_docker_discovery',
-        finalGroups: groupsWithCounts
+      // Initialize streaming status
+      const initialStreamingStatus: Record<string, boolean> = {};
+      groupsWithCounts.forEach(group => {
+        initialStreamingStatus[group.id] = group.streaming || false;
       });
+      setStreamingStatus(initialStreamingStatus);
       
     } catch (error) {
-      console.error('❌ Error loading initial data:', error);
+      console.error('Error loading initial data:', error);
       toast({
         title: "Loading Error",
         description: "Failed to load data. Check console for details.",
@@ -106,7 +94,6 @@ const StreamsTab = () => {
   };
 
   const refreshData = async () => {
-    console.log('🔄 Refreshing data (Hybrid Architecture)...');
     setRefreshing(true);
     try {
       await loadInitialData();
@@ -115,7 +102,7 @@ const StreamsTab = () => {
         description: "All data has been updated from Docker and app state",
       });
     } catch (error) {
-      console.error('❌ Error refreshing data:', error);
+      console.error('Error refreshing data:', error);
       toast({
         title: "Refresh Failed",
         description: "Failed to refresh data",
@@ -139,8 +126,6 @@ const StreamsTab = () => {
     try {
       setOperationInProgress('create');
       
-      console.log('🔨 Creating group with Docker container...');
-      
       const groupData = {
         name: newGroupName.trim(),
         description: newGroupDescription.trim(),
@@ -148,11 +133,7 @@ const StreamsTab = () => {
         orientation: newGroupOrientation
       };
       
-      console.log('📦 Group data:', groupData);
-      
       const response = await groupApi.createGroup(groupData);
-      
-      console.log('✅ Group created successfully:', response);
       
       toast({
         title: "Group Created",
@@ -170,7 +151,7 @@ const StreamsTab = () => {
       await loadInitialData();
       
     } catch (error: any) {
-      console.error('❌ Error creating group:', error);
+      console.error('Error creating group:', error);
       toast({
         title: "Create Failed",
         description: error?.message || "Failed to create group",
@@ -185,14 +166,15 @@ const StreamsTab = () => {
     try {
       setOperationInProgress(groupId);
       
-      console.log(`🚀 Starting group ${groupId} (requires Docker container running)`);
-      
       const videoFile = selectedVideos[groupId];
-      console.log(`📹 Video file for group ${groupId}:`, videoFile);
       
       const response = await groupApi.startGroup(groupId, videoFile);
       
-      console.log('✅ Group started successfully:', response);
+      // Update streaming status
+      setStreamingStatus(prev => ({
+        ...prev,
+        [groupId]: true
+      }));
       
       toast({
         title: "Streaming Started",
@@ -203,7 +185,7 @@ const StreamsTab = () => {
       await loadInitialData();
       
     } catch (error: any) {
-      console.error('❌ Error starting group:', error);
+      console.error('Error starting group:', error);
       toast({
         title: "Start Failed",
         description: error?.message || `Failed to start group "${groupName}"`,
@@ -218,11 +200,13 @@ const StreamsTab = () => {
     try {
       setOperationInProgress(groupId);
       
-      console.log(`🛑 Stopping group ${groupId}`);
-      
       const response = await groupApi.stopGroup(groupId);
       
-      console.log('✅ Group stopped successfully:', response);
+      // Update streaming status
+      setStreamingStatus(prev => ({
+        ...prev,
+        [groupId]: false
+      }));
       
       toast({
         title: "Streaming Stopped",
@@ -233,7 +217,7 @@ const StreamsTab = () => {
       await loadInitialData();
       
     } catch (error: any) {
-      console.error('❌ Error stopping group:', error);
+      console.error('Error stopping group:', error);
       toast({
         title: "Stop Failed",
         description: error?.message || `Failed to stop group "${groupName}"`,
@@ -252,9 +236,14 @@ const StreamsTab = () => {
     try {
       setOperationInProgress(groupId);
       
-      console.log(`🗑️ Deleting group ${groupId} (will stop streams and remove Docker container)`);
-      
       await groupApi.deleteGroup(groupId);
+      
+      // Remove from streaming status
+      setStreamingStatus(prev => {
+        const newStatus = {...prev};
+        delete newStatus[groupId];
+        return newStatus;
+      });
       
       toast({
         title: "Group Deleted",
@@ -265,7 +254,7 @@ const StreamsTab = () => {
       await loadInitialData();
       
     } catch (error: any) {
-      console.error('❌ Error deleting group:', error);
+      console.error('Error deleting group:', error);
       toast({
         title: "Delete Failed",
         description: error?.message || `Failed to delete group "${groupName}"`,
@@ -280,11 +269,7 @@ const StreamsTab = () => {
     try {
       setOperationInProgress(`assign-${clientId}`);
       
-      console.log('🔄 Assigning client to group (hybrid architecture):', { clientId, groupId });
-      
       await clientApi.assignToGroup(clientId, groupId);
-      
-      console.log('✅ Client assigned to group');
       
       // Refresh data to show updated assignments
       await loadInitialData();
@@ -298,7 +283,7 @@ const StreamsTab = () => {
       });
       
     } catch (error: any) {
-      console.error('❌ Error assigning client:', error);
+      console.error('Error assigning client:', error);
       toast({
         title: "Assignment Failed",
         description: error?.message || "Failed to assign client to group",
@@ -455,10 +440,10 @@ const StreamsTab = () => {
             </div>
             <div className="text-center">
               <div className="text-2xl font-bold text-orange-600">
-                {clients.filter(c => c.is_active).length}
+                {Object.values(streamingStatus).filter(status => status).length}
               </div>
-              <div className="text-sm text-gray-600">Active Clients</div>
-              <div className="text-xs text-gray-500">Connected</div>
+              <div className="text-sm text-gray-600">Active Streams</div>
+              <div className="text-xs text-gray-500">FFmpeg Running</div>
             </div>
           </div>
         </CardContent>
@@ -481,27 +466,25 @@ const StreamsTab = () => {
         </Card>
       ) : (
         <div className="grid gap-6">
-          {groups.map((group) => {
-            console.log(`🔍 About to render GroupCard for group:`, group);
-            return (
-              <GroupCard
-                key={group.id}
-                group={group}
-                videos={videos}
-                clients={clients.filter(c => c.group_id === group.id)}
-                unassignedClients={clients.filter(c => !c.group_id)}
-                selectedVideo={selectedVideos[group.id]}
-                operationInProgress={operationInProgress}
-                onVideoSelect={(groupId, videoName) => 
-                  setSelectedVideos(prev => ({ ...prev, [groupId]: videoName }))
-                }
-                onStart={startGroup}
-                onStop={stopGroup}
-                onDelete={deleteGroup}
-                onAssignClient={assignClientToGroup}
-              />
-            );
-          })}
+          {groups.map((group) => (
+            <GroupCard
+              key={group.id}
+              group={group}
+              videos={videos}
+              clients={clients.filter(c => c.group_id === group.id)}
+              unassignedClients={clients.filter(c => !c.group_id)}
+              selectedVideo={selectedVideos[group.id]}
+              isStreaming={streamingStatus[group.id] || false}
+              operationInProgress={operationInProgress}
+              onVideoSelect={(groupId, videoName) => 
+                setSelectedVideos(prev => ({ ...prev, [groupId]: videoName }))
+              }
+              onStart={startGroup}
+              onStop={stopGroup}
+              onDelete={deleteGroup}
+              onAssignClient={assignClientToGroup}
+            />
+          ))}
         </div>
       )}
 
