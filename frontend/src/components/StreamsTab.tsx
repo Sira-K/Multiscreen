@@ -36,6 +36,7 @@ const StreamsTab = () => {
 
   // Load initial data
   useEffect(() => {
+    debugApiConnection();
     loadInitialData();
   }, []);
 
@@ -90,6 +91,31 @@ const StreamsTab = () => {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const debugApiConnection = async () => {
+    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+    
+    console.log('🔍 Debug Info:');
+    console.log('API_BASE_URL:', API_BASE_URL);
+    console.log('All env vars:', import.meta.env);
+    
+    try {
+      // Test basic connection
+      const response = await fetch(`${API_BASE_URL}/get_groups`);
+      console.log('Response status:', response.status);
+      console.log('Response headers:', response.headers);
+      
+      const text = await response.text();
+      console.log('Raw response:', text.substring(0, 200)); // First 200 chars
+      
+      // Try to parse as JSON
+      const json = JSON.parse(text);
+      console.log('Parsed JSON:', json);
+      
+    } catch (error) {
+      console.error('Debug error:', error);
     }
   };
 

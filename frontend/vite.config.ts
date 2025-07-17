@@ -7,7 +7,7 @@ import { componentTagger } from "lovable-tagger";
 export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
-    port: 8080,
+    port: 3000,
     watch: {
       usePolling: true,    // Poll for file changes instead of using file events
       interval: 100,       // Check every 100ms
@@ -26,4 +26,5 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  envDir: './src',  // ← Tell Vite to look for .env files in src folder
 }));
