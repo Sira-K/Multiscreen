@@ -194,47 +194,57 @@ const VideoFilesTab = () => {
           error: response?.error
         });
 
-        if (response.success && response.uploads && response.uploads.length > 0) {
-          debugLog(`Upload successful for ${file.name}`);
-          
-          // Mark as completed immediately
-          setUploadingFiles(prev => ({
-            ...prev,
-            [fileId]: {
-              ...prev[fileId],
-              progress: 100,
-              status: 'completed'
-            }
-          }));
+        // Fixed condition - check response.success first, then uploads
+        if (response.success) {
+          // Check if uploads array exists and has content
+          if (response.uploads && response.uploads.length > 0) {
+            debugLog(`Upload successful for ${file.name}`);
+            
+            // Mark as completed immediately
+            setUploadingFiles(prev => ({
+              ...prev,
+              [fileId]: {
+                ...prev[fileId],
+                progress: 100,
+                status: 'completed'
+              }
+            }));
 
-          // Add the new file to the video list
-          const newFile: VideoFile = {
-            id: `${file.name}-${Date.now()}`,
-            name: file.name,
-            size: file.size,
-            duration: '0:00',
-            format: file.name.split('.').pop()?.toUpperCase() || 'MP4',
-            resolution: 'Original',
-            uploadDate: new Date().toISOString().split('T')[0],
-            status: 'ready'
-          };
+            // Add the new file to the video list using data from response
+            const uploadResult = response.uploads[0]; // Get the first (and likely only) upload result
+            const newFile: VideoFile = {
+              id: `${uploadResult.saved_filename || file.name}-${Date.now()}`,
+              name: uploadResult.saved_filename || file.name,
+              size: file.size,
+              duration: '0:00',
+              format: file.name.split('.').pop()?.toUpperCase() || 'MP4',
+              resolution: 'Original',
+              uploadDate: new Date().toISOString().split('T')[0],
+              status: 'ready'
+            };
 
-          debugLog(`Adding new file to video list`, newFile);
-          setVideoFiles(prev => [newFile, ...prev]);
-          
-          // Remove from upload tracking after showing completion
-          setTimeout(() => {
-            debugLog(`Removing ${file.name} from upload tracking`);
-            setUploadingFiles(prev => {
-              const newState = { ...prev };
-              delete newState[fileId];
-              return newState;
-            });
-          }, 2000);
-          
+            debugLog(`Adding new file to video list`, newFile);
+            setVideoFiles(prev => [newFile, ...prev]);
+            
+            // Remove from upload tracking after showing completion
+            setTimeout(() => {
+              debugLog(`Removing ${file.name} from upload tracking`);
+              setUploadingFiles(prev => {
+                const newState = { ...prev };
+                delete newState[fileId];
+                return newState;
+              });
+            }, 2000);
+            
+          } else {
+            // Success but no uploads array - this shouldn't happen but handle it
+            debugLog(`Upload marked successful but no uploads array for ${file.name}`, response);
+            throw new Error(response.message || 'Upload successful but no file information returned');
+          }
         } else {
-          debugLog(`Upload failed for ${file.name} - invalid response`, response);
-          throw new Error(response.message || 'Upload failed - invalid response');
+          // Upload failed
+          debugLog(`Upload failed for ${file.name} - backend returned success: false`, response);
+          throw new Error(response.message || 'Upload failed - server returned error');
         }
       } catch (error: any) {
         debugLog(`Upload error for ${file.name}`, {
@@ -304,13 +314,23 @@ const VideoFilesTab = () => {
       return;
     }
 
-    debugLog(`Attempting to delete video: ${video.name}`);
+    debugLog(`Attempting to delete video: ${video.name}`, {
+      videoId,
+      videoName: video.name,
+      apiEndpoint: `${import.meta.env.VITE_API_BASE_URL}/delete_video`
+    });
 
     try {
       // Call backend to delete the file
       const response = await videoApi.deleteVideo(video.name);
       
-      debugLog(`Delete response for ${video.name}`, response);
+      debugLog(`Delete response for ${video.name}`, {
+        response: response,
+        success: response?.success,
+        message: response?.message,
+        error: response?.error,
+        deleted_files: response?.deleted_files
+      });
       
       if (response.success) {
         // Remove from frontend state only if backend deletion succeeded
@@ -325,7 +345,14 @@ const VideoFilesTab = () => {
         throw new Error(response.message || 'Failed to delete video');
       }
     } catch (error: any) {
-      debugLog(`Error deleting video: ${video.name}`, error);
+      debugLog(`Error deleting video: ${video.name}`, {
+        error: error,
+        message: error?.message,
+        status: error?.response?.status,
+        statusText: error?.response?.statusText,
+        responseData: error?.response?.data
+      });
+      
       toast({
         title: "Delete Failed", 
         description: error.message || `Failed to delete ${video.name} from the server.`,
@@ -386,11 +413,14 @@ const VideoFilesTab = () => {
   useEffect(() => {
     debugLog("Component mounted, checking environment");
     debugLog("Current URL", window.location.href);
-    debugLog("Environment", {
-      NODE_ENV: process.env.NODE_ENV,
-      REACT_APP_API_URL: process.env.REACT_APP_API_URL,
-      VITE_API_URL: (import.meta as any).env?.VITE_API_URL
-    });
+    
+    // Fixed: Use import.meta.env instead of process.env
+    const environment = {
+      NODE_ENV: import.meta.env.MODE || 'development',
+      VITE_API_URL: import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL
+    };
+    
+    debugLog("Environment", environment);
     
     // Check videoApi availability
     debugLog("videoApi inspection", {
@@ -538,6 +568,7 @@ const VideoFilesTab = () => {
               <input
                 ref={fileInputRef}
                 type="file"
+                name="file"
                 accept=".mp4,.avi,.mov,.mkv"
                 onChange={handleFileUpload}
                 className="hidden"

@@ -543,20 +543,31 @@ def serve_resized_video(filename):
             'message': f"Error serving resized video: {str(e)}"
         }), 500
 
-@video_bp.route('/delete_video/<filename>', methods=['DELETE'])
-def delete_video(filename: str):
+
+@video_bp.route('/delete_video', methods=['POST'])
+def delete_video_post():
     """
-    Delete a video file from both raw and resized folders
+    Delete a video file using POST method (frontend compatibility)
     
-    Args:
-        filename: The name of the video file to delete
+    Request Body:
+        video_name: The name of the video file to delete
         
     Returns:
         JSON response indicating success/failure
     """
     try:
+        data = request.get_json()
+        if not data or 'video_name' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'video_name is required in request body'
+            }), 400
+        
+        video_name = data['video_name']
+        logger.info(f"Received delete request for video: {video_name}")
+        
         # Secure the filename
-        secure_name = secure_filename(filename)
+        secure_name = secure_filename(video_name)
         
         if not secure_name:
             return jsonify({
@@ -568,49 +579,62 @@ def delete_video(filename: str):
         upload_folder = current_app.config.get('UPLOAD_FOLDER', 'raw_video_file')
         download_folder = current_app.config.get('DOWNLOAD_FOLDER', 'resized_video')
         
+        logger.info(f"Looking for video files in: upload_folder={upload_folder}, download_folder={download_folder}")
+        
         deleted_files = []
         errors = []
         
-        # Try to delete from raw videos folder
+        # Try to delete from raw videos folder (uploads)
         raw_path = os.path.join(upload_folder, secure_name)
+        logger.info(f"Checking raw video path: {raw_path}")
+        
         if os.path.exists(raw_path):
             try:
                 os.remove(raw_path)
                 deleted_files.append(f"raw/{secure_name}")
-                logger.info(f"Deleted raw video file: {raw_path}")
+                logger.info(f"✅ Deleted raw video file: {raw_path}")
             except Exception as e:
                 error_msg = f"Failed to delete raw file: {str(e)}"
                 errors.append(error_msg)
-                logger.error(error_msg)
+                logger.error(f"❌ {error_msg}")
+        else:
+            logger.info(f"Raw video file not found: {raw_path}")
         
         # Try to delete from resized videos folder (with and without 2k_ prefix)
         resized_path = os.path.join(download_folder, secure_name)
         resized_path_with_prefix = os.path.join(download_folder, f"2k_{secure_name}")
+        
+        logger.info(f"Checking resized video paths: {resized_path}, {resized_path_with_prefix}")
         
         # Delete resized file without prefix
         if os.path.exists(resized_path):
             try:
                 os.remove(resized_path)
                 deleted_files.append(f"resized/{secure_name}")
-                logger.info(f"Deleted resized video file: {resized_path}")
+                logger.info(f"✅ Deleted resized video file: {resized_path}")
             except Exception as e:
                 error_msg = f"Failed to delete resized file: {str(e)}"
                 errors.append(error_msg)
-                logger.error(error_msg)
+                logger.error(f"❌ {error_msg}")
+        else:
+            logger.info(f"Resized video file not found: {resized_path}")
         
         # Delete resized file with 2k_ prefix
         if os.path.exists(resized_path_with_prefix):
             try:
                 os.remove(resized_path_with_prefix)
                 deleted_files.append(f"resized/2k_{secure_name}")
-                logger.info(f"Deleted resized video file with prefix: {resized_path_with_prefix}")
+                logger.info(f"✅ Deleted resized video file with prefix: {resized_path_with_prefix}")
             except Exception as e:
                 error_msg = f"Failed to delete resized file with prefix: {str(e)}"
                 errors.append(error_msg)
-                logger.error(error_msg)
+                logger.error(f"❌ {error_msg}")
+        else:
+            logger.info(f"Resized video file with prefix not found: {resized_path_with_prefix}")
         
         # Check if any files were deleted
         if not deleted_files and not errors:
+            logger.warning(f"Video file '{secure_name}' not found in any location")
             return jsonify({
                 'success': False,
                 'message': f'Video file "{secure_name}" not found in any location',
@@ -624,6 +648,7 @@ def delete_video(filename: str):
         # Prepare response
         if deleted_files and not errors:
             # Complete success
+            logger.info(f"Successfully deleted video '{secure_name}': {deleted_files}")
             return jsonify({
                 'success': True,
                 'message': f'Successfully deleted video "{secure_name}"',
@@ -631,6 +656,7 @@ def delete_video(filename: str):
             }), 200
         elif deleted_files and errors:
             # Partial success
+            logger.warning(f"Partially deleted video '{secure_name}': deleted={deleted_files}, errors={errors}")
             return jsonify({
                 'success': True,
                 'message': f'Partially deleted video "{secure_name}"',
@@ -639,6 +665,7 @@ def delete_video(filename: str):
             }), 200
         else:
             # Complete failure
+            logger.error(f"Failed to delete video '{secure_name}': {errors}")
             return jsonify({
                 'success': False,
                 'message': f'Failed to delete video "{secure_name}"',
@@ -646,7 +673,7 @@ def delete_video(filename: str):
             }), 500
         
     except Exception as e:
-        logger.error(f"Error deleting video {filename}: {str(e)}")
+        logger.error(f"Error deleting video via POST: {str(e)}")
         traceback.print_exc()
         return jsonify({
             'success': False,

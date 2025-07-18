@@ -4,21 +4,24 @@ import time
 import logging
 import subprocess
 import sys
+import os
 from typing import Optional
 
 class MultiScreenClient:
-    def __init__(self, server_url: str, hostname: str = None, display_name: str = None):
+    def __init__(self, server_url: str, hostname: str = None, display_name: str = None, player_path: str = None):
         """
-        Auto-assigning client that always requests the full 'test' stream
+        Auto-assigning client that uses custom player instead of ffplay
         
         Args:
             server_url: Server URL (e.g., "http://128.205.39.64:5001")
             hostname: Unique client identifier
             display_name: Friendly display name
+            player_path: Path to custom player executable
         """
         self.server_url = server_url.rstrip('/')
         self.hostname = hostname or f"client-{int(time.time())}"
         self.display_name = display_name or self.hostname
+        self.player_path = player_path or "./cmake-build-debug/player/player"
         self.current_stream_url = None
         self.player_process = None
         self.running = False
@@ -41,7 +44,7 @@ class MultiScreenClient:
                 json={
                     "hostname": self.hostname,
                     "display_name": self.display_name,
-                    "platform": "python_auto_client"
+                    "platform": "custom_cpp_player"
                 },
                 timeout=10
             )
@@ -138,7 +141,7 @@ class MultiScreenClient:
         return False
 
     def play_stream(self) -> bool:
-        """Start playing the current stream with ffplay"""
+        """Start playing the current stream with custom player"""
         if not self.current_stream_url:
             self.logger.error("No stream URL available")
             return False
@@ -146,17 +149,22 @@ class MultiScreenClient:
         try:
             self.stop_stream()  # Clean up any existing player
             
-            self.logger.info(f"Starting player for stream...")
-            cmd = [
-                "ffplay",
-                "-fflags", "nobuffer",
-                "-flags", "low_delay",
-                "-framedrop",
-                "-strict", "experimental",
-                self.current_stream_url
-            ]
-            self.player_process = subprocess.Popen(cmd)
-            self.logger.info(f"Player started (PID: {self.player_process.pid})")
+            # Check if custom player exists
+            if not os.path.exists(self.player_path):
+                self.logger.error(f"Custom player not found at: {self.player_path}")
+                return False
+            
+            self.logger.info(f"Starting custom player for stream...")
+            
+            # Use your custom player instead of ffplay
+            cmd = [self.player_path, self.current_stream_url]
+            
+            self.player_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            self.logger.info(f"Custom player started (PID: {self.player_process.pid})")
             return True
             
         except Exception as e:
@@ -192,10 +200,12 @@ class MultiScreenClient:
             self.logger.info("Client stopped")
 
 def main():
-    parser = argparse.ArgumentParser(description='Auto-Assigning Display Client')
+    parser = argparse.ArgumentParser(description='Auto-Assigning Display Client with Custom Player')
     parser.add_argument('--server', required=True, help='Server URL')
     parser.add_argument('--hostname', help='Custom client ID')
     parser.add_argument('--name', help='Display name')
+    parser.add_argument('--player', help='Path to custom player executable', 
+                       default='./cmake-build-debug/player/player')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     
     args = parser.parse_args()
@@ -208,7 +218,8 @@ def main():
     client = MultiScreenClient(
         server_url=args.server,
         hostname=args.hostname,
-        display_name=args.name
+        display_name=args.name,
+        player_path=args.player
     )
     client.run()
 
