@@ -496,9 +496,74 @@ def find_ffmpeg_executable() -> str:
     
     return "ffmpeg"
 
+def find_video_file(requested_file: str = None) -> tuple[str, bool]:
+    """
+    Find a video file to use for streaming
+    
+    Args:
+        requested_file: Specific file requested (optional)
+        
+    Returns:
+        Tuple of (file_path, use_test_pattern)
+    """
+    # First, try to use resized videos (preferred)
+    download_folder = current_app.config.get('DOWNLOAD_FOLDER', 'resized_video')
+    
+    if requested_file:
+        # Check if specific file exists in resized folder
+        resized_path = os.path.join(download_folder, requested_file)
+        if os.path.isfile(resized_path):
+            logger.info(f"Using requested resized video: {resized_path}")
+            return resized_path, False
+            
+        # Check if it exists with 2k_ prefix
+        prefixed_name = f"2k_{requested_file}"
+        prefixed_path = os.path.join(download_folder, prefixed_name)
+        if os.path.isfile(prefixed_path):
+            logger.info(f"Using prefixed resized video: {prefixed_path}")
+            return prefixed_path, False
+    
+    # If no specific file requested, find any resized video
+    if os.path.exists(download_folder):
+        video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.webm')
+        try:
+            for filename in os.listdir(download_folder):
+                if filename.lower().endswith(video_extensions):
+                    file_path = os.path.join(download_folder, filename)
+                    logger.info(f"Using available resized video: {file_path}")
+                    return file_path, False
+        except Exception as e:
+            logger.warning(f"Error scanning resized videos folder: {e}")
+    
+    # Fallback: try raw videos folder
+    upload_folder = current_app.config.get('UPLOAD_FOLDER', 'uploads')
+    
+    if requested_file:
+        raw_path = os.path.join(upload_folder, requested_file)
+        if os.path.isfile(raw_path):
+            logger.warning(f"Using raw video (resized version not found): {raw_path}")
+            return raw_path, False
+    
+    # Find any raw video as last resort
+    if os.path.exists(upload_folder):
+        video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.webm')
+        try:
+            for filename in os.listdir(upload_folder):
+                if filename.lower().endswith(video_extensions):
+                    file_path = os.path.join(upload_folder, filename)
+                    logger.warning(f"Using available raw video: {file_path}")
+                    return file_path, False
+        except Exception as e:
+            logger.warning(f"Error scanning raw videos folder: {e}")
+    
+    # No video files found, use test pattern
+    logger.info("No video files found, will use test pattern")
+    return "", True
+
+
 @stream_bp.route("/start_group_srt", methods=["POST"])
 def start_group_srt():
-    """Start SRT streaming for a group - Pure Docker Discovery, No State"""
+    """Start SRT streaming for a group - Single stream only to avoid port conflicts"""
     try:
         data = request.get_json() or {}
         
@@ -506,7 +571,7 @@ def start_group_srt():
         group_id = data.get("group_id")
         video_file = data.get("video_file")
         
-        logger.info(f"🚀 START STATELESS SRT: group_id={group_id}, video_file={video_file}")
+        logger.info(f"🚀 START SINGLE STREAM SRT: group_id={group_id}, video_file={video_file}")
         
         # Validation
         if not group_id:
@@ -573,15 +638,9 @@ def start_group_srt():
                 "suggestion": "Check Docker container logs"
             }), 500
         
-        # Calculate split count (simple logic - can be customized)
-        active_client_count = data.get("active_clients", 2)  # Frontend can specify
-        
-        if active_client_count <= 1:
-            split_count = 0
-            logger.info("Creating only full stream")
-        else:
-            split_count = min(active_client_count, screen_count)
-            logger.info(f"Creating {split_count} split streams")
+        # FORCE SINGLE STREAM - No splitting to avoid port conflicts
+        split_count = 0
+        logger.info("🎯 Using single stream mode (no splitting) to avoid port conflicts")
         
         # Find FFmpeg
         ffmpeg_path = data.get("ffmpeg_path", find_ffmpeg_executable())
@@ -597,87 +656,103 @@ def start_group_srt():
                 "suggestion": "Check SRT server configuration"
             }), 500
         
-        logger.info(f"✅ SRT test passed! Starting main stream...")
+        logger.info(f"✅ SRT test passed! Starting single stream...")
         
-        # Input configuration
-        if video_file and os.path.exists(video_file):
-            input_args = ["-re", "-i", video_file]
+        # ✅ FIXED: Properly handle video file selection and FFmpeg command structure
+        # Remove 'uploads/' prefix if present
+        if video_file and video_file.startswith('uploads/'):
+            video_file = video_file[8:]
+        
+        logger.info(f"Video file requested: {video_file}")
+        
+        # Find the actual video file path
+        mp4_file, use_test_pattern = find_video_file(video_file)
+        
+        # Build input arguments with correct FFmpeg option order
+        if not use_test_pattern and mp4_file:
+            # For video files: -re [-stream_loop -1] -i video.mp4
+            input_args = ["-re"]
             if enable_looping:
-                input_args.extend(["-stream_loop", "-1"])
-            video_source = video_file
+                input_args.extend(["-stream_loop", "-1"])  # MUST come before -i
+            input_args.extend(["-i", mp4_file])
+            video_source = mp4_file
+            logger.info(f"✅ Using video file: {mp4_file}")
         else:
+            # For test pattern: -re -f lavfi -i testsrc=...
             input_args = [
                 "-re", "-f", "lavfi", 
                 "-i", f"testsrc=s={video_width}x{video_height}:r={framerate}"
             ]
             video_source = "test_pattern"
+            if video_file:
+                logger.warning(f"⚠️ Requested video '{video_file}' not found, using test pattern")
+            else:
+                logger.info("No video file specified, using test pattern")
         
-        # Get persistent streams
-        persistent_streams = get_persistent_streams_for_group(group_id, group_name, split_count)
+        # Get persistent stream ID for single stream
+        persistent_streams = get_persistent_streams_for_group(group_id, group_name, 0)  # 0 = no splits
         
-        # Build FFmpeg command
+        # Build FFmpeg command for SINGLE STREAM ONLY
         ffmpeg_cmd = [ffmpeg_path, "-y"] + input_args
         
-        # Create stream URLs
-        available_streams = []
-        client_stream_urls = {}
-        
-        # Always add full stream
+        # Create single stream URL with stability parameters
         full_stream_id = persistent_streams["test"]
         full_stream_path = f"live/{group_name}/{full_stream_id}"
-        available_streams.append(full_stream_path)
-        client_stream_urls["test"] = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={full_stream_path},m=request"
         
-        if split_count > 0:
-            # Build filter chain
-            filter_complex_str, output_mappings = build_ffmpeg_filter_chain(
-                video_width, video_height, split_count, orientation,
-                srt_ip, srt_port, sei, group_name, persistent_streams
-            )
-            
-            ffmpeg_cmd.extend(["-filter_complex", filter_complex_str])
-            ffmpeg_cmd.extend(output_mappings)
-            
-            # Add split streams to URLs
-            for i in range(split_count):
-                stream_name = f"test{i}"
-                if stream_name in persistent_streams:
-                    stream_id = persistent_streams[stream_name]
-                    stream_path = f"live/{group_name}/{stream_id}"
-                    available_streams.append(stream_path)
-                    client_stream_urls[stream_name] = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=request"
-        else:
-            # Only full stream
-            ffmpeg_cmd.extend([
-                "-map", "0:v",
-                "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-                "-bsf:v", f"h264_metadata=sei_user_data={sei}",
-                "-pes_payload_size", "0", "-bf", "0", "-g", "30",
-                "-f", "mpegts", f"srt://{srt_ip}:{srt_port}?streamid=#!::r={full_stream_path},m=publish"
-            ])
+        # SRT connection parameters for stability
+        srt_params = "latency=2000000&connect_timeout=5000&rcvbuf=67108864&sndbuf=67108864"
+        full_srt_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={full_stream_path},m=publish&{srt_params}"
         
-        logger.info(f"🎬 FFmpeg command: {' '.join(ffmpeg_cmd)}")
+        # Single stream output with improved stability
+        ffmpeg_cmd.extend([
+            "-map", "0:v",
+            "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+            "-maxrate", "4000k", "-bufsize", "8000k",  # Bitrate limiting for stability
+            "-bsf:v", f"h264_metadata=sei_user_data={sei}",
+            "-pes_payload_size", "0", "-bf", "0", "-g", "30",
+            "-f", "mpegts", full_srt_url
+        ])
         
-        # Start FFmpeg process
+        # Create stream URLs for clients
+        available_streams = [full_stream_path]
+        client_stream_urls = {
+            "test": f"srt://{srt_ip}:{srt_port}?streamid=#!::r={full_stream_path},m=request,latency=5000000"
+        }
+        
+        logger.info(f"🎬 Single Stream FFmpeg command: {' '.join(ffmpeg_cmd)}")
+        
+        # Start FFmpeg process with retry mechanism
         try:
-            process = subprocess.Popen(
-                ffmpeg_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
-                bufsize=1
-            )
+            process = start_ffmpeg_with_retry(ffmpeg_cmd, max_retries=3)
             
-            logger.info(f"✅ FFmpeg started with PID: {process.pid}")
+            logger.info(f"✅ Single stream FFmpeg started with PID: {process.pid}")
             
-            # Start monitoring thread (but don't store state)
+            # Enhanced monitoring thread
             def monitor_ffmpeg_output(process, group_name):
                 try:
+                    consecutive_errors = 0
+                    max_consecutive_errors = 3
+                    
                     while process.poll() is None:
                         if process.stderr:
                             line = process.stderr.readline()
                             if line:
-                                logger.info(f"FFmpeg[{group_name}]: {line.strip()}")
+                                log_line = line.strip()
+                                logger.info(f"FFmpeg[{group_name}]: {log_line}")
+                                
+                                # Check for I/O errors
+                                if ("Input/output error" in log_line or 
+                                    "Connection refused" in log_line or
+                                    "Address already in use" in log_line):
+                                    consecutive_errors += 1
+                                    logger.warning(f"⚠️ Connection error detected ({consecutive_errors}/{max_consecutive_errors})")
+                                    
+                                    if consecutive_errors >= max_consecutive_errors:
+                                        logger.error(f"💥 Too many consecutive errors, terminating process")
+                                        process.terminate()
+                                        break
+                                else:
+                                    consecutive_errors = 0  # Reset counter on successful output
                     
                     exit_code = process.returncode
                     if exit_code == 0:
@@ -695,21 +770,22 @@ def start_group_srt():
             )
             monitor_thread.start()
             
-            # Wait to ensure process starts
-            time.sleep(1.0)
+            # Wait to ensure process stabilizes
+            time.sleep(2.0)
             
             if process.poll() is not None:
                 exit_code = process.returncode
                 stderr_output = process.stderr.read() if process.stderr else ""
                 
                 return jsonify({
-                    "error": f"FFmpeg failed immediately with exit code {exit_code}",
+                    "error": f"FFmpeg failed to start (exit code {exit_code})",
                     "stderr": stderr_output,
-                    "ffmpeg_command": " ".join(ffmpeg_cmd)
+                    "ffmpeg_command": " ".join(ffmpeg_cmd),
+                    "suggestion": "Check for port conflicts or SRT server issues"
                 }), 500
             
             return jsonify({
-                "message": f"SRT streaming started for group '{group_name}'",
+                "message": f"Single SRT stream started for group '{group_name}'",
                 "group_id": group_id,
                 "group_name": group_name,
                 "process_id": process.pid,
@@ -719,20 +795,144 @@ def start_group_srt():
                 "available_streams": available_streams,
                 "client_stream_urls": client_stream_urls,
                 "status": "active",
-                "split_count": split_count,
+                "split_count": 0,  # Always 0 for single stream
                 "video_source": video_source,
                 "srt_port": srt_port,
-                "test_result": test_result
+                "test_result": test_result,
+                "stream_mode": "single_stream_only",
+                "stability_features": {
+                    "srt_latency": "2000ms",
+                    "bitrate_limiting": "4000k",
+                    "retry_mechanism": "enabled",
+                    "single_stream": "no_port_conflicts"
+                }
             }), 200
             
         except Exception as e:
             logger.error(f"Error starting FFmpeg: {e}")
-            return jsonify({"error": f"Failed to start FFmpeg: {str(e)}"}), 500
+            return jsonify({
+                "error": f"Failed to start FFmpeg: {str(e)}",
+                "suggestion": "Check SRT server status and port availability"
+            }), 500
         
     except Exception as e:
-        logger.error(f"❌ Error in stateless start_group_srt: {e}")
+        logger.error(f"❌ Error in single stream start_group_srt: {e}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+def start_ffmpeg_with_retry(ffmpeg_cmd: List[str], max_retries: int = 3) -> subprocess.Popen:
+    """Start FFmpeg with retry mechanism for SRT connection issues"""
+    
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"🎬 Starting FFmpeg (attempt {attempt + 1}/{max_retries})")
+            
+            process = subprocess.Popen(
+                ffmpeg_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                bufsize=1
+            )
+            
+            # Wait a bit to see if it starts successfully
+            time.sleep(2.0)
+            
+            if process.poll() is None:
+                logger.info(f"✅ FFmpeg started successfully on attempt {attempt + 1}")
+                return process
+            else:
+                exit_code = process.returncode
+                stderr_output = process.stderr.read() if process.stderr else ""
+                logger.warning(f"⚠️ FFmpeg failed on attempt {attempt + 1} with exit code {exit_code}")
+                
+                # Check for specific connection issues
+                if any(error in stderr_output for error in [
+                    "Connection refused", "I/O error", "Address already in use", 
+                    "No route to host", "Network is unreachable"
+                ]):
+                    logger.info(f"🔄 Network/SRT connection issue detected, retrying in 3 seconds...")
+                    time.sleep(3)
+                    continue
+                else:
+                    raise Exception(f"FFmpeg failed with exit code {exit_code}: {stderr_output}")
+                    
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise e
+            else:
+                logger.warning(f"⚠️ Attempt {attempt + 1} failed: {e}")
+                time.sleep(3)
+    
+    raise Exception(f"FFmpeg failed to start after {max_retries} attempts")
+
+
+def find_video_file(requested_file: str = None) -> tuple[str, bool]:
+    """
+    Find a video file to use for streaming
+    
+    Args:
+        requested_file: Specific file requested (optional)
+        
+    Returns:
+        Tuple of (file_path, use_test_pattern)
+    """
+    # First, try to use resized videos (preferred)
+    download_folder = current_app.config.get('DOWNLOAD_FOLDER', 'resized_video')
+    
+    if requested_file:
+        # Check if specific file exists in resized folder
+        resized_path = os.path.join(download_folder, requested_file)
+        if os.path.isfile(resized_path):
+            logger.info(f"Using requested resized video: {resized_path}")
+            return resized_path, False
+            
+        # Check if it exists with 2k_ prefix
+        prefixed_name = f"2k_{requested_file}"
+        prefixed_path = os.path.join(download_folder, prefixed_name)
+        if os.path.isfile(prefixed_path):
+            logger.info(f"Using prefixed resized video: {prefixed_path}")
+            return prefixed_path, False
+    
+    # If no specific file requested, find any resized video
+    if os.path.exists(download_folder):
+        video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.webm')
+        try:
+            for filename in os.listdir(download_folder):
+                if filename.lower().endswith(video_extensions):
+                    file_path = os.path.join(download_folder, filename)
+                    logger.info(f"Using available resized video: {file_path}")
+                    return file_path, False
+        except Exception as e:
+            logger.warning(f"Error scanning resized videos folder: {e}")
+    
+    # Fallback: try raw videos folder
+    upload_folder = current_app.config.get('UPLOAD_FOLDER', 'uploads')
+    
+    if requested_file:
+        raw_path = os.path.join(upload_folder, requested_file)
+        if os.path.isfile(raw_path):
+            logger.warning(f"Using raw video (resized version not found): {raw_path}")
+            return raw_path, False
+    
+    # Find any raw video as last resort
+    if os.path.exists(upload_folder):
+        video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.webm')
+        try:
+            for filename in os.listdir(upload_folder):
+                if filename.lower().endswith(video_extensions):
+                    file_path = os.path.join(upload_folder, filename)
+                    logger.warning(f"Using available raw video: {file_path}")
+                    return file_path, False
+        except Exception as e:
+            logger.warning(f"Error scanning raw videos folder: {e}")
+    
+    # No video files found, use test pattern
+    logger.info("No video files found, will use test pattern")
+    return "", True
+    
+
 
 @stream_bp.route("/stop_group_srt", methods=["POST"])
 def stop_group_srt():
