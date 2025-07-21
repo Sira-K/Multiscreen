@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, X, Play, Square, Users, Monitor, AlertCircle, CheckCircle, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { groupApi, videoApi, clientApi } from '@/lib/api';
+import { groupApi, videoApi, clientApi } from '@/API/api';
 import type { Group, Video, Client } from '@/types';
 
 const StreamsTab = () => {

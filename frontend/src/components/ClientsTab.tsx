@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { ArrowUp, ArrowDown, Monitor, Wifi, WifiOff, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { clientApi } from '@/lib/api';
+import { clientApi } from '@/API/api';
 
 interface Client {
   client_id: string;

@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Upload, Trash2, File, FileVideo, AlertCircle, CheckCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { videoApi } from '@/lib/api';
+import { videoApi } from '@/API/api';
 
 interface VideoFile {
   id: string;
