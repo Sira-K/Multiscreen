@@ -1,9 +1,8 @@
-// frontend/src/components/StreamsTab.tsx - Fixed with proper stream status tracking
+// frontend/src/components/StreamsTab.tsx - Fixed with proper multi-video status tracking
 
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import GroupCard from '@/components/ui/GroupCard';
@@ -25,86 +24,38 @@ const StreamsTab = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [operationInProgress, setOperationInProgress] = useState<string | null>(null);
-  const [selectedVideos, setSelectedVideos] = useState<Record<string, string>>({});
-  const [streamingStatus, setStreamingStatus] = useState<Record<string, boolean>>({});
-  
+  const [selectedVideos, setSelectedVideos] = useState<{ [groupId: string]: string }>({});
+  const [streamingStatus, setStreamingStatus] = useState<{ [groupId: string]: boolean }>({});
+
   // Form state for creating new groups
-  const [newGroupName, setNewGroupName] = useState('');
-  const [newGroupDescription, setNewGroupDescription] = useState('');
-  const [newGroupScreenCount, setNewGroupScreenCount] = useState(2);
-  const [newGroupOrientation, setNewGroupOrientation] = useState<'horizontal' | 'vertical' | 'grid'>('horizontal');
+  const [newGroupForm, setNewGroupForm] = useState({
+    name: '',
+    description: '',
+    screen_count: 2,
+    orientation: 'horizontal' as 'horizontal' | 'vertical' | 'grid'
+  });
 
   // Load initial data
-  useEffect(() => {
-    debugApiConnection();
-    loadInitialData();
-  }, []);
-
-  // Function to fetch streaming status from backend
-  const fetchStreamingStatus = async () => {
-    try {
-      const response = await fetch('/api/get_group_srt_status', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        const status: Record<string, boolean> = {};
-        
-        // Convert backend streaming status to our format
-        if (data.srt_status) {
-          Object.entries(data.srt_status).forEach(([groupId, statusInfo]: [string, any]) => {
-            status[groupId] = statusInfo.streaming || false;
-          });
-        }
-        
-        setStreamingStatus(status);
-        console.log('Updated streaming status:', status);
-      } else {
-        console.warn('Failed to fetch streaming status:', response.statusText);
-      }
-    } catch (error) {
-      console.error('Error fetching streaming status:', error);
-    }
-  };
-
   const loadInitialData = async () => {
     try {
-      setLoading(true);
-      
-      // Load data in parallel
-      const [groupsResponse, videosResponse, clientsResponse] = await Promise.all([
+      const [groupsData, videosData, clientsData] = await Promise.all([
         groupApi.getGroups(),
         videoApi.getVideos(),
         clientApi.getClients()
       ]);
-      
-      // Set groups from Docker discovery
-      setGroups(groupsResponse.groups || []);
-      
-      // Set videos
-      setVideos(videosResponse.videos || []);
-      
-      // Set clients from app state
-      setClients(clientsResponse.clients || []);
-      
-      // Fetch actual streaming status from backend
-      await fetchStreamingStatus();
-      
-      console.log('Loaded initial data:', {
-        groups: groupsResponse.groups?.length || 0,
-        videos: videosResponse.videos?.length || 0,
-        clients: clientsResponse.clients?.length || 0
-      });
-      
+
+      setGroups(groupsData.groups);
+      setVideos(videosData.videos);
+      setClients(clientsData.clients);
+
+      // Load streaming statuses for all groups
+      await loadStreamingStatuses(groupsData.groups);
+
     } catch (error: any) {
-      console.error('Error loading initial data:', error);
+      console.error('Error loading data:', error);
       toast({
-        title: "Load Error",
-        description: error?.message || "Failed to load data from the server",
+        title: "Loading Failed",
+        description: error?.message || "Failed to load application data",
         variant: "destructive"
       });
     } finally {
@@ -112,51 +63,90 @@ const StreamsTab = () => {
     }
   };
 
+  // Load streaming statuses for all groups
+  const loadStreamingStatuses = async (groupsList: Group[]) => {
+    try {
+      // Check if getAllStreamingStatuses API exists, otherwise check individually
+      try {
+        const statusData = await groupApi.getAllStreamingStatuses();
+        setStreamingStatus(statusData.streaming_statuses || {});
+      } catch {
+        // Fallback: check each group individually
+        const statuses: { [groupId: string]: boolean } = {};
+        for (const group of groupsList) {
+          try {
+            const status = await groupApi.getStreamingStatus(group.id);
+            statuses[group.id] = status.is_streaming || false;
+          } catch {
+            statuses[group.id] = false;
+          }
+        }
+        setStreamingStatus(statuses);
+      }
+    } catch (error) {
+      console.error('Error loading streaming statuses:', error);
+      // Set all to false as fallback
+      const fallbackStatuses: { [groupId: string]: boolean } = {};
+      groupsList.forEach(group => {
+        fallbackStatuses[group.id] = false;
+      });
+      setStreamingStatus(fallbackStatuses);
+    }
+  };
+
+  // Handle streaming status change (called by GroupCard)
+  const handleStreamingStatusChange = (groupId: string, isStreaming: boolean) => {
+    setStreamingStatus(prev => ({
+      ...prev,
+      [groupId]: isStreaming
+    }));
+  };
+
+  // Initial load
+  useEffect(() => {
+    loadInitialData();
+  }, []);
+
+  // Refresh data
   const refreshData = async () => {
     setRefreshing(true);
     await loadInitialData();
     setRefreshing(false);
   };
 
-  const debugApiConnection = async () => {
-    try {
-      const response = await fetch('/api/status');
-      console.log('API connection test:', response.ok ? 'Success' : 'Failed');
-    } catch (error) {
-      console.error('API connection test failed:', error);
-    }
-  };
-
+  // Create new group
   const createGroup = async () => {
-    if (!newGroupName.trim()) {
-      toast({
-        title: "Validation Error",
-        description: "Group name is required",
-        variant: "destructive"
-      });
-      return;
-    }
-
     try {
-      setOperationInProgress('creating');
+      setOperationInProgress('create');
       
-      const response = await groupApi.createGroup({
-        name: newGroupName,
-        description: newGroupDescription,
-        screen_count: newGroupScreenCount,
-        orientation: newGroupOrientation
+      if (!newGroupForm.name.trim()) {
+        toast({
+          title: "Validation Error",
+          description: "Group name is required",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      await groupApi.createGroup({
+        name: newGroupForm.name.trim(),
+        description: newGroupForm.description.trim() || undefined,
+        screen_count: newGroupForm.screen_count,
+        orientation: newGroupForm.orientation
       });
 
       toast({
         title: "Group Created",
-        description: `Successfully created group "${newGroupName}"`
+        description: `Successfully created group "${newGroupForm.name}"`
       });
 
-      // Reset form
-      setNewGroupName('');
-      setNewGroupDescription('');
-      setNewGroupScreenCount(2);
-      setNewGroupOrientation('horizontal');
+      // Reset form and close dialog
+      setNewGroupForm({
+        name: '',
+        description: '',
+        screen_count: 2,
+        orientation: 'horizontal'
+      });
       setShowCreateForm(false);
 
       // Reload data
@@ -166,7 +156,7 @@ const StreamsTab = () => {
       console.error('Error creating group:', error);
       toast({
         title: "Creation Failed",
-        description: error?.message || `Failed to create group "${newGroupName}"`,
+        description: error?.message || "Failed to create group",
         variant: "destructive"
       });
     } finally {
@@ -174,6 +164,45 @@ const StreamsTab = () => {
     }
   };
 
+  // Delete group
+  const deleteGroup = async (groupId: string, groupName: string) => {
+    if (!confirm(`Are you sure you want to delete "${groupName}"?`)) {
+      return;
+    }
+
+    try {
+      setOperationInProgress(groupId);
+      
+      await groupApi.deleteGroup(groupId);
+      
+      toast({
+        title: "Group Deleted",
+        description: `Successfully deleted group "${groupName}"`
+      });
+
+      // Remove from streaming status
+      setStreamingStatus(prev => {
+        const updated = { ...prev };
+        delete updated[groupId];
+        return updated;
+      });
+
+      // Reload data
+      await loadInitialData();
+
+    } catch (error: any) {
+      console.error('Error deleting group:', error);
+      toast({
+        title: "Deletion Failed",
+        description: error?.message || `Failed to delete group "${groupName}"`,
+        variant: "destructive"
+      });
+    } finally {
+      setOperationInProgress(null);
+    }
+  };
+
+  // Assign client to group
   const assignClientToGroup = async (clientId: string, groupId: string) => {
     try {
       await clientApi.assignClientToGroup(clientId, groupId);
@@ -196,48 +225,7 @@ const StreamsTab = () => {
     }
   };
 
-  const startGroup = async (groupId: string, groupName: string) => {
-    try {
-      setOperationInProgress(groupId);
-      
-      const selectedVideo = selectedVideos[groupId];
-      if (!selectedVideo) {
-        toast({
-          title: "No Video Selected",
-          description: "Please select a video before starting the stream",
-          variant: "destructive"
-        });
-        return;
-      }
-
-      const response = await groupApi.startGroup(groupId, selectedVideo);
-      
-      // Update streaming status immediately
-      setStreamingStatus(prev => ({
-        ...prev,
-        [groupId]: true
-      }));
-      
-      toast({
-        title: "Streaming Started",
-        description: `Successfully started streaming for "${groupName}"`
-      });
-
-      // Reload data to get updated status and verify streaming state
-      await loadInitialData();
-      
-    } catch (error: any) {
-      console.error('Error starting group:', error);
-      toast({
-        title: "Start Failed",
-        description: error?.message || `Failed to start group "${groupName}"`,
-        variant: "destructive"
-      });
-    } finally {
-      setOperationInProgress(null);
-    }
-  };
-
+  // Stop group streaming (works for both single and multi-video)
   const stopGroup = async (groupId: string, groupName: string) => {
     try {
       setOperationInProgress(groupId);
@@ -270,47 +258,12 @@ const StreamsTab = () => {
     }
   };
 
-  const deleteGroup = async (groupId: string, groupName: string) => {
-    if (!confirm(`Are you sure you want to delete "${groupName}"? This will stop streaming and remove the Docker container.`)) {
-      return;
-    }
-
-    try {
-      setOperationInProgress(groupId);
-      
-      await groupApi.deleteGroup(groupId);
-      
-      toast({
-        title: "Group Deleted",
-        description: `Successfully deleted group "${groupName}"`
-      });
-
-      // Remove from local state
-      setGroups(prev => prev.filter(g => g.id !== groupId));
-      setStreamingStatus(prev => {
-        const updated = { ...prev };
-        delete updated[groupId];
-        return updated;
-      });
-      
-    } catch (error: any) {
-      console.error('Error deleting group:', error);
-      toast({
-        title: "Delete Failed",
-        description: error?.message || `Failed to delete group "${groupName}"`,
-        variant: "destructive"
-      });
-    } finally {
-      setOperationInProgress(null);
-    }
-  };
-
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-64">
+      <div className="flex items-center justify-center h-64">
         <div className="text-center">
-          <RefreshCw className="h-8 w-8 animate-spin text-blue-500 mx-auto mb-4" />
-          <p className="text-gray-600">Loading multi-screen data...</p>
+          <RefreshCw className="h-8 w-8 animate-spin text-gray-400 mx-auto mb-2" />
+          <p className="text-gray-600">Loading streaming groups...</p>
         </div>
       </div>
     );
@@ -321,10 +274,8 @@ const StreamsTab = () => {
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-2xl font-bold text-gray-800">Multi-Screen Groups</h2>
-          <p className="text-gray-600 mt-1">
-            Manage streaming groups discovered from Docker containers
-          </p>
+          <h2 className="text-2xl font-bold text-gray-800">Streaming Groups</h2>
+          <p className="text-gray-600">Manage multi-screen video streaming groups and client assignments</p>
         </div>
         
         <div className="flex gap-2">
@@ -334,7 +285,7 @@ const StreamsTab = () => {
             disabled={refreshing}
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
-            {refreshing ? 'Refreshing...' : 'Refresh'}
+            Refresh
           </Button>
           
           <Dialog open={showCreateForm} onOpenChange={setShowCreateForm}>
@@ -344,88 +295,83 @@ const StreamsTab = () => {
                 Create Group
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-md">
+            <DialogContent>
               <DialogHeader>
-                <DialogTitle>Create New Multi-Screen Group</DialogTitle>
+                <DialogTitle>Create New Streaming Group</DialogTitle>
                 <DialogDescription>
-                  Create a Docker container for multi-screen video streaming
+                  Set up a new multi-screen streaming group with Docker container management.
                 </DialogDescription>
               </DialogHeader>
               
               <div className="space-y-4">
                 <div>
-                  <Label htmlFor="name">Group Name</Label>
+                  <Label htmlFor="group-name">Group Name</Label>
                   <Input
-                    id="name"
-                    value={newGroupName}
-                    onChange={(e) => setNewGroupName(e.target.value)}
-                    placeholder="Enter group name..."
+                    id="group-name"
+                    placeholder="Enter group name"
+                    value={newGroupForm.name}
+                    onChange={(e) => setNewGroupForm(prev => ({ ...prev, name: e.target.value }))}
                   />
                 </div>
                 
                 <div>
-                  <Label htmlFor="description">Description (Optional)</Label>
+                  <Label htmlFor="group-description">Description (Optional)</Label>
                   <Input
-                    id="description"
-                    value={newGroupDescription}
-                    onChange={(e) => setNewGroupDescription(e.target.value)}
-                    placeholder="Enter description..."
+                    id="group-description"
+                    placeholder="Enter group description"
+                    value={newGroupForm.description}
+                    onChange={(e) => setNewGroupForm(prev => ({ ...prev, description: e.target.value }))}
                   />
                 </div>
                 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="screen_count">Screen Count</Label>
-                    <Select
-                      value={newGroupScreenCount.toString()}
-                      onValueChange={(value) => setNewGroupScreenCount(parseInt(value))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="1">1 Screen</SelectItem>
-                        <SelectItem value="2">2 Screens</SelectItem>
-                        <SelectItem value="3">3 Screens</SelectItem>
-                        <SelectItem value="4">4 Screens</SelectItem>
-                        <SelectItem value="6">6 Screens</SelectItem>
-                        <SelectItem value="8">8 Screens</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  
-                  <div>
-                    <Label htmlFor="orientation">Orientation</Label>
-                    <Select
-                      value={newGroupOrientation}
-                      onValueChange={(value: 'horizontal' | 'vertical' | 'grid') => setNewGroupOrientation(value)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="horizontal">Horizontal</SelectItem>
-                        <SelectItem value="vertical">Vertical</SelectItem>
-                        <SelectItem value="grid">Grid</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                <div>
+                  <Label htmlFor="screen-count">Screen Count</Label>
+                  <Select
+                    value={newGroupForm.screen_count.toString()}
+                    onValueChange={(value) => setNewGroupForm(prev => ({ ...prev, screen_count: parseInt(value) }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[2, 3, 4, 6, 8, 9].map(count => (
+                        <SelectItem key={count} value={count.toString()}>
+                          {count} screens
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div>
+                  <Label htmlFor="orientation">Layout Orientation</Label>
+                  <Select
+                    value={newGroupForm.orientation}
+                    onValueChange={(value: 'horizontal' | 'vertical' | 'grid') => 
+                      setNewGroupForm(prev => ({ ...prev, orientation: value }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="horizontal">Horizontal</SelectItem>
+                      <SelectItem value="vertical">Vertical</SelectItem>
+                      <SelectItem value="grid">Grid</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
               
               <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => setShowCreateForm(false)}
-                  disabled={operationInProgress === 'creating'}
-                >
+                <Button variant="outline" onClick={() => setShowCreateForm(false)}>
                   Cancel
                 </Button>
-                <Button
+                <Button 
                   onClick={createGroup}
-                  disabled={operationInProgress === 'creating' || !newGroupName.trim()}
+                  disabled={operationInProgress === 'create' || !newGroupForm.name.trim()}
                 >
-                  {operationInProgress === 'creating' ? 'Creating...' : 'Create Group'}
+                  {operationInProgress === 'create' ? 'Creating...' : 'Create Group'}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -433,45 +379,42 @@ const StreamsTab = () => {
         </div>
       </div>
 
-      {/* Status Summary */}
-      <Card className="bg-white border border-gray-200">
-        <CardHeader>
-          <CardTitle className="text-gray-800">System Status</CardTitle>
-          <CardDescription className="text-gray-600">
-            Overview of groups and clients in hybrid architecture
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-blue-600">{groups.length}</div>
-              <div className="text-sm text-gray-600">Total Groups</div>
-              <div className="text-xs text-gray-500">Docker Containers</div>
+      {/* Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card>
+          <CardContent className="flex items-center justify-between p-4">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Total Groups</p>
+              <p className="text-2xl font-bold">{groups.length}</p>
             </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-green-600">
-                {groups.filter(g => g.docker_running).length}
-              </div>
-              <div className="text-sm text-gray-600">Active Groups</div>
-              <div className="text-xs text-gray-500">Docker Running</div>
+            <Monitor className="h-8 w-8 text-blue-500" />
+          </CardContent>
+        </Card>
+        
+        <Card>
+          <CardContent className="flex items-center justify-between p-4">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Active Streams</p>
+              <p className="text-2xl font-bold">
+                {Object.values(streamingStatus).filter(Boolean).length}
+              </p>
             </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-purple-600">{clients.length}</div>
-              <div className="text-sm text-gray-600">Total Clients</div>
-              <div className="text-xs text-gray-500">Registered</div>
+            <Play className="h-8 w-8 text-green-500" />
+          </CardContent>
+        </Card>
+        
+        <Card>
+          <CardContent className="flex items-center justify-between p-4">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Connected Clients</p>
+              <p className="text-2xl font-bold">{clients.filter(c => c.status === 'active').length}</p>
             </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-orange-600">
-                {Object.values(streamingStatus).filter(status => status).length}
-              </div>
-              <div className="text-sm text-gray-600">Active Streams</div>
-              <div className="text-xs text-gray-500">FFmpeg Running</div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+            <Users className="h-8 w-8 text-purple-500" />
+          </CardContent>
+        </Card>
+      </div>
 
-      {/* Groups List */}
+      {/* Groups */}
       {groups.length === 0 ? (
         <Card className="bg-white border border-gray-200">
           <CardContent className="text-center py-8">
@@ -495,16 +438,12 @@ const StreamsTab = () => {
               videos={videos}
               clients={clients.filter(c => c.group_id === group.id)}
               unassignedClients={clients.filter(c => !c.group_id)}
-              selectedVideo={selectedVideos[group.id]}
               isStreaming={streamingStatus[group.id] || false}
               operationInProgress={operationInProgress}
-              onVideoSelect={(groupId, videoName) => 
-                setSelectedVideos(prev => ({ ...prev, [groupId]: videoName }))
-              }
-              onStart={startGroup}
               onStop={stopGroup}
               onDelete={deleteGroup}
               onAssignClient={assignClientToGroup}
+              onStreamingStatusChange={handleStreamingStatusChange}
             />
           ))}
         </div>
@@ -519,6 +458,7 @@ const StreamsTab = () => {
           </div>
           <p className="text-sm text-blue-700 mt-1">
             Groups are managed through Docker discovery. Clients are tracked in real-time app state.
+            Multi-video streaming supports different videos per screen.
           </p>
         </CardContent>
       </Card>
