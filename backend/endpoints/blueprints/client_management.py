@@ -331,61 +331,6 @@ def rename_client():
         return jsonify({"error": str(e)}), 500
     
     
-@client_bp.route("/assign_stream", methods=["POST"])
-def assign_stream():
-    """Assign stream to client - Frontend compatible endpoint"""
-    try:
-        logger.info("==== ASSIGN STREAM REQUEST (Frontend Compatible) ====")
-        
-        data = request.get_json() or {}
-        
-        client_id = data.get("client_id")
-        stream_id = data.get("stream_id")
-        group_id = data.get("group_id")
-        
-        if not all([client_id, stream_id]):
-            return jsonify({"error": "client_id and stream_id are required"}), 400
-        
-        # Convert frontend stream_id format to backend format
-        # Frontend might send: "test0", "test1", etc.
-        # Backend expects: "test0", "test1", etc. (same format)
-        stream_name = stream_id
-        
-        # Use the existing assign_client_stream logic
-        state = get_state()
-        
-        if not hasattr(state, 'clients') or client_id not in state.clients:
-            return jsonify({"error": f"Client {client_id} not found"}), 404
-        
-        # Call the existing assignment function
-        assignment_data = {
-            "client_id": client_id,
-            "stream_name": stream_name,
-            "group_id": group_id,
-            "srt_ip": "128.205.39.64"  # Use your server IP
-        }
-        
-        # Import and call the existing function
-        from flask import current_app
-        with current_app.test_request_context(json=assignment_data, method='POST'):
-            response = assign_client_stream()
-            response_data = response.get_json() if hasattr(response, 'get_json') else {}
-            
-            if response.status_code == 200:
-                return jsonify({
-                    "message": "Stream assigned successfully",
-                    "client_id": client_id,
-                    "stream_id": stream_id,  # Return in frontend format
-                    "group_id": group_id
-                }), 200
-            else:
-                return response
-        
-    except Exception as e:
-        logger.error(f"Error in assign_stream (frontend): {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-    
     
 @client_bp.route("/assign_client_to_group", methods=["POST"])
 def assign_client_to_group():
@@ -919,3 +864,409 @@ def get_state():
         state.get_active_clients_count = lambda group_id=None: get_active_clients_count(group_id)
     
     return state
+
+
+# Add these simplified endpoints to your existing blueprints/client_management.py file
+# Place them after your existing endpoints, before the utility functions
+
+# =====================================
+# MULTI-VIDEO CLIENT ASSIGNMENT ENDPOINTS (1 CLIENT PER SCREEN)
+# =====================================
+
+@client_bp.route("/assign_client_to_screen", methods=["POST"])
+def assign_client_to_screen():
+    """
+    Assign a client to a specific screen in a multi-video setup
+    Each screen will have exactly 1 client
+    """
+    try:
+        logger.info("==== ASSIGN CLIENT TO SCREEN REQUEST RECEIVED ====")
+        
+        state = get_state()
+        data = request.get_json() or {}
+        
+        client_id = data.get("client_id")
+        group_id = data.get("group_id")
+        screen_number = data.get("screen_number")
+        srt_ip = data.get("srt_ip", "127.0.0.1")
+        
+        logger.info(f"Assigning client {client_id} to screen {screen_number} in group {group_id}")
+        
+        if not all([client_id, group_id, screen_number is not None]):
+            return jsonify({
+                "error": "client_id, group_id, and screen_number are required"
+            }), 400
+        
+        # Initialize clients if needed
+        if not hasattr(state, 'clients'):
+            state.clients = {}
+        
+        # Verify client exists
+        if client_id not in state.clients:
+            return jsonify({"error": f"Client {client_id} not registered"}), 404
+        
+        # Verify group exists using your existing function
+        group = get_group_from_docker(group_id)
+        if not group:
+            return jsonify({"error": f"Group {group_id} not found in Docker"}), 404
+        
+        group_name = group.get("name", group_id)
+        screen_count = group.get("screen_count", 4)
+        
+        if screen_number >= screen_count:
+            return jsonify({
+                "error": f"Screen number {screen_number} exceeds group screen count {screen_count}"
+            }), 400
+        
+        # Check if another client is already assigned to this screen
+        with state.clients_lock:
+            for other_client_id, other_client in state.clients.items():
+                if (other_client_id != client_id and 
+                    other_client.get("group_id") == group_id and 
+                    other_client.get("screen_number") == screen_number):
+                    return jsonify({
+                        "error": f"Screen {screen_number} is already assigned to client {other_client_id}",
+                        "current_assignment": {
+                            "client_id": other_client_id,
+                            "hostname": other_client.get("hostname", "unknown")
+                        }
+                    }), 409  # Conflict
+        
+        # Get SRT port from group
+        ports = group.get("ports", {})
+        srt_port = ports.get("srt_port", 10080)
+        
+        # Get persistent stream ID for the specific screen using your existing function
+        persistent_streams = get_persistent_streams_for_group(group_id, group_name, screen_count)
+        
+        # Build stream URL for the specific screen
+        screen_stream_key = f"test{screen_number}"
+        if screen_stream_key in persistent_streams:
+            stream_id = persistent_streams[screen_stream_key]
+        else:
+            # If stream doesn't exist, this means multi-video streaming hasn't started
+            return jsonify({
+                "error": f"Screen {screen_number} stream not available. Start multi-video streaming first.",
+                "available_streams": list(persistent_streams.keys())
+            }), 400
+        
+        stream_path = f"live/{group_name}/{stream_id}"
+        stream_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=request,latency=5000000"
+        
+        # Update client assignment using your existing lock pattern
+        with state.clients_lock:
+            client = state.clients[client_id]
+            client.update({
+                "group_id": group_id,
+                "screen_number": screen_number,
+                "stream_assignment": f"screen{screen_number}",
+                "stream_url": stream_url,
+                "assigned_at": time.time(),
+                "status": "screen_assigned"
+            })
+        
+        logger.info(f"✅ Assigned client {client_id} to screen {screen_number} in group {group_name}")
+        
+        return jsonify({
+            "message": f"Client assigned to screen {screen_number}",
+            "client_id": client_id,
+            "group_id": group_id,
+            "group_name": group_name,
+            "screen_number": screen_number,
+            "stream_assignment": f"screen{screen_number}",
+            "stream_url": stream_url,
+            "status": "screen_assigned"
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error assigning client to screen: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@client_bp.route("/auto_assign_screens", methods=["POST"])
+def auto_assign_screens():
+    """
+    Automatically assign clients in a group to sequential screens (1 client per screen)
+    Perfect for multi-video setups where each client shows different content
+    """
+    try:
+        logger.info("==== AUTO ASSIGN SCREENS REQUEST RECEIVED ====")
+        
+        state = get_state()
+        data = request.get_json() or {}
+        
+        group_id = data.get("group_id")
+        srt_ip = data.get("srt_ip", "127.0.0.1")
+        
+        if not group_id:
+            return jsonify({"error": "group_id is required"}), 400
+        
+        # Verify group exists using your existing function
+        group = get_group_from_docker(group_id)
+        if not group:
+            return jsonify({"error": f"Group {group_id} not found"}), 404
+        
+        group_name = group.get("name", group_id)
+        screen_count = group.get("screen_count", 4)
+        
+        # Get SRT port
+        ports = group.get("ports", {})
+        srt_port = ports.get("srt_port", 10080)
+        
+        # Get persistent streams using your existing function
+        persistent_streams = get_persistent_streams_for_group(group_id, group_name, screen_count)
+        
+        # Initialize clients if needed
+        if not hasattr(state, 'clients'):
+            state.clients = {}
+        
+        assignments = []
+        
+        with state.clients_lock:
+            # Get all active clients in this group that don't have screen assignments yet
+            available_clients = []
+            current_time = time.time()
+            
+            for client_id, client in state.clients.items():
+                if (client.get("group_id") == group_id and 
+                    (current_time - client.get("last_seen", 0)) <= 60 and  # Active clients only
+                    client.get("screen_number") is None):  # Not yet assigned to a screen
+                    available_clients.append((client_id, client))
+            
+            if not available_clients:
+                return jsonify({
+                    "message": f"No unassigned active clients found in group {group_id}",
+                    "assignments": []
+                }), 200
+            
+            # Sort clients by registration time for consistent assignment
+            available_clients.sort(key=lambda x: x[1].get("registered_at", 0))
+            
+            # Find which screens are already taken
+            taken_screens = set()
+            for client in state.clients.values():
+                if (client.get("group_id") == group_id and 
+                    client.get("screen_number") is not None):
+                    taken_screens.add(client.get("screen_number"))
+            
+            # Get available screens
+            available_screens = [i for i in range(screen_count) if i not in taken_screens]
+            
+            if not available_screens:
+                return jsonify({
+                    "message": f"All screens in group {group_id} are already assigned",
+                    "assignments": []
+                }), 200
+            
+            # Assign clients to available screens (1 client per screen)
+            assignments_made = min(len(available_clients), len(available_screens))
+            
+            logger.info(f"Auto-assigning {assignments_made} clients to screens in group {group_name}")
+            
+            for i in range(assignments_made):
+                client_id, client = available_clients[i]
+                screen_number = available_screens[i]
+                
+                # Get stream ID for this screen
+                screen_stream_key = f"test{screen_number}"
+                if screen_stream_key in persistent_streams:
+                    stream_id = persistent_streams[screen_stream_key]
+                    
+                    # Build stream URL
+                    stream_path = f"live/{group_name}/{stream_id}"
+                    stream_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=request,latency=5000000"
+                    
+                    # Update client using your existing pattern
+                    state.clients[client_id].update({
+                        "screen_number": screen_number,
+                        "stream_assignment": f"screen{screen_number}",
+                        "stream_url": stream_url,
+                        "assigned_at": time.time(),
+                        "status": "screen_assigned"
+                    })
+                    
+                    assignments.append({
+                        "client_id": client_id,
+                        "hostname": client.get("hostname", "unknown"),
+                        "display_name": client.get("display_name", "unknown"),
+                        "screen_number": screen_number,
+                        "stream_assignment": f"screen{screen_number}",
+                        "stream_url": stream_url
+                    })
+                    
+                    logger.info(f"Auto-assigned {client_id} to screen {screen_number}")
+                else:
+                    logger.warning(f"Screen {screen_number} stream not available for client {client_id}")
+        
+        logger.info(f"✅ Auto-assignment complete: {len(assignments)} clients assigned to screens")
+        
+        return jsonify({
+            "message": f"Auto-assignment completed for group '{group_name}'",
+            "group_id": group_id,
+            "group_name": group_name,
+            "screen_count": screen_count,
+            "total_assignments": len(assignments),
+            "assignments": assignments,
+            "remaining_unassigned": len(available_clients) - len(assignments),
+            "remaining_screens": len(available_screens) - len(assignments)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in auto-assignment of screens: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@client_bp.route("/get_screen_assignments", methods=["GET"])
+def get_screen_assignments():
+    """
+    Get the current screen assignments for a group (1 client per screen)
+    """
+    try:
+        group_id = request.args.get('group_id')
+        
+        if not group_id:
+            return jsonify({"error": "group_id parameter is required"}), 400
+        
+        state = get_state()
+        
+        # Get group info using your existing function
+        group = get_group_from_docker(group_id)
+        if not group:
+            return jsonify({"error": f"Group {group_id} not found"}), 404
+        
+        group_name = group.get("name", group_id)
+        screen_count = group.get("screen_count", 4)
+        
+        # Initialize screen assignments
+        screen_assignments = {}
+        for i in range(screen_count):
+            screen_assignments[f"screen_{i}"] = {
+                "screen_number": i,
+                "assigned_client": None,
+                "is_assigned": False
+            }
+        
+        # Find current assignments
+        if hasattr(state, 'clients'):
+            current_time = time.time()
+            
+            with state.clients_lock:
+                for client_id, client in state.clients.items():
+                    if client.get("group_id") == group_id:
+                        screen_number = client.get("screen_number")
+                        is_active = (current_time - client.get("last_seen", 0)) <= 60
+                        
+                        if screen_number is not None and f"screen_{screen_number}" in screen_assignments:
+                            screen_assignments[f"screen_{screen_number}"] = {
+                                "screen_number": screen_number,
+                                "assigned_client": {
+                                    "client_id": client_id,
+                                    "hostname": client.get("hostname", "unknown"),
+                                    "display_name": client.get("display_name", "unknown"),
+                                    "ip_address": client.get("ip_address", "unknown"),
+                                    "is_active": is_active,
+                                    "last_seen": client.get("last_seen", 0),
+                                    "assigned_at": client.get("assigned_at", 0),
+                                    "stream_assignment": client.get("stream_assignment"),
+                                    "stream_url": client.get("stream_url")
+                                },
+                                "is_assigned": True
+                            }
+        
+        # Calculate statistics
+        assigned_screens = [s for s in screen_assignments.values() if s["is_assigned"]]
+        unassigned_screens = [s for s in screen_assignments.values() if not s["is_assigned"]]
+        active_assignments = [s for s in assigned_screens if s["assigned_client"]["is_active"]]
+        
+        return jsonify({
+            "group_id": group_id,
+            "group_name": group_name,
+            "screen_count": screen_count,
+            "screen_assignments": screen_assignments,
+            "summary": {
+                "total_screens": screen_count,
+                "assigned_screens": len(assigned_screens),
+                "unassigned_screens": len(unassigned_screens),
+                "active_assignments": len(active_assignments),
+                "assignment_complete": len(assigned_screens) == screen_count
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting screen assignments: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@client_bp.route("/unassign_client_from_screen", methods=["POST"])
+def unassign_client_from_screen():
+    """
+    Remove a client's screen assignment (frees up the screen for another client)
+    """
+    try:
+        logger.info("==== UNASSIGN CLIENT FROM SCREEN REQUEST RECEIVED ====")
+        
+        state = get_state()
+        data = request.get_json() or {}
+        
+        client_id = data.get("client_id")
+        
+        if not client_id:
+            return jsonify({"error": "client_id is required"}), 400
+        
+        if not hasattr(state, 'clients'):
+            state.clients = {}
+        
+        if client_id not in state.clients:
+            return jsonify({"error": "Client not found"}), 404
+        
+        with state.clients_lock:
+            client = state.clients[client_id]
+            old_group_id = client.get("group_id")
+            old_screen_number = client.get("screen_number")
+            old_stream = client.get("stream_assignment")
+            
+            # Clear screen assignment but keep group assignment
+            client.update({
+                "screen_number": None,
+                "stream_assignment": None,
+                "stream_url": None,
+                "status": "assigned_to_group",  # Still in group, just no specific screen
+                "unassigned_at": time.time()
+            })
+        
+        logger.info(f"✅ Unassigned client {client_id} from screen {old_screen_number} in group {old_group_id}")
+        
+        return jsonify({
+            "message": f"Client {client_id} unassigned from screen {old_screen_number}",
+            "client_id": client_id,
+            "group_id": old_group_id,
+            "old_screen_number": old_screen_number,
+            "old_stream": old_stream,
+            "status": "assigned_to_group"
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error unassigning client from screen: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+# =====================================
+# ENHANCED GET_CLIENTS WITH SCREEN INFO
+# =====================================
+
+def enhance_client_info_with_screen_data(client_info, client_data):
+    """
+    Enhance client info with screen assignment data (1 client per screen)
+    Call this from your existing get_clients function
+    """
+    # Add screen assignment information
+    client_info.update({
+        "screen_number": client_data.get("screen_number"),  # Which screen (0, 1, 2, etc.) or None
+        "has_screen_assignment": client_data.get("screen_number") is not None
+    })
+    
+    # Update status to include screen assignment info
+    if client_data.get("screen_number") is not None:
+        client_info["status"] = "screen_assigned" if client_info["is_active"] else "inactive"
+    
+    return client_info
