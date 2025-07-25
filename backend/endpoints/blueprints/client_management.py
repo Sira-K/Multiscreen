@@ -729,6 +729,10 @@ def get_clients():
                     "stream_url": client_data.get("stream_url"),
                     "assigned_at": client_data.get("assigned_at"),
                     
+                    # SCREEN ASSIGNMENT FIELDS - ADD THESE!
+                    "screen_number": client_data.get("screen_number"),  # This was missing!
+                    "has_screen_assignment": client_data.get("screen_number") is not None,
+                    
                     # Additional fields that might be needed
                     "stream_assignment": client_data.get("stream_assignment"),  # Keep both for compatibility
                     "order": len(clients_list)  # Frontend might use this for ordering
@@ -864,14 +868,6 @@ def get_state():
         state.get_active_clients_count = lambda group_id=None: get_active_clients_count(group_id)
     
     return state
-
-
-# Add these simplified endpoints to your existing blueprints/client_management.py file
-# Place them after your existing endpoints, before the utility functions
-
-# =====================================
-# MULTI-VIDEO CLIENT ASSIGNMENT ENDPOINTS (1 CLIENT PER SCREEN)
-# =====================================
 
 @client_bp.route("/assign_client_to_screen", methods=["POST"])
 def assign_client_to_screen():
@@ -1249,10 +1245,6 @@ def unassign_client_from_screen():
         logger.error(f"Error unassigning client from screen: {e}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-
-# =====================================
-# ENHANCED GET_CLIENTS WITH SCREEN INFO
-# =====================================
 
 def enhance_client_info_with_screen_data(client_info, client_data):
     """

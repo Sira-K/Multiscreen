@@ -6,13 +6,9 @@ import logging
 import traceback
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from app_config import config, load_config, save_config
+from models.app_state import state
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 # Import blueprints
 from blueprints.group_management import group_bp
@@ -21,21 +17,26 @@ from blueprints.client_management import client_bp
 from blueprints.stream_management import stream_bp
 from blueprints.docker_management import docker_bp
 
-# Import application state and config functions  
-from models.app_state import state
-from config import load_config, save_config
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
 
-# Configuration
-app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'uploads')
-app.config['DOWNLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'resized_video')
+flask_config = config.get_flask_config()
+app.config.update(flask_config)
+
+
+app.config['UNIFIED_CONFIG'] = config
 app.config['APP_STATE'] = state
 
-# Ensure directories exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['DOWNLOAD_FOLDER'], exist_ok=True)
+
 
 # Register blueprints
 app.register_blueprint(group_bp)
@@ -142,13 +143,15 @@ def home():
     
     return jsonify({
         "status": "running", 
-        "message": "Multi-Screen SRT Control Server - Hybrid Architecture",
+        "message": "Multi-Screen SRT Control Server - Unified Config",
         "server_info": {
             "upload_folder": app.config['UPLOAD_FOLDER'],
             "download_folder": app.config['DOWNLOAD_FOLDER'],
-            "version": "3.1.0",
-            "architecture": "hybrid_docker_discovery",
+            "version": config.get('system', 'version'),
+            "architecture": config.get('system', 'architecture'),
+            "config_file": config.config_file,
             "features": [
+                "Unified Configuration System",
                 "Pure Docker Group Discovery",
                 "In-Memory Client Management", 
                 "Multi-Container Docker Support", 
@@ -165,17 +168,6 @@ def home():
         }
     })
 
-@app.route('/ping')
-def ping():
-    """Simple ping endpoint to test server availability"""
-    return jsonify({
-        "message": "pong",
-        "server_ip": request.host,
-        "timestamp": time.time(),
-        "architecture": "hybrid_docker_discovery",
-        "clients_available": hasattr(state, 'clients')
-    })
-
 @app.route('/system_status')
 def system_status():
     """Get overall system status including groups and clients"""
@@ -188,56 +180,6 @@ def system_status():
             "server_running": True,
             "architecture": "hybrid_docker_discovery"
         }), 500
-
-@app.route('/api/health')
-def health_check():
-    """Health check endpoint for monitoring"""
-    try:
-        # Check Docker availability
-        docker_available = False
-        groups_count = 0
-        
-        try:
-            from blueprints.docker_management import discover_groups
-            discovery_result = discover_groups()
-            docker_available = discovery_result.get("success", False)
-            if docker_available:
-                groups_count = len(discovery_result.get("groups", []))
-        except:
-            docker_available = False
-        
-        health_status = {
-            "status": "healthy",
-            "timestamp": time.time(),
-            "architecture": "hybrid_docker_discovery",
-            "checks": {
-                "app_state": hasattr(state, 'clients') and hasattr(state, 'clients_lock'),
-                "upload_folder": os.path.exists(app.config['UPLOAD_FOLDER']),
-                "download_folder": os.path.exists(app.config['DOWNLOAD_FOLDER']),
-                "docker_discovery": docker_available,
-                "client_management": hasattr(state, 'clients')
-            },
-            "stats": {
-                "groups_discovered": groups_count,
-                "clients_connected": len(getattr(state, 'clients', {}))
-            }
-        }
-        
-        all_healthy = all(health_status["checks"].values())
-        
-        if not all_healthy:
-            health_status["status"] = "degraded"
-            
-        return jsonify(health_status), 200 if all_healthy else 503
-        
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return jsonify({
-            "status": "unhealthy",
-            "error": str(e),
-            "timestamp": time.time(),
-            "architecture": "hybrid_docker_discovery"
-        }), 503
 
 # Error handlers
 @app.errorhandler(404)
@@ -254,6 +196,103 @@ def not_found(error):
             "/start_group_docker", "/stop_group_docker"
         ]
     }), 404
+
+@app.route('/api/config', methods=['GET'])
+def get_config():
+    """Get current configuration"""
+    return jsonify({
+        "success": True,
+        "config": config.config,
+        "config_file": config.config_file
+    })
+
+@app.route('/test_config')
+def test_config():
+    return jsonify({
+        'MAX_CONTENT_LENGTH': app.config.get('MAX_CONTENT_LENGTH'),
+        'MAX_CONTENT_LENGTH_MB': app.config.get('MAX_CONTENT_LENGTH', 0) / (1024*1024),
+        'config_file': config.config_file,
+        'files_config': config.get('files')
+    })
+
+@app.route('/api/config', methods=['POST'])
+def update_config():
+    """Update configuration"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"success": False, "message": "No data provided"}), 400
+        
+        # Update config
+        for section, values in data.items():
+            if isinstance(values, dict):
+                for key, value in values.items():
+                    config.set(section, key, value)
+            else:
+                config.set(section, None, values)
+        
+        # Save to file
+        if config.save():
+            # Update Flask config if needed
+            if 'files' in data or 'server' in data:
+                flask_config = config.get_flask_config()
+                app.config.update(flask_config)
+            
+            # Update state if display settings changed
+            if 'display' in data:
+                load_config(state)
+            
+            return jsonify({
+                "success": True,
+                "message": "Configuration updated successfully"
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "message": "Failed to save configuration"
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error updating config: {e}")
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
+
+@app.route('/api/config/presets', methods=['GET'])
+def get_presets():
+    """Get available layout presets"""
+    return jsonify({
+        "success": True,
+        "presets": config.get_layout_presets()
+    })
+
+@app.route('/api/config/preset/<preset_name>', methods=['POST'])
+def apply_preset(preset_name):
+    """Apply a layout preset"""
+    try:
+        if config.apply_preset(preset_name):
+            config.save()
+            load_config(state)  # Update state
+            
+            return jsonify({
+                "success": True,
+                "message": f"Applied preset: {preset_name}",
+                "display_config": config.get('display')
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "message": f"Preset not found: {preset_name}"
+            }), 404
+            
+    except Exception as e:
+        logger.error(f"Error applying preset: {e}")
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
+
 
 @app.errorhandler(500)
 def internal_error(error):
@@ -280,15 +319,16 @@ import atexit
 atexit.register(cleanup_on_shutdown)
 
 if __name__ == "__main__":
-    import logging
-    import traceback
-    
-    # Setup logging
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)
-    
     # Initialize application state
-    logger.info("Starting Multi-Screen Display Server (Hybrid Architecture)...")
+    logger.info("Starting Multi-Screen Display Server (Unified Config)...")
+    
+    # Server settings from config
+    server_config = config.get('server')
+    host = server_config.get('host', '0.0.0.0')
+    port = server_config.get('port', 5001)
+    debug = server_config.get('debug', True)
+    
+    logger.info(f"Server config: {host}:{port}, debug={debug}")
     
     if initialize_app_state():
         logger.info("Application state initialized successfully")
@@ -296,4 +336,4 @@ if __name__ == "__main__":
         logger.warning("Application state initialization had issues, but continuing...")
     
     # Start the Flask app
-    app.run(host="0.0.0.0", port=5001, debug=True)  # Using port 5001 to avoid conflicts
+    app.run(host=host, port=port, debug=debug)

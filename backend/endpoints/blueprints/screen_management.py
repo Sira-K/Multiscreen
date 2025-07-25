@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 import logging
 import traceback
-from config import save_config
+from app_config import save_config
 
 # Get current application state from app context
 def get_state():
