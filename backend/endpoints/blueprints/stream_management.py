@@ -71,16 +71,730 @@ class PersistentIDManager:
 # Global persistent ID manager
 id_manager = PersistentIDManager()
 
+def build_complete_multi_video_ffmpeg_command(
+    video_files: List[str],
+    screen_count: int,
+    orientation: str,
+    output_width: int,
+    output_height: int,
+    srt_ip: str,
+    srt_port: int,
+    sei: str,
+    group_name: str,
+    persistent_streams: Dict[str, str],
+    grid_rows: int = 2,
+    grid_cols: int = 2
+) -> List[str]:
+    """
+    Build complete FFmpeg command for multi-video streaming
+    """
+    
+    # Validate inputs
+    if len(video_files) != screen_count:
+        raise ValueError(f"Number of video files ({len(video_files)}) must match screen count ({screen_count})")
+    
+    for video_file in video_files:
+        if not os.path.exists(video_file):
+            raise FileNotFoundError(f"Video file not found: {video_file}")
+    
+    # Find FFmpeg
+    ffmpeg_path = find_ffmpeg_executable()
+    
+    # Build input args with looping
+    input_args = []
+    for i, video_file in enumerate(video_files):
+        input_args.extend(["-stream_loop", "-1", "-i", video_file])
+    
+    # Start building the complete filter chain
+    filter_parts = []
+    
+    # Step 1: Scale and combine videos based on orientation
+    if orientation.lower() == "horizontal":
+        section_width = output_width // screen_count
+        section_height = output_height
+        
+        # Scale each input
+        for i in range(screen_count):
+            filter_parts.append(f"[{i}:v]scale={section_width}:{section_height}[v{i}]")
+        
+        # Concatenate horizontally
+        hstack_inputs = "".join([f"[v{i}]" for i in range(screen_count)])
+        filter_parts.append(f"{hstack_inputs}hstack=inputs={screen_count}[combined]")
+        
+    elif orientation.lower() == "vertical":
+        section_width = output_width
+        section_height = output_height // screen_count
+        
+        # Scale each input
+        for i in range(screen_count):
+            filter_parts.append(f"[{i}:v]scale={section_width}:{section_height}[v{i}]")
+        
+        # Concatenate vertically
+        vstack_inputs = "".join([f"[v{i}]" for i in range(screen_count)])
+        filter_parts.append(f"{vstack_inputs}vstack=inputs={screen_count}[combined]")
+        
+    elif orientation.lower() == "grid":
+        if grid_rows * grid_cols != screen_count:
+            grid_cols = int(screen_count ** 0.5)
+            grid_rows = (screen_count + grid_cols - 1) // grid_cols
+        
+        section_width = output_width // grid_cols
+        section_height = output_height // grid_rows
+        
+        # Scale each input
+        for i in range(screen_count):
+            filter_parts.append(f"[{i}:v]scale={section_width}:{section_height}[v{i}]")
+        
+        # Create grid rows
+        for row in range(grid_rows):
+            start_idx = row * grid_cols
+            end_idx = start_idx + grid_cols
+            row_inputs = "".join([f"[v{i}]" for i in range(start_idx, min(end_idx, screen_count))])
+            cols_in_row = min(grid_cols, screen_count - start_idx)
+            filter_parts.append(f"{row_inputs}hstack=inputs={cols_in_row}[row{row}]")
+        
+        # Stack rows vertically
+        if grid_rows > 1:
+            row_inputs = "".join([f"[row{i}]" for i in range(grid_rows)])
+            filter_parts.append(f"{row_inputs}vstack=inputs={grid_rows}[combined]")
+        else:
+            filter_parts.append("[row0]copy[combined]")
+    
+    # Step 2: Split combined stream for individual outputs
+    split_outputs = [f"[full_out]"] + [f"[split{i}]" for i in range(screen_count)]
+    filter_parts.append(f"[combined]split={screen_count+1}{''.join(split_outputs)}")
+    
+    # Step 3: Crop individual screens from split outputs
+    if orientation.lower() == "horizontal":
+        section_width = output_width // screen_count
+        for i in range(screen_count):
+            start_x = i * section_width
+            filter_parts.append(f"[split{i}]crop={section_width}:{output_height}:{start_x}:0[screen{i}]")
+            
+    elif orientation.lower() == "vertical":
+        section_height = output_height // screen_count
+        for i in range(screen_count):
+            start_y = i * section_height
+            filter_parts.append(f"[split{i}]crop={output_width}:{section_height}:0:{start_y}[screen{i}]")
+            
+    elif orientation.lower() == "grid":
+        section_width = output_width // grid_cols
+        section_height = output_height // grid_rows
+        for i in range(screen_count):
+            row = i // grid_cols
+            col = i % grid_cols
+            start_x = col * section_width
+            start_y = row * section_height
+            filter_parts.append(f"[split{i}]crop={section_width}:{section_height}:{start_x}:{start_y}[screen{i}]")
+    
+    # Combine all filter parts
+    complete_filter = ";".join(filter_parts)
+    
+    # Build the complete FFmpeg command
+    ffmpeg_cmd = [ffmpeg_path, "-y"] + input_args + ["-filter_complex", complete_filter]
+    
+    # Add outputs with SRT parameters
+    srt_params = "latency=2000000&connect_timeout=5000&rcvbuf=67108864&sndbuf=67108864"
+    
+    # Combined stream (full video)
+    combined_stream_id = persistent_streams["test"]
+    combined_stream_path = f"live/{group_name}/{combined_stream_id}"
+    combined_srt_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={combined_stream_path},m=publish&{srt_params}"
+    
+    ffmpeg_cmd.extend([
+        "-map", "[full_out]",
+        "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+        "-maxrate", "4000k", "-bufsize", "8000k",
+        "-bsf:v", f"h264_metadata=sei_user_data={sei}",
+        "-pes_payload_size", "0", "-bf", "0", "-g", "30",
+        "-f", "mpegts", combined_srt_url
+    ])
+    
+    # Individual screen streams
+    for i in range(screen_count):
+        screen_stream_id = persistent_streams.get(f"test{i}", f"screen{i}")
+        screen_stream_path = f"live/{group_name}/{screen_stream_id}"
+        screen_srt_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={screen_stream_path},m=publish&{srt_params}"
+        
+        ffmpeg_cmd.extend([
+            "-map", f"[screen{i}]",
+            "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+            "-bsf:v", f"h264_metadata=sei_user_data={sei}",
+            "-pes_payload_size", "0", "-bf", "0", "-g", "30",
+            "-f", "mpegts", screen_srt_url
+        ])
+    
+    logger.info(f"Built complete multi-video FFmpeg command for {screen_count} videos in {orientation} layout")
+    return ffmpeg_cmd
+
+def start_ffmpeg_with_retry(ffmpeg_cmd: List[str], max_retries: int = 3) -> subprocess.Popen:
+    """Start FFmpeg with retry mechanism for SRT connection issues"""
+    
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"🎬 Starting FFmpeg (attempt {attempt + 1}/{max_retries})")
+            
+            process = subprocess.Popen(
+                ffmpeg_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                bufsize=1
+            )
+            
+            # Wait a bit to see if it starts successfully
+            time.sleep(2.0)
+            
+            if process.poll() is None:
+                logger.info(f"✅ FFmpeg started successfully on attempt {attempt + 1}")
+                return process
+            else:
+                exit_code = process.returncode
+                stderr_output = process.stderr.read() if process.stderr else ""
+                logger.warning(f"⚠️ FFmpeg failed on attempt {attempt + 1} with exit code {exit_code}")
+                
+                # Check for specific connection issues
+                if any(error in stderr_output for error in [
+                    "Connection refused", "I/O error", "Address already in use", 
+                    "No route to host", "Network is unreachable"
+                ]):
+                    logger.info(f"🔄 Network/SRT connection issue detected, retrying in 3 seconds...")
+                    time.sleep(3)
+                    continue
+                else:
+                    raise Exception(f"FFmpeg failed with exit code {exit_code}: {stderr_output}")
+                    
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise e
+            else:
+                logger.warning(f"⚠️ Attempt {attempt + 1} failed: {e}")
+                time.sleep(3)
+    
+    raise Exception(f"FFmpeg failed to start after {max_retries} attempts")
+
+def find_ffmpeg_executable() -> str:
+    """Find FFmpeg executable"""
+    paths = [
+        "./cmake-build-debug/external/Install/bin/ffmpeg",
+        "/usr/bin/ffmpeg", 
+        "/usr/local/bin/ffmpeg",
+        "ffmpeg"
+    ]
+    
+    for path in paths:
+        if os.path.exists(path) or path == "ffmpeg":
+            return path
+    
+    return "ffmpeg"
+
+@stream_bp.route("/start_multi_video_srt", methods=["POST"])
+def start_multi_video_srt():
+    """
+    Combine multiple video files and stream as one SRT stream
+    """
+    try:
+        data = request.get_json() or {}
+        
+        # Required parameters
+        group_id = data.get("group_id")
+        video_files_config = data.get("video_files", [])
+        
+        logger.info(f"🎬 START MULTI-VIDEO SRT: group_id={group_id}, video_files={len(video_files_config)}")
+        
+        if not group_id:
+            return jsonify({"error": "group_id is required"}), 400
+        
+        if not video_files_config:
+            return jsonify({"error": "video_files list is required"}), 400
+        
+        # Use Docker discovery
+        group = discover_group_from_docker(group_id)
+        
+        if not group:
+            return jsonify({
+                "error": f"Group '{group_id}' not found in Docker containers",
+                "suggestion": "Create the group first using /create_group endpoint"
+            }), 404
+        
+        group_name = group.get("name", group_id)
+        logger.info(f"✅ Found group in Docker: {group_name}")
+        
+        # Check if Docker container is running
+        if not group.get("docker_running", False):
+            return jsonify({
+                "error": f"Docker container for group '{group_name}' is not running",
+                "suggestion": "Start the Docker container first",
+                "docker_status": group.get("docker_status", "unknown")
+            }), 400
+        
+        # Check if FFmpeg is already running for this group
+        existing_ffmpeg = find_running_ffmpeg_for_group(group_id, group_name)
+        if existing_ffmpeg:
+            logger.info(f"⚠️ FFmpeg already running for group {group_name}")
+            return jsonify({
+                "message": f"SRT streaming already active for group '{group_name}'",
+                "group_id": group_id,
+                "group_name": group_name,
+                "running_processes": existing_ffmpeg,
+                "status": "already_active"
+            }), 200
+        
+        # Configuration
+        screen_count = data.get("screen_count", group.get("screen_count", len(video_files_config)))
+        orientation = data.get("orientation", group.get("orientation", "horizontal"))
+        output_width = data.get("output_width", 3840)
+        output_height = data.get("output_height", 1080)
+        
+        # Grid layout parameters
+        grid_rows = data.get("grid_rows", 2)
+        grid_cols = data.get("grid_cols", 2)
+        
+        # SRT configuration
+        ports = group.get("ports", {})
+        srt_port = data.get("srt_port", ports.get("srt_port", 10080))
+        srt_ip = data.get("srt_ip", "127.0.0.1")
+        sei = data.get("sei", "681d5c8f-80cd-4847-930a-99b9484b4a32+000000")
+        
+        logger.info(f"📊 Multi-Video Config: {screen_count} screens, {orientation} layout, {len(video_files_config)} video files")
+        
+        # Process video files
+        video_files = []
+        uploads_dir = current_app.config.get('UPLOAD_FOLDER', 'uploads')
+        
+        # Sort video files by screen number
+        video_files_config.sort(key=lambda x: x.get("screen", 0))
+        
+        for video_config in video_files_config:
+            screen_num = video_config.get("screen", 0)
+            file_name = video_config.get("file")
+            
+            if not file_name:
+                return jsonify({"error": f"Missing file for screen {screen_num}"}), 400
+            
+            # Construct full file path
+            if file_name.startswith('uploads/'):
+                file_path = file_name
+            elif file_name.startswith('resized_video/'):
+                file_path = file_name
+            else:
+                # Try uploads first, then resized_video
+                upload_path = os.path.join(uploads_dir, file_name)
+                resized_path = os.path.join(current_app.config.get('DOWNLOAD_FOLDER', 'resized_video'), file_name)
+                
+                if os.path.exists(upload_path):
+                    file_path = upload_path
+                elif os.path.exists(resized_path):
+                    file_path = resized_path
+                else:
+                    return jsonify({
+                        "error": f"Video file not found: {file_name}",
+                        "screen": screen_num,
+                        "checked_paths": [upload_path, resized_path]
+                    }), 404
+            
+            if not os.path.exists(file_path):
+                return jsonify({
+                    "error": f"Video file not found: {file_path}",
+                    "screen": screen_num
+                }), 404
+            
+            video_files.append(file_path)
+        
+        # Wait for SRT server to be ready
+        logger.info(f"⏳ Waiting for SRT server to be ready...")
+        if not wait_for_srt_server(srt_ip, srt_port, timeout=30):
+            return jsonify({
+                "error": f"SRT server at {srt_ip}:{srt_port} not ready",
+                "suggestion": "Check Docker container logs"
+            }), 500
+        
+        # Test SRT connection first
+        logger.info(f"🧪 Testing SRT connection...")
+        test_result = test_ffmpeg_srt_connection(srt_ip, srt_port, group_name, sei)
+        
+        if not test_result["success"]:
+            return jsonify({
+                "error": "SRT connection test failed",
+                "test_result": test_result,
+                "suggestion": "Check SRT server configuration"
+            }), 500
+        
+        logger.info(f"✅ SRT test passed! Building multi-video FFmpeg command...")
+        
+        # Get persistent stream IDs
+        persistent_streams = get_persistent_streams_for_group(group_id, group_name, screen_count)
+        
+        # Build complete FFmpeg command
+        ffmpeg_cmd = build_complete_multi_video_ffmpeg_command(
+            video_files=video_files,
+            screen_count=screen_count,
+            orientation=orientation,
+            output_width=output_width,
+            output_height=output_height,
+            srt_ip=srt_ip,
+            srt_port=srt_port,
+            sei=sei,
+            group_name=group_name,
+            persistent_streams=persistent_streams,
+            grid_rows=grid_rows,
+            grid_cols=grid_cols
+        )
+        
+        logger.info(f"🎬 Multi-Video FFmpeg command: {' '.join(ffmpeg_cmd[:15])}... (truncated)")
+        
+        # Start FFmpeg process
+        try:
+            process = start_ffmpeg_with_retry(ffmpeg_cmd, max_retries=3)
+            
+            logger.info(f"✅ Multi-video FFmpeg started with PID: {process.pid}")
+            
+            # Generate stream URLs for clients
+            available_streams = []
+            client_stream_urls = {}
+            
+            # Combined stream
+            combined_stream_path = f"live/{group_name}/{persistent_streams['test']}"
+            client_stream_urls["combined"] = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={combined_stream_path},m=request,latency=5000000"
+            available_streams.append(combined_stream_path)
+            
+            # Individual screen streams
+            for i in range(screen_count):
+                stream_name = f"screen{i}"
+                screen_stream_id = persistent_streams.get(f"test{i}", f"screen{i}")
+                screen_stream_path = f"live/{group_name}/{screen_stream_id}"
+                client_stream_urls[stream_name] = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={screen_stream_path},m=request,latency=5000000"
+                available_streams.append(screen_stream_path)
+            
+            # Monitor FFmpeg output
+            def monitor_ffmpeg_output(process, group_name):
+                try:
+                    consecutive_errors = 0
+                    max_consecutive_errors = 3
+                    
+                    while process.poll() is None:
+                        if process.stderr:
+                            line = process.stderr.readline()
+                            if line:
+                                log_line = line.strip()
+                                logger.info(f"FFmpeg[{group_name}]: {log_line}")
+                                
+                                if ("Input/output error" in log_line or 
+                                    "Connection refused" in log_line or
+                                    "Address already in use" in log_line):
+                                    consecutive_errors += 1
+                                    logger.warning(f"⚠️ Connection error detected ({consecutive_errors}/{max_consecutive_errors})")
+                                    
+                                    if consecutive_errors >= max_consecutive_errors:
+                                        logger.error(f"💥 Too many consecutive errors, terminating process")
+                                        process.terminate()
+                                        break
+                                else:
+                                    consecutive_errors = 0
+                    
+                    exit_code = process.returncode
+                    if exit_code == 0:
+                        logger.info(f"✅ Multi-video FFmpeg for group '{group_name}' ended successfully")
+                    else:
+                        logger.error(f"💥 Multi-video FFmpeg for group '{group_name}' ended with exit code: {exit_code}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error monitoring multi-video FFmpeg: {e}")
+            
+            monitor_thread = threading.Thread(
+                target=monitor_ffmpeg_output,
+                args=(process, group_name),
+                daemon=True
+            )
+            monitor_thread.start()
+            
+            # Wait to ensure process stabilizes
+            time.sleep(2.0)
+            
+            if process.poll() is not None:
+                exit_code = process.returncode
+                stderr_output = process.stderr.read() if process.stderr else ""
+                
+                return jsonify({
+                    "error": f"Multi-video FFmpeg failed to start (exit code {exit_code})",
+                    "stderr": stderr_output,
+                    "suggestion": "Check video file compatibility and SRT server status"
+                }), 500
+            
+            return jsonify({
+                "message": f"Multi-video SRT streaming started for group '{group_name}'",
+                "group_id": group_id,
+                "group_name": group_name,
+                "process_id": process.pid,
+                "configuration": {
+                    "screen_count": screen_count,
+                    "orientation": orientation,
+                    "output_resolution": f"{output_width}x{output_height}",
+                    "grid_layout": f"{grid_rows}x{grid_cols}" if orientation == "grid" else None,
+                    "video_files": [os.path.basename(f) for f in video_files]
+                },
+                "available_streams": available_streams,
+                "client_stream_urls": client_stream_urls,
+                "persistent_streams": persistent_streams,
+                "status": "active",
+                "test_result": test_result
+            }), 200
+            
+        except Exception as e:
+            logger.error(f"Error starting multi-video FFmpeg: {e}")
+            return jsonify({
+                "error": f"Failed to start multi-video FFmpeg: {str(e)}",
+                "suggestion": "Check video files and SRT server status"
+            }), 500
+        
+    except Exception as e:
+        logger.error(f"❌ Error in start_multi_video_srt: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@stream_bp.route("/stop_group_srt", methods=["POST"])
+def stop_group_srt():
+    """
+    Stop all FFmpeg processes for a group
+    """
+    try:
+        data = request.get_json() or {}
+        group_id = data.get("group_id")
+        
+        logger.info(f"🛑 STOP GROUP SRT: group_id={group_id}")
+        
+        if not group_id:
+            return jsonify({"error": "group_id is required"}), 400
+        
+        # Discover group from Docker
+        group = discover_group_from_docker(group_id)
+        
+        if not group:
+            return jsonify({
+                "error": f"Group '{group_id}' not found in Docker containers"
+            }), 404
+        
+        group_name = group.get("name", group_id)
+        
+        # Find running FFmpeg processes for this group
+        running_processes = find_running_ffmpeg_for_group(group_id, group_name)
+        
+        if not running_processes:
+            return jsonify({
+                "message": f"No active streams found for group '{group_name}'",
+                "group_id": group_id,
+                "group_name": group_name,
+                "status": "already_stopped"
+            }), 200
+        
+        # Stop all FFmpeg processes for this group
+        stopped_processes = []
+        failed_processes = []
+        
+        for proc_info in running_processes:
+            try:
+                pid = proc_info["pid"]
+                proc = psutil.Process(pid)
+                
+                logger.info(f"🔪 Terminating FFmpeg process {pid} for group {group_name}")
+                proc.terminate()
+                
+                # Wait for graceful termination
+                try:
+                    proc.wait(timeout=5)
+                    stopped_processes.append(proc_info)
+                    logger.info(f"✅ Process {pid} terminated gracefully")
+                except psutil.TimeoutExpired:
+                    # Force kill if not terminated gracefully
+                    logger.warning(f"⚠️ Force killing process {pid}")
+                    proc.kill()
+                    stopped_processes.append(proc_info)
+                    
+            except psutil.NoSuchProcess:
+                # Process already stopped
+                stopped_processes.append(proc_info)
+                logger.info(f"✅ Process {proc_info['pid']} was already stopped")
+            except Exception as e:
+                logger.error(f"❌ Failed to stop process {proc_info['pid']}: {e}")
+                failed_processes.append({**proc_info, "error": str(e)})
+        
+        return jsonify({
+            "message": f"Stopped streams for group '{group_name}'",
+            "group_id": group_id,
+            "group_name": group_name,
+            "stopped_processes": len(stopped_processes),
+            "failed_processes": len(failed_processes),
+            "details": {
+                "stopped": stopped_processes,
+                "failed": failed_processes
+            },
+            "status": "stopped"
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"❌ Error stopping group SRT: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+    
+@stream_bp.route("/streaming_status/<group_id>", methods=["GET"])
+def get_streaming_status(group_id: str):
+    """
+    Get streaming status for a specific group
+    """
+    try:
+        logger.info(f"📊 GET STREAMING STATUS: group_id={group_id}")
+        
+        # Discover group from Docker
+        group = discover_group_from_docker(group_id)
+        
+        if not group:
+            return jsonify({
+                "error": f"Group '{group_id}' not found in Docker containers"
+            }), 404
+        
+        group_name = group.get("name", group_id)
+        
+        # Find running FFmpeg processes
+        running_processes = find_running_ffmpeg_for_group(group_id, group_name)
+        
+        is_streaming = len(running_processes) > 0
+        
+        # Get persistent streams for this group
+        screen_count = group.get("screen_count", 2)
+        persistent_streams = get_persistent_streams_for_group(group_id, group_name, screen_count)
+        
+        # Generate client URLs if streaming
+        client_stream_urls = {}
+        available_streams = []
+        
+        if is_streaming:
+            ports = group.get("ports", {})
+            srt_port = ports.get("srt_port", 10080)
+            srt_ip = "127.0.0.1"  # Could be configurable
+            
+            # Combined stream
+            combined_stream_path = f"live/{group_name}/{persistent_streams['test']}"
+            client_stream_urls["combined"] = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={combined_stream_path},m=request,latency=5000000"
+            available_streams.append(combined_stream_path)
+            
+            # Individual screen streams
+            for i in range(screen_count):
+                stream_name = f"screen{i}"
+                screen_stream_id = persistent_streams.get(f"test{i}", f"screen{i}")
+                screen_stream_path = f"live/{group_name}/{screen_stream_id}"
+                client_stream_urls[stream_name] = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={screen_stream_path},m=request,latency=5000000"
+                available_streams.append(screen_stream_path)
+        
+        return jsonify({
+            "group_id": group_id,
+            "group_name": group_name,
+            "is_streaming": is_streaming,
+            "process_count": len(running_processes),
+            "process_id": running_processes[0]["pid"] if running_processes else None,
+            "available_streams": available_streams,
+            "client_stream_urls": client_stream_urls,
+            "persistent_streams": persistent_streams,
+            "running_processes": running_processes,
+            "status": "active" if is_streaming else "inactive",
+            "docker_running": group.get("docker_running", False),
+            "docker_status": group.get("docker_status", "unknown")
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting streaming status: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@stream_bp.route("/all_streaming_statuses", methods=["GET"])
+def get_all_streaming_statuses():
+    """
+    Get streaming status for all groups
+    """
+    try:
+        logger.info("📊 GET ALL STREAMING STATUSES")
+        
+        # Find all FFmpeg processes
+        all_ffmpeg_processes = []
+        
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                if proc.info['name'] and 'ffmpeg' in proc.info['name'].lower():
+                    cmdline = ' '.join(proc.info['cmdline'] or [])
+                    all_ffmpeg_processes.append({
+                        "pid": proc.info['pid'],
+                        "cmdline": cmdline,
+                        "create_time": proc.create_time() if hasattr(proc, 'create_time') else None
+                    })
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        
+        # Find all SRS containers to discover groups
+        streaming_statuses = {}
+        
+        try:
+            cmd = [
+                "docker", "ps", "-a",
+                "--filter", "ancestor=ossrs/srs:5",
+                "--format", "{{.ID}}\t{{.Names}}\t{{.Status}}"
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            
+            if result.returncode == 0 and result.stdout.strip():
+                lines = result.stdout.strip().split('\n')
+                for line in lines:
+                    if line.strip():
+                        parts = line.split('\t')
+                        if len(parts) >= 3:
+                            container_id = parts[0]
+                            container_name = parts[1]
+                            status = parts[2]
+                            
+                            # Try to extract group ID from container labels
+                            inspect_cmd = ["docker", "inspect", container_id, "--format", 
+                                         "{{index .Config.Labels \"com.multiscreen.group.id\"}}"]
+                            inspect_result = subprocess.run(inspect_cmd, capture_output=True, text=True, timeout=5)
+                            
+                            if inspect_result.returncode == 0:
+                                group_id = inspect_result.stdout.strip()
+                                if group_id and group_id != "<no value>":
+                                    # Get detailed group info
+                                    group = get_container_details(container_id, group_id)
+                                    if group:
+                                        group_name = group.get("name", group_id)
+                                        
+                                        # Check if this group has running FFmpeg
+                                        group_processes = [
+                                            proc for proc in all_ffmpeg_processes
+                                            if group_name in proc["cmdline"] or group_id in proc["cmdline"]
+                                        ]
+                                        
+                                        streaming_statuses[group_id] = {
+                                            "group_name": group_name,
+                                            "is_streaming": len(group_processes) > 0,
+                                            "process_count": len(group_processes),
+                                            "docker_running": group.get("docker_running", False),
+                                            "docker_status": group.get("docker_status", "unknown"),
+                                            "container_name": group.get("container_name", "unknown")
+                                        }
+        
+        except Exception as e:
+            logger.warning(f"⚠️ Error discovering groups from Docker: {e}")
+        
+        return jsonify({
+            "streaming_statuses": streaming_statuses,
+            "total_ffmpeg_processes": len(all_ffmpeg_processes),
+            "total_groups": len(streaming_statuses)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting all streaming statuses: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+    
 def discover_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
     """
     Discover group information purely from Docker container
-    Uses your actual Docker container naming and label scheme
-    
-    Args:
-        group_id: The group ID to find
-        
-    Returns:
-        Group data dict or None if not found
     """
     try:
         logger.info(f"🔍 Looking for Docker container with group ID: {group_id}")
@@ -161,15 +875,6 @@ def discover_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
                                 return get_container_details(container_id, group_id)
         
         logger.warning(f"❌ No Docker container found for group {group_id}")
-        logger.info("Available containers:")
-        
-        # Debug: List all containers
-        debug_cmd = ["docker", "ps", "-a", "--format", "{{.Names}}\t{{.Image}}\t{{.Labels}}"]
-        debug_result = subprocess.run(debug_cmd, capture_output=True, text=True, timeout=10)
-        if debug_result.returncode == 0:
-            for line in debug_result.stdout.strip().split('\n')[:5]:  # First 5 containers
-                logger.info(f"  {line}")
-        
         return None
         
     except Exception as e:
@@ -179,13 +884,6 @@ def discover_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
 def get_container_details(container_id: str, group_id: str) -> Dict[str, Any]:
     """
     Get detailed container information for a group
-    
-    Args:
-        container_id: Docker container ID
-        group_id: Group ID
-        
-    Returns:
-        Group data dictionary
     """
     try:
         # Get detailed container info
@@ -256,13 +954,6 @@ def get_container_details(container_id: str, group_id: str) -> Dict[str, Any]:
 def find_running_ffmpeg_for_group(group_id: str, group_name: str) -> List[Dict[str, Any]]:
     """
     Find any running FFmpeg processes for a group
-    
-    Args:
-        group_id: Group ID
-        group_name: Group name
-        
-    Returns:
-        List of running FFmpeg process info
     """
     try:
         ffmpeg_processes = []
@@ -326,18 +1017,7 @@ def test_ffmpeg_srt_connection(srt_ip: str, srt_port: int, group_name: str, sei:
     logger.info(f"🧪 Testing FFmpeg SRT connection...")
     
     # Find FFmpeg
-    ffmpeg_paths = [
-        "./cmake-build-debug/external/Install/bin/ffmpeg",
-        "/usr/bin/ffmpeg", 
-        "/usr/local/bin/ffmpeg",
-        "ffmpeg"
-    ]
-    
-    ffmpeg_path = "ffmpeg"
-    for path in ffmpeg_paths:
-        if os.path.exists(path):
-            ffmpeg_path = path
-            break
+    ffmpeg_path = find_ffmpeg_executable()
     
     # Build minimal test command
     test_cmd = [
@@ -380,92 +1060,6 @@ def test_ffmpeg_srt_connection(srt_ip: str, srt_port: int, group_name: str, sei:
             "error": str(e)
         }
 
-def build_ffmpeg_filter_chain(
-    video_width: int,
-    video_height: int,
-    split_count: int,
-    orientation: str,
-    srt_ip: str,
-    srt_port: int,
-    sei: str,
-    group_name: str,
-    stream_ids: Dict[str, str]
-) -> Tuple[str, List[str]]:
-    """Build FFmpeg filter chain for video splitting"""
-    filter_complex = []
-    output_mappings = []
-    
-    if split_count == 0:
-        return "", []
-    
-    # Start with splitting the input
-    split_str = f"[0:v]split={split_count+1}[full]"
-    for i in range(split_count):
-        split_str += f"[part{i}]"
-    filter_complex.append(split_str)
-    
-    # Calculate section sizes based on orientation
-    if orientation.lower() == "horizontal":
-        section_width = video_width // split_count
-        remainder = video_width % split_count
-        
-        for i in range(split_count):
-            current_width = section_width + (remainder if i == split_count-1 else 0)
-            start_x = i * section_width
-            
-            filter_complex.append(
-                f"[part{i}]crop={current_width}:{video_height}:{start_x}:0[out{i}]"
-            )
-            
-            stream_name = f"test{i}"
-            stream_id = stream_ids[stream_name]
-            
-            output_mappings.extend([
-                "-map", f"[out{i}]",
-                "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-                "-bsf:v", f"h264_metadata=sei_user_data={sei}",
-                "-pes_payload_size", "0", "-bf", "0", "-g", "30",
-                "-f", "mpegts", f"srt://{srt_ip}:{srt_port}?streamid=#!::r=live/{group_name}/{stream_id},m=publish"
-            ])
-    
-    elif orientation.lower() == "vertical":
-        section_height = video_height // split_count
-        remainder = video_height % split_count
-        
-        for i in range(split_count):
-            current_height = section_height + (remainder if i == split_count-1 else 0)
-            start_y = i * section_height
-            
-            filter_complex.append(
-                f"[part{i}]crop={video_width}:{current_height}:0:{start_y}[out{i}]"
-            )
-            
-            stream_name = f"test{i}"
-            stream_id = stream_ids[stream_name]
-            
-            output_mappings.extend([
-                "-map", f"[out{i}]",
-                "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-                "-bsf:v", f"h264_metadata=sei_user_data={sei}",
-                "-pes_payload_size", "0", "-bf", "0", "-g", "30",
-                "-f", "mpegts", f"srt://{srt_ip}:{srt_port}?streamid=#!::r=live/{group_name}/{stream_id},m=publish"
-            ])
-    
-    # Add the full stream output
-    full_stream_id = stream_ids["test"]
-    output_mappings.extend([
-        "-map", "[full]",
-        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-        "-bsf:v", f"h264_metadata=sei_user_data={sei}",
-        "-pes_payload_size", "0", "-bf", "0", "-g", "30",
-        "-f", "mpegts", f"srt://{srt_ip}:{srt_port}?streamid=#!::r=live/{group_name}/{full_stream_id},m=publish"
-    ])
-    
-    # Join filter parts with semicolons
-    filter_str = ";".join([f for f in filter_complex if f.strip()])
-    
-    return filter_str, output_mappings
-
 def get_persistent_streams_for_group(group_id: str, group_name: str, split_count: int) -> Dict[str, str]:
     """Get persistent stream IDs for a group"""
     persistent_key = f"group_{group_id}"
@@ -480,681 +1074,3 @@ def get_persistent_streams_for_group(group_id: str, group_name: str, split_count
         streams[f"test{i}"] = id_manager.get_stream_id(persistent_key, f"test{i}")
     
     return streams
-
-def find_ffmpeg_executable() -> str:
-    """Find FFmpeg executable"""
-    paths = [
-        "./cmake-build-debug/external/Install/bin/ffmpeg",
-        "/usr/bin/ffmpeg", 
-        "/usr/local/bin/ffmpeg",
-        "ffmpeg"
-    ]
-    
-    for path in paths:
-        if os.path.exists(path) or path == "ffmpeg":
-            return path
-    
-    return "ffmpeg"
-
-def find_video_file(requested_file: str = None) -> tuple[str, bool]:
-    """
-    Find a video file to use for streaming
-    
-    Args:
-        requested_file: Specific file requested (optional)
-        
-    Returns:
-        Tuple of (file_path, use_test_pattern)
-    """
-    # First, try to use resized videos (preferred)
-    download_folder = current_app.config.get('DOWNLOAD_FOLDER', 'resized_video')
-    
-    if requested_file:
-        # Check if specific file exists in resized folder
-        resized_path = os.path.join(download_folder, requested_file)
-        if os.path.isfile(resized_path):
-            logger.info(f"Using requested resized video: {resized_path}")
-            return resized_path, False
-            
-        # Check if it exists with 2k_ prefix
-        prefixed_name = f"2k_{requested_file}"
-        prefixed_path = os.path.join(download_folder, prefixed_name)
-        if os.path.isfile(prefixed_path):
-            logger.info(f"Using prefixed resized video: {prefixed_path}")
-            return prefixed_path, False
-    
-    # If no specific file requested, find any resized video
-    if os.path.exists(download_folder):
-        video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.webm')
-        try:
-            for filename in os.listdir(download_folder):
-                if filename.lower().endswith(video_extensions):
-                    file_path = os.path.join(download_folder, filename)
-                    logger.info(f"Using available resized video: {file_path}")
-                    return file_path, False
-        except Exception as e:
-            logger.warning(f"Error scanning resized videos folder: {e}")
-    
-    # Fallback: try raw videos folder
-    upload_folder = current_app.config.get('UPLOAD_FOLDER', 'uploads')
-    
-    if requested_file:
-        raw_path = os.path.join(upload_folder, requested_file)
-        if os.path.isfile(raw_path):
-            logger.warning(f"Using raw video (resized version not found): {raw_path}")
-            return raw_path, False
-    
-    # Find any raw video as last resort
-    if os.path.exists(upload_folder):
-        video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.webm')
-        try:
-            for filename in os.listdir(upload_folder):
-                if filename.lower().endswith(video_extensions):
-                    file_path = os.path.join(upload_folder, filename)
-                    logger.warning(f"Using available raw video: {file_path}")
-                    return file_path, False
-        except Exception as e:
-            logger.warning(f"Error scanning raw videos folder: {e}")
-    
-    # No video files found, use test pattern
-    logger.info("No video files found, will use test pattern")
-    return "", True
-
-
-@stream_bp.route("/start_group_srt", methods=["POST"])
-def start_group_srt():
-    """Start SRT streaming for a group - Single stream only to avoid port conflicts"""
-    try:
-        data = request.get_json() or {}
-        
-        # Extract required parameters
-        group_id = data.get("group_id")
-        video_file = data.get("video_file")
-        
-        logger.info(f"🚀 START SINGLE STREAM SRT: group_id={group_id}, video_file={video_file}")
-        
-        # Validation
-        if not group_id:
-            return jsonify({"error": "group_id is required"}), 400
-        
-        # Discover group from Docker - this is our single source of truth
-        logger.info(f"🔍 Discovering group from Docker: {group_id}")
-        group = discover_group_from_docker(group_id)
-        
-        if not group:
-            return jsonify({
-                "error": f"Group '{group_id}' not found in Docker containers",
-                "suggestion": "Create the group first using /create_group endpoint"
-            }), 404
-        
-        group_name = group.get("name", group_id)
-        logger.info(f"✅ Found group in Docker: {group_name}")
-        
-        # Check if Docker container is running
-        if not group.get("docker_running", False):
-            return jsonify({
-                "error": f"Docker container for group '{group_name}' is not running",
-                "suggestion": "Start the Docker container first",
-                "docker_status": group.get("docker_status", "unknown")
-            }), 400
-        
-        # Check if FFmpeg is already running for this group
-        existing_ffmpeg = find_running_ffmpeg_for_group(group_id, group_name)
-        if existing_ffmpeg:
-            logger.info(f"⚠️ FFmpeg already running for group {group_name}")
-            return jsonify({
-                "message": f"SRT streaming already active for group '{group_name}'",
-                "group_id": group_id,
-                "group_name": group_name,
-                "running_processes": existing_ffmpeg,
-                "status": "already_active"
-            }), 200
-        
-        # Extract configuration from request or use Docker defaults
-        screen_count = data.get("screen_count", group.get("screen_count", 2))
-        orientation = data.get("orientation", group.get("orientation", "horizontal"))
-        ports = group.get("ports", {})
-        srt_port = data.get("srt_port", ports.get("srt_port", 10080))
-        
-        # Video configuration
-        enable_looping = data.get("enable_looping", True)
-        video_width = data.get("video_width", 3840)
-        video_height = data.get("video_height", 1080)
-        framerate = data.get("framerate", 30)
-        
-        # SEI identifier
-        sei = data.get("sei", "681d5c8f-80cd-4847-930a-99b9484b4a32+000000")
-        
-        # SRT IP
-        srt_ip = data.get("srt_ip", "127.0.0.1")
-        
-        logger.info(f"📋 Config - Screens: {screen_count}, Orientation: {orientation}, SRT Port: {srt_port}")
-        
-        # WAIT FOR SRT SERVER TO BE READY
-        logger.info(f"⏳ Waiting for SRT server to be ready...")
-        if not wait_for_srt_server(srt_ip, srt_port, timeout=30):
-            return jsonify({
-                "error": f"SRT server at {srt_ip}:{srt_port} not ready",
-                "suggestion": "Check Docker container logs"
-            }), 500
-        
-        # FORCE SINGLE STREAM - No splitting to avoid port conflicts
-        split_count = 0
-        logger.info("🎯 Using single stream mode (no splitting) to avoid port conflicts")
-        
-        # Find FFmpeg
-        ffmpeg_path = data.get("ffmpeg_path", find_ffmpeg_executable())
-        
-        # TEST SRT CONNECTION FIRST
-        logger.info(f"🧪 Testing SRT connection...")
-        test_result = test_ffmpeg_srt_connection(srt_ip, srt_port, group_name, sei)
-        
-        if not test_result["success"]:
-            return jsonify({
-                "error": "SRT connection test failed",
-                "test_result": test_result,
-                "suggestion": "Check SRT server configuration"
-            }), 500
-        
-        logger.info(f"✅ SRT test passed! Starting single stream...")
-        
-        # ✅ FIXED: Properly handle video file selection and FFmpeg command structure
-        # Remove 'uploads/' prefix if present
-        if video_file and video_file.startswith('uploads/'):
-            video_file = video_file[8:]
-        
-        logger.info(f"Video file requested: {video_file}")
-        
-        # Find the actual video file path
-        mp4_file, use_test_pattern = find_video_file(video_file)
-        
-        # Build input arguments with correct FFmpeg option order
-        if not use_test_pattern and mp4_file:
-            # For video files: -re [-stream_loop -1] -i video.mp4
-            input_args = ["-re"]
-            if enable_looping:
-                input_args.extend(["-stream_loop", "-1"])  # MUST come before -i
-            input_args.extend(["-i", mp4_file])
-            video_source = mp4_file
-            logger.info(f"✅ Using video file: {mp4_file}")
-        else:
-            # For test pattern: -re -f lavfi -i testsrc=...
-            input_args = [
-                "-re", "-f", "lavfi", 
-                "-i", f"testsrc=s={video_width}x{video_height}:r={framerate}"
-            ]
-            video_source = "test_pattern"
-            if video_file:
-                logger.warning(f"⚠️ Requested video '{video_file}' not found, using test pattern")
-            else:
-                logger.info("No video file specified, using test pattern")
-        
-        # Get persistent stream ID for single stream
-        persistent_streams = get_persistent_streams_for_group(group_id, group_name, 0)  # 0 = no splits
-        
-        # Build FFmpeg command for SINGLE STREAM ONLY
-        ffmpeg_cmd = [ffmpeg_path, "-y"] + input_args
-        
-        # Create single stream URL with stability parameters
-        full_stream_id = persistent_streams["test"]
-        full_stream_path = f"live/{group_name}/{full_stream_id}"
-        
-        # SRT connection parameters for stability
-        srt_params = "latency=2000000&connect_timeout=5000&rcvbuf=67108864&sndbuf=67108864"
-        full_srt_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={full_stream_path},m=publish&{srt_params}"
-        
-        # Single stream output with improved stability
-        ffmpeg_cmd.extend([
-            "-map", "0:v",
-            "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-            "-maxrate", "4000k", "-bufsize", "8000k",  # Bitrate limiting for stability
-            "-bsf:v", f"h264_metadata=sei_user_data={sei}",
-            "-pes_payload_size", "0", "-bf", "0", "-g", "30",
-            "-f", "mpegts", full_srt_url
-        ])
-        
-        # Create stream URLs for clients
-        available_streams = [full_stream_path]
-        client_stream_urls = {
-            "test": f"srt://{srt_ip}:{srt_port}?streamid=#!::r={full_stream_path},m=request,latency=5000000"
-        }
-        
-        logger.info(f"🎬 Single Stream FFmpeg command: {' '.join(ffmpeg_cmd)}")
-        
-        # Start FFmpeg process with retry mechanism
-        try:
-            process = start_ffmpeg_with_retry(ffmpeg_cmd, max_retries=3)
-            
-            logger.info(f"✅ Single stream FFmpeg started with PID: {process.pid}")
-            
-            # Enhanced monitoring thread
-            def monitor_ffmpeg_output(process, group_name):
-                try:
-                    consecutive_errors = 0
-                    max_consecutive_errors = 3
-                    
-                    while process.poll() is None:
-                        if process.stderr:
-                            line = process.stderr.readline()
-                            if line:
-                                log_line = line.strip()
-                                logger.info(f"FFmpeg[{group_name}]: {log_line}")
-                                
-                                # Check for I/O errors
-                                if ("Input/output error" in log_line or 
-                                    "Connection refused" in log_line or
-                                    "Address already in use" in log_line):
-                                    consecutive_errors += 1
-                                    logger.warning(f"⚠️ Connection error detected ({consecutive_errors}/{max_consecutive_errors})")
-                                    
-                                    if consecutive_errors >= max_consecutive_errors:
-                                        logger.error(f"💥 Too many consecutive errors, terminating process")
-                                        process.terminate()
-                                        break
-                                else:
-                                    consecutive_errors = 0  # Reset counter on successful output
-                    
-                    exit_code = process.returncode
-                    if exit_code == 0:
-                        logger.info(f"✅ FFmpeg for group '{group_name}' ended successfully")
-                    else:
-                        logger.error(f"💥 FFmpeg for group '{group_name}' ended with exit code: {exit_code}")
-                        
-                except Exception as e:
-                    logger.error(f"❌ Error monitoring FFmpeg: {e}")
-            
-            monitor_thread = threading.Thread(
-                target=monitor_ffmpeg_output,
-                args=(process, group_name),
-                daemon=True
-            )
-            monitor_thread.start()
-            
-            # Wait to ensure process stabilizes
-            time.sleep(2.0)
-            
-            if process.poll() is not None:
-                exit_code = process.returncode
-                stderr_output = process.stderr.read() if process.stderr else ""
-                
-                return jsonify({
-                    "error": f"FFmpeg failed to start (exit code {exit_code})",
-                    "stderr": stderr_output,
-                    "ffmpeg_command": " ".join(ffmpeg_cmd),
-                    "suggestion": "Check for port conflicts or SRT server issues"
-                }), 500
-            
-            return jsonify({
-                "message": f"Single SRT stream started for group '{group_name}'",
-                "group_id": group_id,
-                "group_name": group_name,
-                "process_id": process.pid,
-                "screen_count": screen_count,
-                "orientation": orientation,
-                "persistent_streams": persistent_streams,
-                "available_streams": available_streams,
-                "client_stream_urls": client_stream_urls,
-                "status": "active",
-                "split_count": 0,  # Always 0 for single stream
-                "video_source": video_source,
-                "srt_port": srt_port,
-                "test_result": test_result,
-                "stream_mode": "single_stream_only",
-                "stability_features": {
-                    "srt_latency": "2000ms",
-                    "bitrate_limiting": "4000k",
-                    "retry_mechanism": "enabled",
-                    "single_stream": "no_port_conflicts"
-                }
-            }), 200
-            
-        except Exception as e:
-            logger.error(f"Error starting FFmpeg: {e}")
-            return jsonify({
-                "error": f"Failed to start FFmpeg: {str(e)}",
-                "suggestion": "Check SRT server status and port availability"
-            }), 500
-        
-    except Exception as e:
-        logger.error(f"❌ Error in single stream start_group_srt: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-
-def start_ffmpeg_with_retry(ffmpeg_cmd: List[str], max_retries: int = 3) -> subprocess.Popen:
-    """Start FFmpeg with retry mechanism for SRT connection issues"""
-    
-    for attempt in range(max_retries):
-        try:
-            logger.info(f"🎬 Starting FFmpeg (attempt {attempt + 1}/{max_retries})")
-            
-            process = subprocess.Popen(
-                ffmpeg_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
-                bufsize=1
-            )
-            
-            # Wait a bit to see if it starts successfully
-            time.sleep(2.0)
-            
-            if process.poll() is None:
-                logger.info(f"✅ FFmpeg started successfully on attempt {attempt + 1}")
-                return process
-            else:
-                exit_code = process.returncode
-                stderr_output = process.stderr.read() if process.stderr else ""
-                logger.warning(f"⚠️ FFmpeg failed on attempt {attempt + 1} with exit code {exit_code}")
-                
-                # Check for specific connection issues
-                if any(error in stderr_output for error in [
-                    "Connection refused", "I/O error", "Address already in use", 
-                    "No route to host", "Network is unreachable"
-                ]):
-                    logger.info(f"🔄 Network/SRT connection issue detected, retrying in 3 seconds...")
-                    time.sleep(3)
-                    continue
-                else:
-                    raise Exception(f"FFmpeg failed with exit code {exit_code}: {stderr_output}")
-                    
-        except Exception as e:
-            if attempt == max_retries - 1:
-                raise e
-            else:
-                logger.warning(f"⚠️ Attempt {attempt + 1} failed: {e}")
-                time.sleep(3)
-    
-    raise Exception(f"FFmpeg failed to start after {max_retries} attempts")
-
-
-def find_video_file(requested_file: str = None) -> tuple[str, bool]:
-    """
-    Find a video file to use for streaming
-    
-    Args:
-        requested_file: Specific file requested (optional)
-        
-    Returns:
-        Tuple of (file_path, use_test_pattern)
-    """
-    # First, try to use resized videos (preferred)
-    download_folder = current_app.config.get('DOWNLOAD_FOLDER', 'resized_video')
-    
-    if requested_file:
-        # Check if specific file exists in resized folder
-        resized_path = os.path.join(download_folder, requested_file)
-        if os.path.isfile(resized_path):
-            logger.info(f"Using requested resized video: {resized_path}")
-            return resized_path, False
-            
-        # Check if it exists with 2k_ prefix
-        prefixed_name = f"2k_{requested_file}"
-        prefixed_path = os.path.join(download_folder, prefixed_name)
-        if os.path.isfile(prefixed_path):
-            logger.info(f"Using prefixed resized video: {prefixed_path}")
-            return prefixed_path, False
-    
-    # If no specific file requested, find any resized video
-    if os.path.exists(download_folder):
-        video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.webm')
-        try:
-            for filename in os.listdir(download_folder):
-                if filename.lower().endswith(video_extensions):
-                    file_path = os.path.join(download_folder, filename)
-                    logger.info(f"Using available resized video: {file_path}")
-                    return file_path, False
-        except Exception as e:
-            logger.warning(f"Error scanning resized videos folder: {e}")
-    
-    # Fallback: try raw videos folder
-    upload_folder = current_app.config.get('UPLOAD_FOLDER', 'uploads')
-    
-    if requested_file:
-        raw_path = os.path.join(upload_folder, requested_file)
-        if os.path.isfile(raw_path):
-            logger.warning(f"Using raw video (resized version not found): {raw_path}")
-            return raw_path, False
-    
-    # Find any raw video as last resort
-    if os.path.exists(upload_folder):
-        video_extensions = ('.mp4', '.mkv', '.avi', '.mov', '.webm')
-        try:
-            for filename in os.listdir(upload_folder):
-                if filename.lower().endswith(video_extensions):
-                    file_path = os.path.join(upload_folder, filename)
-                    logger.warning(f"Using available raw video: {file_path}")
-                    return file_path, False
-        except Exception as e:
-            logger.warning(f"Error scanning raw videos folder: {e}")
-    
-    # No video files found, use test pattern
-    logger.info("No video files found, will use test pattern")
-    return "", True
-    
-
-
-@stream_bp.route("/stop_group_srt", methods=["POST"])
-def stop_group_srt():
-    """Stop SRT streaming for a group - Stateless"""
-    try:
-        data = request.get_json() or {}
-        group_id = data.get("group_id")
-        
-        logger.info(f"🛑 STOP STATELESS SRT: group_id={group_id}")
-        
-        if not group_id:
-            return jsonify({"error": "group_id is required"}), 400
-        
-        # Discover group from Docker
-        group = discover_group_from_docker(group_id)
-        
-        if not group:
-            return jsonify({
-                "error": f"Group '{group_id}' not found in Docker containers"
-            }), 404
-        
-        group_name = group.get("name", group_id)
-        
-        # Find and stop FFmpeg processes
-        ffmpeg_processes = find_running_ffmpeg_for_group(group_id, group_name)
-        stopped_processes = []
-        
-        for proc_info in ffmpeg_processes:
-            try:
-                process = psutil.Process(proc_info["pid"])
-                process.terminate()
-                
-                try:
-                    process.wait(timeout=10)
-                    logger.info(f"✅ FFmpeg process {proc_info['pid']} terminated gracefully")
-                except psutil.TimeoutExpired:
-                    logger.warning(f"⚠️ Force killing FFmpeg process {proc_info['pid']}")
-                    process.kill()
-                
-                stopped_processes.append(proc_info["pid"])
-                
-            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-                logger.warning(f"Process {proc_info['pid']} no longer exists: {e}")
-                continue
-        
-        if stopped_processes:
-            return jsonify({
-                "message": f"SRT streaming stopped for group '{group_name}'",
-                "group_id": group_id,
-                "group_name": group_name,
-                "stopped_processes": stopped_processes,
-                "status": "inactive"
-            }), 200
-        else:
-            return jsonify({
-                "message": f"No active streaming found for group '{group_name}'",
-                "group_id": group_id,
-                "group_name": group_name,
-                "status": "inactive"
-            }), 200
-        
-    except Exception as e:
-        logger.error(f"❌ Error stopping stateless SRT: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@stream_bp.route("/get_group_status", methods=["GET"])
-def get_group_status():
-    """Get status of all groups - Pure Docker Discovery"""
-    try:
-        group_id = request.args.get('group_id')
-        
-        # Find all multiscreen Docker containers
-        cmd = ["docker", "ps", "--format", "json", "--filter", "label=multiscreen.group.id"]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        
-        if result.returncode != 0:
-            return jsonify({"error": "Failed to query Docker containers"}), 500
-        
-        containers = []
-        for line in result.stdout.strip().split('\n'):
-            if line.strip():
-                try:
-                    containers.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-        
-        groups_status = {}
-        
-        for container in containers:
-            # Get detailed info
-            inspect_cmd = ["docker", "inspect", container["ID"]]
-            inspect_result = subprocess.run(inspect_cmd, capture_output=True, text=True, timeout=5)
-            
-            if inspect_result.returncode != 0:
-                continue
-                
-            container_info = json.loads(inspect_result.stdout)[0]
-            labels = container_info.get("Config", {}).get("Labels", {})
-            
-            gid = labels.get("multiscreen.group.id")
-            if not gid or (group_id and gid != group_id):
-                continue
-                
-            group_name = labels.get("multiscreen.group.name", f"group_{gid}")
-            
-            # Check for running FFmpeg
-            ffmpeg_processes = find_running_ffmpeg_for_group(gid, group_name)
-            
-            # Get persistent streams
-            persistent_streams = get_persistent_streams_for_group(gid, group_name, 0)
-            
-            groups_status[gid] = {
-                "group_id": gid,
-                "group_name": group_name,
-                "docker_running": container_info.get("State", {}).get("Running", False),
-                "docker_status": container_info.get("State", {}).get("Status", "unknown"),
-                "streaming": len(ffmpeg_processes) > 0,
-                "ffmpeg_processes": ffmpeg_processes,
-                "persistent_streams": persistent_streams,
-                "screen_count": int(labels.get("multiscreen.group.screen_count", "2")),
-                "orientation": labels.get("multiscreen.group.orientation", "horizontal"),
-                "ports": {
-                    "srt_port": int(labels.get("multiscreen.group.srt_port", "10080")),
-                    "api_port": int(labels.get("multiscreen.group.api_port", "8080")),
-                    "http_port": int(labels.get("multiscreen.group.http_port", "1985")),
-                    "rtmp_port": int(labels.get("multiscreen.group.rtmp_port", "1935"))
-                }
-            }
-        
-        return jsonify({
-            "groups": groups_status,
-            "total_groups": len(groups_status),
-            "active_streams": len([g for g in groups_status.values() if g["streaming"]]),
-            "timestamp": time.time()
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error getting group status: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@stream_bp.route("/test_srt_connection", methods=["POST"])
-def test_srt_connection():
-    """Test SRT connection for a group - Stateless"""
-    try:
-        data = request.get_json() or {}
-        group_id = data.get("group_id")
-        
-        if not group_id:
-            return jsonify({"error": "group_id is required"}), 400
-        
-        # Discover group from Docker
-        group = discover_group_from_docker(group_id)
-        
-        if not group:
-            return jsonify({
-                "error": f"Group '{group_id}' not found in Docker containers"
-            }), 404
-        
-        group_name = group.get("name", group_id)
-        ports = group.get("ports", {})
-        srt_port = ports.get("srt_port", 10080)
-        srt_ip = data.get("srt_ip", "127.0.0.1")
-        sei = data.get("sei", "681d5c8f-80cd-4847-930a-99b9484b4a32+000000")
-        
-        # Test SRT connection
-        test_result = test_ffmpeg_srt_connection(srt_ip, srt_port, group_name, sei)
-        
-        return jsonify({
-            "group_id": group_id,
-            "group_name": group_name,
-            "test_result": test_result,
-            "docker_running": group.get("docker_running", False),
-            "srt_endpoint": f"{srt_ip}:{srt_port}",
-            "timestamp": time.time()
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"❌ Error testing SRT connection: {e}")
-        return jsonify({"error": str(e)}), 500
-
-# Helper functions for other modules
-def stop_group_streams(group_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Helper function to stop streams for a group (called by group management)
-    Stateless version - just find and kill processes
-    """
-    try:
-        group_id = group_data.get("id")
-        group_name = group_data.get("name", "unknown")
-        
-        logger.info(f"🛑 Stopping streams for group: {group_name} (ID: {group_id})")
-        
-        # Find and stop FFmpeg processes
-        ffmpeg_processes = find_running_ffmpeg_for_group(group_id, group_name)
-        stopped_processes = []
-        
-        for proc_info in ffmpeg_processes:
-            try:
-                process = psutil.Process(proc_info["pid"])
-                process.terminate()
-                
-                try:
-                    process.wait(timeout=10)
-                    logger.info(f"✅ FFmpeg process {proc_info['pid']} terminated gracefully")
-                except psutil.TimeoutExpired:
-                    logger.warning(f"⚠️ Force killing FFmpeg process {proc_info['pid']}")
-                    process.kill()
-                
-                stopped_processes.append(proc_info["pid"])
-                
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-        
-        return {
-            "success": True,
-            "message": f"Stopped {len(stopped_processes)} processes for group '{group_name}'",
-            "stopped_processes": stopped_processes
-        }
-        
-    except Exception as e:
-        logger.error(f"Error stopping group streams: {e}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
