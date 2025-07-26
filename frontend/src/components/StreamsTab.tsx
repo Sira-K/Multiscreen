@@ -1,4 +1,4 @@
-// frontend/src/components/StreamsTab.tsx - Fixed with proper multi-video status tracking
+// frontend/src/components/StreamsTab.tsx - Fixed with proper margins and container
 
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -128,9 +128,9 @@ const StreamsTab = () => {
         return;
       }
 
-      await groupApi.createGroup({
+      const response = await groupApi.createGroup({
         name: newGroupForm.name.trim(),
-        description: newGroupForm.description.trim() || undefined,
+        description: newGroupForm.description.trim(),
         screen_count: newGroupForm.screen_count,
         orientation: newGroupForm.orientation
       });
@@ -149,9 +149,9 @@ const StreamsTab = () => {
       });
       setShowCreateForm(false);
 
-      // Reload data
+      // Reload data to show new group
       await loadInitialData();
-
+      
     } catch (error: any) {
       console.error('Error creating group:', error);
       toast({
@@ -166,30 +166,24 @@ const StreamsTab = () => {
 
   // Delete group
   const deleteGroup = async (groupId: string, groupName: string) => {
-    if (!confirm(`Are you sure you want to delete "${groupName}"?`)) {
-      return;
-    }
-
     try {
       setOperationInProgress(groupId);
       
-      await groupApi.deleteGroup(groupId);
+      const response = await groupApi.deleteGroup(groupId);
       
       toast({
         title: "Group Deleted",
         description: `Successfully deleted group "${groupName}"`
       });
 
-      // Remove from streaming status
+      // Remove from local state immediately
+      setGroups(prev => prev.filter(g => g.id !== groupId));
       setStreamingStatus(prev => {
-        const updated = { ...prev };
-        delete updated[groupId];
-        return updated;
+        const newStatus = { ...prev };
+        delete newStatus[groupId];
+        return newStatus;
       });
-
-      // Reload data
-      await loadInitialData();
-
+      
     } catch (error: any) {
       console.error('Error deleting group:', error);
       toast({
@@ -260,17 +254,19 @@ const StreamsTab = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <RefreshCw className="h-8 w-8 animate-spin text-gray-400 mx-auto mb-2" />
-          <p className="text-gray-600">Loading streaming groups...</p>
+      <div className="p-6">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <RefreshCw className="h-8 w-8 animate-spin text-gray-400 mx-auto mb-2" />
+            <p className="text-gray-600">Loading streaming groups...</p>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
@@ -379,86 +375,116 @@ const StreamsTab = () => {
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="flex items-center justify-between p-4">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Total Groups</p>
-              <p className="text-2xl font-bold">{groups.length}</p>
+        <Card className="overflow-hidden">
+          <CardContent className="p-0">
+            <div className="flex items-center">
+              <div className="flex-1 p-6">
+                <div className="flex items-center">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-muted-foreground">Total Groups</p>
+                    <p className="text-2xl font-bold">{groups.length}</p>
+                  </div>
+                  <div className="ml-4 rounded-full bg-blue-100 p-3">
+                    <Monitor className="h-6 w-6 text-blue-600" />
+                  </div>
+                </div>
+              </div>
             </div>
-            <Monitor className="h-8 w-8 text-blue-500" />
           </CardContent>
         </Card>
-        
-        <Card>
-          <CardContent className="flex items-center justify-between p-4">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Active Streams</p>
-              <p className="text-2xl font-bold">
-                {Object.values(streamingStatus).filter(Boolean).length}
-              </p>
+
+        <Card className="overflow-hidden">
+          <CardContent className="p-0">
+            <div className="flex items-center">
+              <div className="flex-1 p-6">
+                <div className="flex items-center">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-muted-foreground">Active Streams</p>
+                    <p className="text-2xl font-bold">
+                      {Object.values(streamingStatus).filter(Boolean).length}
+                    </p>
+                  </div>
+                  <div className="ml-4 rounded-full bg-green-100 p-3">
+                    <Play className="h-6 w-6 text-green-600" />
+                  </div>
+                </div>
+              </div>
             </div>
-            <Play className="h-8 w-8 text-green-500" />
           </CardContent>
         </Card>
-        
-        <Card>
-          <CardContent className="flex items-center justify-between p-4">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Connected Clients</p>
-              <p className="text-2xl font-bold">{clients.filter(c => c.status === 'active').length}</p>
+
+        <Card className="overflow-hidden">
+          <CardContent className="p-0">
+            <div className="flex items-center">
+              <div className="flex-1 p-6">
+                <div className="flex items-center">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-muted-foreground">Connected Clients</p>
+                    <p className="text-2xl font-bold">{clients.filter(c => c.status === 'active').length}</p>
+                  </div>
+                  <div className="ml-4 rounded-full bg-purple-100 p-3">
+                    <Users className="h-6 w-6 text-purple-600" />
+                  </div>
+                </div>
+              </div>
             </div>
-            <Users className="h-8 w-8 text-purple-500" />
           </CardContent>
         </Card>
       </div>
 
-      {/* Groups */}
-      {groups.length === 0 ? (
-        <Card className="bg-white border border-gray-200">
-          <CardContent className="text-center py-8">
-            <Monitor className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-800 mb-2">No Groups Found</h3>
-            <p className="text-gray-600 mb-4">
-              No Docker containers with multi-screen labels were discovered.
-            </p>
-            <Button onClick={() => setShowCreateForm(true)}>
-              <Plus className="h-4 w-4 mr-2" />
-              Create Your First Group
-            </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-6">
-          {groups.map((group) => (
-            <GroupCard
-              key={group.id}
-              group={group}
-              videos={videos}
-              clients={clients.filter(c => c.group_id === group.id)}
-              unassignedClients={clients.filter(c => !c.group_id)}
-              isStreaming={streamingStatus[group.id] || false}
-              operationInProgress={operationInProgress}
-              onStop={stopGroup}
-              onDelete={deleteGroup}
-              onAssignClient={assignClientToGroup}
-              onStreamingStatusChange={handleStreamingStatusChange}
-            />
-          ))}
-        </div>
-      )}
+      {/* Groups Section */}
+      <div className="space-y-4">
+        <h3 className="text-lg font-semibold text-gray-800">Active Groups</h3>
+        
+        {groups.length === 0 ? (
+          <Card className="bg-white border border-gray-200">
+            <CardContent className="text-center py-12">
+              <Monitor className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-800 mb-2">No Groups Found</h3>
+              <p className="text-gray-600 mb-6">
+                No Docker containers with multi-screen labels were discovered.
+                Create your first group to get started with multi-screen streaming.
+              </p>
+              <Button onClick={() => setShowCreateForm(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                Create Your First Group
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-6">
+            {groups.map((group) => (
+              <GroupCard
+                key={group.id}
+                group={group}
+                videos={videos}
+                clients={clients.filter(c => c.group_id === group.id)}
+                unassignedClients={clients.filter(c => !c.group_id)}
+                isStreaming={streamingStatus[group.id] || false}
+                operationInProgress={operationInProgress}
+                onStop={stopGroup}
+                onDelete={deleteGroup}
+                onAssignClient={assignClientToGroup}
+                onStreamingStatusChange={handleStreamingStatusChange}
+                onRefresh={refreshData}
+              />
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Architecture Info */}
       <Card className="bg-blue-50 border border-blue-200">
-        <CardContent className="pt-6">
-          <div className="flex items-center gap-2 text-blue-800">
+        <CardContent className="p-6">
+          <div className="flex items-center gap-2 text-blue-800 mb-2">
             <CheckCircle className="h-4 w-4" />
             <span className="font-medium">Hybrid Architecture Active</span>
           </div>
-          <p className="text-sm text-blue-700 mt-1">
+          <p className="text-sm text-blue-700">
             Groups are managed through Docker discovery. Clients are tracked in real-time app state.
-            Multi-video streaming supports different videos per screen.
+            Multi-video streaming supports different videos per screen with persistent assignments.
           </p>
         </CardContent>
       </Card>

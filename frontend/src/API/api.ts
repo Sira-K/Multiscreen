@@ -267,29 +267,91 @@ export const clientApi = {
     return await handleApiResponse(response, 'POST /assign_client_to_group');
   },
 
-  // REMOVED: These endpoints don't exist in backend (return 404)
-  // - assignClientToScreen
-  // - autoAssignScreens  
-  // - getClientStatus
-
-  // TODO: Add these when backend implements them
   async assignClientToScreen(clientId: string, groupId: string, screenNumber: number) {
-    console.warn('assignClientToScreen: Backend endpoint not implemented yet');
-    throw new Error('Screen assignment not implemented in backend yet');
+    console.log(`🎯 Assigning client ${clientId} to screen ${screenNumber} in group ${groupId}`);
+    
+    // Get SRT IP - use current hostname or fallback to localhost
+    const srtIp = window.location.hostname === 'localhost' ? '127.0.0.1' : window.location.hostname;
+    
+    const response = await fetch(`${API_BASE_URL}/assign_client_to_screen`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: clientId,
+        group_id: groupId,
+        screen_number: screenNumber,
+        srt_ip: srtIp
+      })
+    });
+
+    const result = await handleApiResponse(response, 'POST /assign_client_to_screen');
+    console.log(`✅ Successfully assigned client to screen:`, result);
+    return result;
   },
 
-  async autoAssignScreens(groupId: string) {
-    console.warn('autoAssignScreens: Backend endpoint not implemented yet');
-    throw new Error('Auto screen assignment not implemented in backend yet');
+  async autoAssignScreens(groupId: string, srtIp?: string) {
+    console.log(`🎯 Auto-assigning screens for group ${groupId}`);
+    
+    // Get SRT IP - use provided value or determine from current hostname
+    const finalSrtIp = srtIp || (window.location.hostname === 'localhost' ? '127.0.0.1' : window.location.hostname);
+    
+    const response = await fetch(`${API_BASE_URL}/auto_assign_screens`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        group_id: groupId,
+        srt_ip: finalSrtIp
+      })
+    });
+
+    const result = await handleApiResponse(response, 'POST /auto_assign_screens');
+    console.log(`✅ Successfully auto-assigned screens:`, result);
+    return result;
+  },
+
+  async getScreenAssignments(groupId: string) {
+    console.log(`📋 Getting screen assignments for group ${groupId}`);
+    
+    const response = await fetch(`${API_BASE_URL}/get_screen_assignments?group_id=${encodeURIComponent(groupId)}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    });
+
+    const result = await handleApiResponse(response, 'GET /get_screen_assignments');
+    console.log(`✅ Retrieved screen assignments:`, result);
+    return result;
+  },
+
+  async unassignClientFromScreen(clientId: string) {
+    console.log(`🎯 Unassigning client ${clientId} from screen`);
+    
+    const response = await fetch(`${API_BASE_URL}/unassign_client_from_screen`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: clientId
+      })
+    });
+
+    const result = await handleApiResponse(response, 'POST /unassign_client_from_screen');
+    console.log(`✅ Successfully unassigned client from screen:`, result);
+    return result;
   }
 };
 
-// FIXED Video API - matching actual backend responses
 export const videoApi = {
   async getVideos() {
     const response = await fetch(`${API_BASE_URL}/get_videos`);
     const data = await handleApiResponse(response, 'GET /get_videos');
-    
+   
     // Backend returns { success: true, videos: [...] }
     return {
       videos: data.videos || [],
@@ -297,12 +359,156 @@ export const videoApi = {
     };
   },
 
-  async uploadVideo(file: File, onProgress?: (progress: number) => void) {
+  async uploadVideo(
+    files: File | File[], 
+    onProgress?: (progress: {
+      currentFile: string;
+      currentFileProgress: number;
+      overallProgress: number;
+      completedFiles: number;
+      totalFiles: number;
+      currentFileIndex: number;
+    }) => void
+  ) {
+    // Convert single file to array for consistent handling
+    const fileArray = Array.isArray(files) ? files : [files];
+    
+    const results = {
+      successful: [] as Array<{
+        original_filename: string;
+        saved_filename: string;
+        size_mb: number;
+        status: string;
+        path: string;
+        processing_time_seconds: number;
+      }>,
+      failed: [] as Array<{
+        filename: string;
+        error: string;
+      }>,
+      summary: {
+        total: fileArray.length,
+        successful: 0,
+        failed: 0
+      },
+      timing: {
+        total_time_seconds: 0,
+        started_at: '',
+        completed_at: '',
+        individual_uploads: [] as Array<{
+          filename: string;
+          upload_time_seconds: number;
+          file_size_mb: number;
+        }>
+      }
+    };
+
+    const startTime = Date.now();
+    results.timing.started_at = new Date().toISOString();
+
+    // Upload files one by one
+    for (let i = 0; i < fileArray.length; i++) {
+      const file = fileArray[i];
+      const fileStartTime = Date.now();
+
+      try {
+        // Update progress for current file start
+        if (onProgress) {
+          onProgress({
+            currentFile: file.name,
+            currentFileProgress: 0,
+            overallProgress: (i / fileArray.length) * 100,
+            completedFiles: i,
+            totalFiles: fileArray.length,
+            currentFileIndex: i
+          });
+        }
+
+        // Upload single file
+        const uploadResult = await this.uploadSingleFile(file, (fileProgress) => {
+          if (onProgress) {
+            const overallProgress = ((i + (fileProgress / 100)) / fileArray.length) * 100;
+            onProgress({
+              currentFile: file.name,
+              currentFileProgress: fileProgress,
+              overallProgress,
+              completedFiles: i,
+              totalFiles: fileArray.length,
+              currentFileIndex: i
+            });
+          }
+        });
+
+        const fileEndTime = Date.now();
+        const uploadTimeSeconds = (fileEndTime - fileStartTime) / 1000;
+
+        // Handle successful upload
+        if (uploadResult.success && uploadResult.uploads && uploadResult.uploads.length > 0) {
+          const uploadData = uploadResult.uploads[0]; // Single file upload
+          results.successful.push(uploadData);
+          results.summary.successful++;
+
+          // Add individual upload timing
+          results.timing.individual_uploads.push({
+            filename: file.name,
+            upload_time_seconds: uploadTimeSeconds,
+            file_size_mb: uploadData.size_mb
+          });
+
+          console.log(`✅ Successfully uploaded: ${file.name} (${uploadTimeSeconds.toFixed(2)}s)`);
+        } else {
+          throw new Error(uploadResult.message || 'Upload failed without error message');
+        }
+
+      } catch (error) {
+        const fileEndTime = Date.now();
+        const uploadTimeSeconds = (fileEndTime - fileStartTime) / 1000;
+
+        console.error(`❌ Failed to upload ${file.name}:`, error);
+        
+        results.failed.push({
+          filename: file.name,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+        results.summary.failed++;
+
+        // Add failed upload timing
+        results.timing.individual_uploads.push({
+          filename: file.name,
+          upload_time_seconds: uploadTimeSeconds,
+          file_size_mb: file.size / (1024 * 1024) // Convert bytes to MB
+        });
+      }
+    }
+
+    // Final progress update
+    if (onProgress) {
+      onProgress({
+        currentFile: '',
+        currentFileProgress: 100,
+        overallProgress: 100,
+        completedFiles: fileArray.length,
+        totalFiles: fileArray.length,
+        currentFileIndex: fileArray.length
+      });
+    }
+
+    // Calculate total timing
+    const endTime = Date.now();
+    results.timing.completed_at = new Date().toISOString();
+    results.timing.total_time_seconds = (endTime - startTime) / 1000;
+
+    console.log(`📊 Upload Summary: ${results.summary.successful}/${results.summary.total} successful in ${results.timing.total_time_seconds.toFixed(2)}s`);
+
+    return results;
+  },
+
+  // Helper function for uploading a single file
+  async uploadSingleFile(file: File, onProgress?: (progress: number) => void): Promise<any> {
     const formData = new FormData();
     formData.append('video', file);
-
     const xhr = new XMLHttpRequest();
-    
+   
     return new Promise((resolve, reject) => {
       xhr.upload.addEventListener('progress', (e) => {
         if (e.lengthComputable && onProgress) {
@@ -321,7 +527,7 @@ export const videoApi = {
         } else {
           try {
             const error = JSON.parse(xhr.responseText);
-            reject(new Error(error.error || 'Failed to upload video'));
+            reject(new Error(error.message || error.error || 'Failed to upload video'));
           } catch (e) {
             reject(new Error(`Upload failed with status ${xhr.status}`));
           }
@@ -332,17 +538,100 @@ export const videoApi = {
         reject(new Error('Network error occurred'));
       });
 
+      xhr.addEventListener('timeout', () => {
+        reject(new Error('Upload timeout'));
+      });
+
+      // Set timeout (optional - adjust as needed)
+      xhr.timeout = 300000; // 5 minutes
+
       xhr.open('POST', `${API_BASE_URL}/upload_video`);
       xhr.send(formData);
     });
-  }
+  },
 
-  // REMOVED: These endpoints don't exist in backend
-  // - deleteVideo (returns 404)
-  // - getVideoInfo (returns 404)
-  // - validateMultiVideo
-  // - getMultiVideoPreview
-  // - uploadMultipleVideos
+  async deleteVideo(videoName: string) {
+    try {
+      console.log(`Attempting to delete video: ${videoName}`);
+     
+      const response = await fetch(`${API_BASE_URL}/delete_video`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          video_name: videoName
+        })
+      });
+      console.log(`Delete response status: ${response.status}`);
+     
+      // Use your existing handleApiResponse function for consistency
+      const data = await handleApiResponse(response, `DELETE /delete_video (${videoName})`);
+     
+      console.log('Video deleted successfully:', data);
+      return data;
+     
+    } catch (error) {
+      console.error('Delete video error:', error);
+     
+      // Re-throw with more context
+      if (error instanceof Error) {
+        throw new Error(`Failed to delete "${videoName}": ${error.message}`);
+      } else {
+        throw new Error(`Failed to delete "${videoName}": Unknown error`);
+      }
+    }
+  },
+
+  async deleteMultipleVideos(
+    videoNames: string[],
+    onProgress?: (progress: { completed: number; total: number; currentFile: string }) => void
+  ) {
+    const successful: string[] = [];
+    const failed: Array<{ filename: string; error: string }> = [];
+   
+    for (let i = 0; i < videoNames.length; i++) {
+      const videoName = videoNames[i];
+     
+      // Update progress
+      if (onProgress) {
+        onProgress({
+          completed: i,
+          total: videoNames.length,
+          currentFile: videoName
+        });
+      }
+     
+      try {
+        await this.deleteVideo(videoName);
+        successful.push(videoName);
+      } catch (error) {
+        failed.push({
+          filename: videoName,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    }
+   
+    // Final progress update
+    if (onProgress) {
+      onProgress({
+        completed: videoNames.length,
+        total: videoNames.length,
+        currentFile: ''
+      });
+    }
+   
+    return {
+      successful,
+      failed,
+      summary: {
+        total: videoNames.length,
+        successful: successful.length,
+        failed: failed.length
+      }
+    };
+  }
 };
 
 // System API - these work fine
@@ -369,22 +658,4 @@ export const api = {
   client: clientApi,
   video: videoApi,
   system: systemApi
-};
-
-// Debug function
-export const debugApiMethods = () => {
-  console.log('🔍 API Methods Debug (Fixed Version):');
-  console.log('Available backend endpoints from test:', [
-    '/get_groups ✓',
-    '/get_videos ✓', 
-    '/get_clients ✓',
-    '/create_group ✓',
-    '/delete_group ✓',
-    '/register_client ✓',
-    '/assign_client_to_group ✓',
-    '/start_multi_video_srt ❌ (missing)',
-    '/stop_group_srt ❌ (missing)',
-    '/assign_client_to_screen ❌ (missing)',
-    '/auto_assign_screens ❌ (missing)'
-  ]);
 };

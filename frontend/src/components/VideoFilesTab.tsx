@@ -7,16 +7,35 @@ import { Upload, Trash2, File, FileVideo, AlertCircle, CheckCircle, RefreshCw } 
 import { useToast } from "@/hooks/use-toast";
 import { videoApi } from '@/API/api';
 
-// Type definitions for API responses
+// Updated type definitions for new sequential API responses
 interface UploadResponse {
-  success?: boolean;
-  uploads?: Array<{
-    saved_filename: string;
+  successful: Array<{
     original_filename: string;
-    size: number;
+    saved_filename: string;
+    size_mb: number;
+    status: string;
+    path: string;
+    processing_time_seconds: number;
   }>;
-  message?: string;
-  error?: string;
+  failed: Array<{
+    filename: string;
+    error: string;
+  }>;
+  summary: {
+    total: number;
+    successful: number;
+    failed: number;
+  };
+  timing: {
+    total_time_seconds: number;
+    started_at: string;
+    completed_at: string;
+    individual_uploads: Array<{
+      filename: string;
+      upload_time_seconds: number;
+      file_size_mb: number;
+    }>;
+  };
 }
 
 interface VideosResponse {
@@ -30,13 +49,6 @@ interface VideosResponse {
   }>;
   total_videos?: number;
   success?: boolean;
-}
-
-interface DeleteResponse {
-  success?: boolean;
-  message?: string;
-  deleted_files?: string[];
-  error?: string;
 }
 
 interface VideoFile {
@@ -56,6 +68,15 @@ interface UploadingFile {
   status: 'uploading' | 'processing' | 'completed' | 'failed';
   size: number;
   error?: string;
+  isCurrentFile?: boolean;
+}
+
+interface DeleteResponse {
+  success: boolean;
+  message: string;
+  deleted_files?: string[];
+  errors?: string[];
+  searched_locations?: string[];
 }
 
 const VideoFilesTab = () => {
@@ -65,6 +86,15 @@ const VideoFilesTab = () => {
   const [videoFiles, setVideoFiles] = useState<VideoFile[]>([]);
   const [isLoadingVideos, setIsLoadingVideos] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [overallProgress, setOverallProgress] = useState(0);
+  const [currentUploadInfo, setCurrentUploadInfo] = useState<{
+    currentFile: string;
+    completedFiles: number;
+    totalFiles: number;
+  } | null>(null);
+
+  // File mapping for sequential uploads
+  const fileUploadMapRef = useRef<Map<File, string>>(new Map());
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes';
@@ -94,29 +124,192 @@ const VideoFilesTab = () => {
     return { valid: true };
   };
 
-  const simulateProgress = (fileId: string) => {
-    const interval = setInterval(() => {
-      setUploadingFiles(prev => {
-        const current = prev[fileId];
-        if (!current || current.status !== 'uploading') {
-          clearInterval(interval);
-          return prev;
+  const handleSequentialUpload = async (validFiles: File[]) => {
+    try {
+      console.log(`⬆️ Starting sequential upload of ${validFiles.length} files`);
+      
+      // Check if videoApi exists
+      if (!videoApi?.uploadVideo) {
+        throw new Error("Video upload API not available");
+      }
+
+      // Upload all files sequentially with progress tracking
+      const response = await videoApi.uploadVideo(validFiles, (progress) => {
+        // Update overall progress
+        setOverallProgress(progress.overallProgress);
+        setCurrentUploadInfo({
+          currentFile: progress.currentFile,
+          completedFiles: progress.completedFiles,
+          totalFiles: progress.totalFiles
+        });
+
+        // Find the current file being uploaded
+        const currentFile = validFiles[progress.currentFileIndex];
+        const currentFileId = fileUploadMapRef.current.get(currentFile);
+        
+        if (currentFileId) {
+          // Update upload progress
+          setUploadingFiles(prev => {
+            const newState = { ...prev };
+            
+            // Reset all files to not current
+            Object.keys(newState).forEach(fileId => {
+              newState[fileId] = {
+                ...newState[fileId],
+                isCurrentFile: false
+              };
+            });
+            
+            // Update current file
+            newState[currentFileId] = {
+              ...newState[currentFileId],
+              progress: progress.currentFileProgress,
+              status: progress.currentFileProgress === 100 ? 'processing' : 'uploading',
+              isCurrentFile: true
+            };
+            
+            return newState;
+          });
         }
-        
-        const increment = Math.random() * 10 + 5; // 5-15% increments
-        const newProgress = Math.min(current.progress + increment, 85); // Stop at 85% until real upload completes
-        
-        return {
-          ...prev,
-          [fileId]: {
-            ...current,
-            progress: newProgress
+
+        console.log(`📊 Overall: ${progress.overallProgress.toFixed(1)}% | Current: ${progress.currentFile} (${progress.currentFileProgress.toFixed(1)}%)`);
+      }) as UploadResponse;
+
+      console.log(`✅ Sequential upload complete:`, response);
+
+      // Process successful uploads
+      if (response.successful && response.successful.length > 0) {
+        response.successful.forEach((uploadResult) => {
+          const originalFile = validFiles.find(f => f.name === uploadResult.original_filename);
+          const fileId = originalFile ? fileUploadMapRef.current.get(originalFile) : null;
+
+          if (fileId && originalFile) {
+            // Mark as completed
+            setUploadingFiles(prev => ({
+              ...prev,
+              [fileId]: {
+                ...prev[fileId],
+                progress: 100,
+                status: 'completed',
+                isCurrentFile: false
+              }
+            }));
+
+            // Create new video file entry
+            const newVideo: VideoFile = {
+              id: `${uploadResult.saved_filename || originalFile.name}-${Date.now()}`,
+              name: uploadResult.saved_filename || originalFile.name,
+              size: originalFile.size,
+              duration: '0:00',
+              format: originalFile.name.split('.').pop()?.toUpperCase() || 'MP4',
+              resolution: 'Original',
+              uploadDate: new Date().toISOString().split('T')[0],
+              status: 'ready'
+            };
+            
+            setVideoFiles(prev => [newVideo, ...prev]);
+
+            // Remove from upload tracking after delay
+            setTimeout(() => {
+              setUploadingFiles(prev => {
+                const newState = { ...prev };
+                delete newState[fileId];
+                return newState;
+              });
+            }, 2000);
           }
-        };
+        });
+      }
+
+      // Process failed uploads
+      if (response.failed && response.failed.length > 0) {
+        response.failed.forEach((failedUpload) => {
+          const originalFile = validFiles.find(f => f.name === failedUpload.filename);
+          const fileId = originalFile ? fileUploadMapRef.current.get(originalFile) : null;
+
+          if (fileId) {
+            setUploadingFiles(prev => ({
+              ...prev,
+              [fileId]: {
+                ...prev[fileId],
+                status: 'failed',
+                error: failedUpload.error,
+                isCurrentFile: false
+              }
+            }));
+
+            // Remove from tracking after delay
+            setTimeout(() => {
+              setUploadingFiles(prev => {
+                const newState = { ...prev };
+                delete newState[fileId];
+                return newState;
+              });
+            }, 5000);
+          }
+        });
+      }
+
+      // Summary toast and cleanup
+      const { successful, failed, total } = response.summary;
+      
+      if (total > 1) {
+        toast({
+          title: "Upload Complete",
+          description: `${successful}/${total} files uploaded successfully${failed > 0 ? `, ${failed} failed` : ''} in ${response.timing.total_time_seconds}s`,
+          variant: successful === total ? "default" : "destructive"
+        });
+      } else if (successful === 1) {
+        toast({
+          title: "Upload Successful",
+          description: `File uploaded successfully in ${response.timing.total_time_seconds}s`,
+        });
+      }
+
+      console.log(`📊 Upload Summary: ${successful}/${total} successful in ${response.timing.total_time_seconds}s`);
+
+      // Reset progress tracking
+      setOverallProgress(0);
+      setCurrentUploadInfo(null);
+
+    } catch (error: any) {
+      console.error(`❌ Sequential upload failed:`, error);
+      
+      // Mark all files as failed
+      validFiles.forEach(file => {
+        const fileId = fileUploadMapRef.current.get(file);
+        if (fileId) {
+          setUploadingFiles(prev => ({
+            ...prev,
+            [fileId]: {
+              ...prev[fileId],
+              status: 'failed',
+              error: error.message || 'Upload failed',
+              isCurrentFile: false
+            }
+          }));
+
+          // Remove from tracking after delay
+          setTimeout(() => {
+            setUploadingFiles(prev => {
+              const newState = { ...prev };
+              delete newState[fileId];
+              return newState;
+            });
+          }, 5000);
+        }
       });
-    }, 500);
-    
-    return interval;
+
+      toast({
+        title: "Upload Failed",
+        description: error.message || "All uploads failed",
+        variant: "destructive"
+      });
+
+      // Reset progress tracking
+      setOverallProgress(0);
+      setCurrentUploadInfo(null);
+    }
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -150,17 +343,18 @@ const VideoFilesTab = () => {
     if (validFiles.length === 0) return;
 
     // Initialize upload tracking
-    const fileUploadMap = new Map<File, string>();
+    fileUploadMapRef.current.clear();
     const initialUploadStates: Record<string, UploadingFile> = {};
     
     validFiles.forEach((file, index) => {
       const fileId = generateFileId(file, index);
-      fileUploadMap.set(file, fileId);
+      fileUploadMapRef.current.set(file, fileId);
       initialUploadStates[fileId] = {
         name: file.name,
         progress: 0,
         status: 'uploading',
-        size: file.size
+        size: file.size,
+        isCurrentFile: false
       };
     });
 
@@ -168,110 +362,11 @@ const VideoFilesTab = () => {
 
     toast({
       title: "Upload Started",
-      description: `Uploading ${validFiles.length} file(s)...`
+      description: `Uploading ${validFiles.length} file(s) sequentially...`
     });
 
-    // Upload files concurrently
-    const uploadPromises = validFiles.map(async (file) => {
-      const fileId = fileUploadMap.get(file)!;
-      const progressInterval = simulateProgress(fileId);
-      
-      try {
-        console.log(`⬆️ Uploading ${file.name} (${formatFileSize(file.size)})`);
-        
-        // Check if videoApi exists
-        if (!videoApi?.uploadVideo) {
-          throw new Error("Video upload API not available");
-        }
-
-        const response = await videoApi.uploadVideo(file) as UploadResponse;
-        clearInterval(progressInterval);
-        
-        console.log(`✅ Upload response for ${file.name}:`, response);
-
-        if (response?.success) {
-          // Mark as completed
-          setUploadingFiles(prev => ({
-            ...prev,
-            [fileId]: {
-              ...prev[fileId],
-              progress: 100,
-              status: 'completed'
-            }
-          }));
-
-          // Create new video file entry
-          const uploadResult = response.uploads?.[0];
-          if (uploadResult) {
-            const newVideo: VideoFile = {
-              id: `${uploadResult.saved_filename || file.name}-${Date.now()}`,
-              name: uploadResult.saved_filename || file.name,
-              size: file.size,
-              duration: '0:00',
-              format: file.name.split('.').pop()?.toUpperCase() || 'MP4',
-              resolution: 'Original',
-              uploadDate: new Date().toISOString().split('T')[0],
-              status: 'ready'
-            };
-
-            setVideoFiles(prev => [newVideo, ...prev]);
-          }
-          
-          // Remove from upload tracking after delay
-          setTimeout(() => {
-            setUploadingFiles(prev => {
-              const newState = { ...prev };
-              delete newState[fileId];
-              return newState;
-            });
-          }, 2000);
-          
-        } else {
-          throw new Error(response?.message || 'Upload failed');
-        }
-      } catch (error: any) {
-        clearInterval(progressInterval);
-        console.error(`❌ Upload failed for ${file.name}:`, error);
-        
-        setUploadingFiles(prev => ({
-          ...prev,
-          [fileId]: {
-            ...prev[fileId],
-            status: 'failed',
-            error: error.message
-          }
-        }));
-        
-        toast({
-          title: "Upload Failed",
-          description: `${file.name}: ${error.message || "Upload failed"}`,
-          variant: "destructive"
-        });
-
-        // Remove from tracking after delay
-        setTimeout(() => {
-          setUploadingFiles(prev => {
-            const newState = { ...prev };
-            delete newState[fileId];
-            return newState;
-          });
-        }, 5000);
-      }
-    });
-
-    try {
-      await Promise.allSettled(uploadPromises);
-      const successCount = validFiles.length - Object.values(uploadingFiles).filter(f => f.status === 'failed').length;
-      
-      if (successCount > 0) {
-        toast({
-          title: "Upload Complete",
-          description: `Successfully uploaded ${successCount} of ${validFiles.length} file(s)`
-        });
-      }
-    } catch (error) {
-      console.error('Upload batch error:', error);
-    }
+    // Start sequential upload
+    await handleSequentialUpload(validFiles);
 
     // Reset file input
     if (fileInputRef.current) {
@@ -281,43 +376,36 @@ const VideoFilesTab = () => {
 
   const removeVideo = async (videoId: string, videoName: string) => {
     console.log(`🗑️ Attempting to delete video: ${videoName}`);
-
+    
     try {
-      // Create a delete video function if it doesn't exist
-      const deleteVideo = async (filename: string): Promise<DeleteResponse> => {
-        const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/delete_video`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ filename }),
-        });
-        
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        
-        return await response.json();
-      };
+      if (!videoApi?.deleteVideo) {
+        throw new Error("Delete API not available");
+      }
 
-      const response = await deleteVideo(videoName);
+      const response = await videoApi.deleteVideo(videoName);
+      console.log('Delete response:', response);
       
       if (response?.success) {
+        // Remove from local state
         setVideoFiles(prev => prev.filter(v => v.id !== videoId));
         
         toast({
           title: "Video Removed",
-          description: `${videoName} has been deleted.`
+          description: `${videoName} has been deleted successfully.`
         });
+        
       } else {
-        throw new Error(response?.message || 'Failed to delete video');
+        throw new Error(response?.message || 'Failed to delete video - unknown error');
       }
+      
     } catch (error: any) {
       console.error(`❌ Delete failed for ${videoName}:`, error);
       
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      
       toast({
-        title: "Delete Failed", 
-        description: error.message || `Failed to delete ${videoName}.`,
+        title: "Delete Failed",
+        description: `Failed to delete ${videoName}: ${errorMessage}`,
         variant: "destructive"
       });
     }
@@ -335,7 +423,6 @@ const VideoFilesTab = () => {
 
       const response = await videoApi.getVideos() as VideosResponse;
       
-      // Handle the actual API response structure
       if (Array.isArray(response.videos)) {
         const transformedVideos: VideoFile[] = response.videos.map((video: any, index: number) => ({
           id: video.id || `${video.name}-${index}`,
@@ -422,13 +509,13 @@ const VideoFilesTab = () => {
 
   // Load videos on component mount
   useEffect(() => {
-    const initializeVideos = async () => {
+    const loadInitialVideos = async () => {
       setIsLoadingVideos(true);
       await fetchVideos();
       setIsLoadingVideos(false);
     };
     
-    initializeVideos();
+    loadInitialVideos();
   }, []);
 
   const totalSize = videoFiles.reduce((total, file) => total + file.size, 0);
@@ -504,25 +591,58 @@ const VideoFilesTab = () => {
               />
             </div>
 
+            {/* Overall Progress for Multiple Files */}
+            {currentUploadInfo && currentUploadInfo.totalFiles > 1 && (
+              <div className="space-y-2 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex justify-between text-sm text-blue-700 font-medium">
+                  <span>Sequential Upload Progress</span>
+                  <span>{currentUploadInfo.completedFiles}/{currentUploadInfo.totalFiles} files</span>
+                </div>
+                <Progress value={overallProgress} className="w-full h-3" />
+                {currentUploadInfo.currentFile && (
+                  <p className="text-sm text-blue-600">
+                    Currently uploading: <span className="font-medium">{currentUploadInfo.currentFile}</span>
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Upload Progress */}
             {activeUploads > 0 && (
               <div className="space-y-3">
                 <div className="text-sm font-medium text-gray-700">
-                  Uploading {activeUploads} file(s):
+                  {currentUploadInfo && currentUploadInfo.totalFiles > 1 
+                    ? `Sequential Upload: ${activeUploads} file(s) in queue`
+                    : `Uploading ${activeUploads} file(s):`
+                  }
                 </div>
                 
                 {Object.entries(uploadingFiles).map(([fileId, fileInfo]) => (
-                  <div key={fileId} className="space-y-2 p-3 bg-gray-50 rounded-lg border">
+                  <div key={fileId} className={`space-y-2 p-3 rounded-lg border ${
+                    fileInfo.isCurrentFile 
+                      ? 'border-blue-500 bg-blue-50 shadow-sm' 
+                      : 'bg-gray-50 border-gray-200'
+                  }`}>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <FileVideo className="w-4 h-4 text-gray-500" />
+                        <FileVideo className={`w-4 h-4 ${fileInfo.isCurrentFile ? 'text-blue-500' : 'text-gray-500'}`} />
                         <span className="text-sm font-medium truncate max-w-xs">
                           {fileInfo.name}
                         </span>
+                        {fileInfo.isCurrentFile && (
+                          <Badge variant="outline" className="text-xs bg-blue-100 text-blue-700 border-blue-300">
+                            Uploading Now
+                          </Badge>
+                        )}
+                        {fileInfo.status === 'uploading' && !fileInfo.isCurrentFile && (
+                          <Badge variant="outline" className="text-xs bg-gray-100 text-gray-600">
+                            Waiting
+                          </Badge>
+                        )}
                       </div>
                       
                       <div className="flex items-center gap-2">
-                        {fileInfo.status === 'uploading' && (
+                        {fileInfo.status === 'uploading' && fileInfo.isCurrentFile && (
                           <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
                         )}
                         {fileInfo.status === 'processing' && (
@@ -548,7 +668,8 @@ const VideoFilesTab = () => {
                     
                     <div className="flex justify-between text-xs text-gray-500">
                       <span>
-                        {fileInfo.status === 'uploading' ? 'Uploading...' :
+                        {fileInfo.status === 'uploading' && fileInfo.isCurrentFile ? 'Uploading...' :
+                         fileInfo.status === 'uploading' && !fileInfo.isCurrentFile ? 'Waiting in queue...' :
                          fileInfo.status === 'processing' ? 'Processing...' :
                          fileInfo.status === 'completed' ? 'Completed!' :
                          fileInfo.status === 'failed' ? `Failed: ${fileInfo.error || 'Unknown error'}` : 'Unknown'}
