@@ -653,6 +653,7 @@ def get_streaming_status(group_id: str):
             }), 404
         
         group_name = group.get("name", group_id)
+        streaming_mode = group.get("streaming_mode", "multi_video") 
         
         # Find running FFmpeg processes
         running_processes = find_running_ffmpeg_for_group(group_id, group_name)
@@ -688,6 +689,9 @@ def get_streaming_status(group_id: str):
         return jsonify({
             "group_id": group_id,
             "group_name": group_name,
+            "streaming_mode": streaming_mode,
+            "screen_count": screen_count,     
+            "orientation": group.get("orientation", "horizontal"), 
             "is_streaming": is_streaming,
             "process_count": len(running_processes),
             "process_id": running_processes[0]["pid"] if running_processes else None,
@@ -888,62 +892,60 @@ def get_container_details(container_id: str, group_id: str) -> Dict[str, Any]:
     try:
         # Get detailed container info
         inspect_cmd = ["docker", "inspect", container_id]
-        inspect_result = subprocess.run(inspect_cmd, capture_output=True, text=True, timeout=10)
+        result = subprocess.run(inspect_cmd, capture_output=True, text=True, timeout=10)
         
-        if inspect_result.returncode != 0:
-            logger.error(f"Failed to inspect container: {inspect_result.stderr}")
+        if result.returncode != 0:
+            logger.error(f"Failed to inspect container {container_id}: {result.stderr}")
             return None
         
-        container_info = json.loads(inspect_result.stdout)[0]
-        labels = container_info.get("Config", {}).get("Labels", {}) or {}
-        container_name = container_info.get("Name", "").lstrip("/")
+        container_data = json.loads(result.stdout)[0]
+        labels = container_data.get("Config", {}).get("Labels", {})
+        state = container_data.get("State", {})
         
-        # Extract ports from container configuration
-        ports = {}
-        port_bindings = container_info.get("NetworkSettings", {}).get("Ports", {}) or {}
+        # Extract group information from labels
+        group_name = labels.get('com.multiscreen.group.name', f'group_{group_id[:8]}')
+        description = labels.get('com.multiscreen.group.description', '')
+        screen_count = int(labels.get('com.multiscreen.group.screen_count', 2))
+        orientation = labels.get('com.multiscreen.group.orientation', 'horizontal')
+        streaming_mode = labels.get('com.multiscreen.group.streaming_mode', 'multi_video')  # ✅ ADD THIS LINE
+        created_timestamp = float(labels.get('com.multiscreen.group.created_at', time.time()))
         
-        # Parse port mappings
-        for container_port, host_bindings in port_bindings.items():
-            if host_bindings:
-                host_port = int(host_bindings[0]["HostPort"])
-                if "1935" in container_port:
-                    ports["rtmp_port"] = host_port
-                elif "1985" in container_port:
-                    ports["http_port"] = host_port
-                elif "8080" in container_port:
-                    ports["api_port"] = host_port
-                elif "10080" in container_port:
-                    ports["srt_port"] = host_port
+        logger.info(f"📺 Container {container_id} streaming mode: {streaming_mode}")  # ✅ ADD THIS LINE
         
-        # Set default ports if not found
-        if not ports.get("srt_port"):
-            ports["srt_port"] = 10080
-        if not ports.get("api_port"):
-            ports["api_port"] = 8080
-        if not ports.get("http_port"):
-            ports["http_port"] = 1985
-        if not ports.get("rtmp_port"):
-            ports["rtmp_port"] = 1935
-        
-        # Extract group information from Docker labels (with fallbacks)
-        group = {
-            "id": group_id,
-            "name": labels.get("com.multiscreen.group.name") or labels.get("multiscreen.group.name") or f"group_{group_id[:8]}",
-            "container_id": container_id,
-            "container_name": container_name,
-            "docker_running": container_info.get("State", {}).get("Running", False),
-            "docker_status": container_info.get("State", {}).get("Status", "unknown"),
-            "screen_count": int(labels.get("com.multiscreen.group.screen_count") or 
-                                labels.get("multiscreen.group.screen_count") or "2"),
-            "orientation": (labels.get("com.multiscreen.group.orientation") or 
-                           labels.get("multiscreen.group.orientation") or "horizontal"),
-            "ports": ports
+        # Extract port information
+        ports = {
+            'rtmp_port': int(labels.get('com.multiscreen.ports.rtmp', 1935)),
+            'http_port': int(labels.get('com.multiscreen.ports.http', 1985)),
+            'api_port': int(labels.get('com.multiscreen.ports.api', 8080)),
+            'srt_port': int(labels.get('com.multiscreen.ports.srt', 10080))
         }
         
-        logger.info(f"✅ Discovered group from Docker: {group['name']} (container: {container_name})")
-        logger.info(f"   - Docker running: {group['docker_running']}")
-        logger.info(f"   - Status: {group['docker_status']}")
-        logger.info(f"   - Ports: {ports}")
+        # Determine container status
+        is_running = state.get("Running", False)
+        docker_status = "running" if is_running else "stopped"
+        
+        # Build group object
+        group = {
+            "id": group_id,
+            "name": group_name,
+            "description": description,
+            "screen_count": screen_count,
+            "orientation": orientation,
+            "streaming_mode": streaming_mode,  # ✅ ADD THIS LINE
+            "created_at": created_timestamp,
+            "container_id": container_id,
+            "container_name": container_data.get("Name", "").lstrip("/"),
+            "docker_status": docker_status,
+            "docker_running": is_running,
+            "status": docker_status,
+            "ports": ports,
+            "created_at_formatted": time.strftime(
+                "%Y-%m-%d %H:%M:%S",
+                time.localtime(created_timestamp)
+            )
+        }
+        
+        logger.debug(f"✅ Container details for {group_name}: streaming_mode={streaming_mode}")  # ✅ ADD THIS LINE
         
         return group
         
