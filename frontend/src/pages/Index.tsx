@@ -1,9 +1,12 @@
+// frontend/src/pages/Index.tsx - Fixed with unified Client interface
+
 import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import StreamsTab from "@/components/StreamsTab";
 import ClientsTab from "@/components/ClientsTab";
 import VideoFilesTab from "@/components/VideoFilesTab";
 import { Monitor, Users, Video } from "lucide-react";
+import type { Client } from '@/types'; // Use the global Client interface
 
 interface Stream {
   id: string;
@@ -14,19 +17,12 @@ interface Stream {
   clients: string[];
 }
 
-interface Client {
-  id: string;
-  name: string;
-  ip: string;
-  status: 'active' | 'inactive';
-  connectedStream: string | null;
-  lastSeen: string;
-  order: number;
-}
+// REMOVED: Local Client interface that was conflicting
+// Now using the global Client interface from types/index.ts
 
 const Index = () => {
   const [streams, setStreams] = useState<Stream[]>([]);
-  const [clients, setClients] = useState<Client[]>([]);
+  const [clients, setClients] = useState<Client[]>([]); // Now uses global Client type
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
@@ -61,18 +57,18 @@ const Index = () => {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="streams" className="mt-0">
+          <TabsContent value="streams">
             <StreamsTab/>
           </TabsContent>
 
-          <TabsContent value="clients" className="mt-0">
+          <TabsContent value="clients">
             <ClientsTab 
               clients={clients} 
               setClients={setClients}
             />
           </TabsContent>
 
-          <TabsContent value="videos" className="mt-0">
+          <TabsContent value="videos">
             <VideoFilesTab />
           </TabsContent>
         </Tabs>

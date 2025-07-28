@@ -1,14 +1,11 @@
-// frontend/src/components/StreamsTab.tsx - Fixed with proper margins and container
+// frontend/src/components/StreamsTab.tsx - Fixed with renamed imports
 
 import { useState, useEffect } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import GroupCard from '@/components/ui/GroupCard';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, X, Play, Square, Users, Monitor, AlertCircle, CheckCircle, RefreshCw } from "lucide-react";
+import CreateGroupDialog from '@/components/ui/CreateGroupDialog';
+import { Plus, X, Play, Square, Users, Monitor, CheckCircle, RefreshCw} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { groupApi, videoApi, clientApi } from '@/API/api';
 import type { Group, Video, Client } from '@/types';
@@ -32,7 +29,8 @@ const StreamsTab = () => {
     name: '',
     description: '',
     screen_count: 2,
-    orientation: 'horizontal' as 'horizontal' | 'vertical' | 'grid'
+    orientation: 'horizontal' as 'horizontal' | 'vertical' | 'grid',
+    streaming_mode: 'multi_video' as 'multi_video' | 'single_video_split'
   });
 
   // Load initial data
@@ -118,7 +116,7 @@ const StreamsTab = () => {
   const createGroup = async () => {
     try {
       setOperationInProgress('create');
-      
+
       if (!newGroupForm.name.trim()) {
         toast({
           title: "Validation Error",
@@ -128,11 +126,12 @@ const StreamsTab = () => {
         return;
       }
 
-      const response = await groupApi.createGroup({
+      await groupApi.createGroup({
         name: newGroupForm.name.trim(),
-        description: newGroupForm.description.trim(),
+        description: newGroupForm.description.trim() || undefined,
         screen_count: newGroupForm.screen_count,
-        orientation: newGroupForm.orientation
+        orientation: newGroupForm.orientation,
+        streaming_mode: newGroupForm.streaming_mode
       });
 
       toast({
@@ -145,13 +144,14 @@ const StreamsTab = () => {
         name: '',
         description: '',
         screen_count: 2,
-        orientation: 'horizontal'
+        orientation: 'horizontal',
+        streaming_mode: 'multi_video'
       });
       setShowCreateForm(false);
 
-      // Reload data to show new group
+      // Reload data
       await loadInitialData();
-      
+
     } catch (error: any) {
       console.error('Error creating group:', error);
       toast({
@@ -266,7 +266,7 @@ const StreamsTab = () => {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
@@ -284,94 +284,14 @@ const StreamsTab = () => {
             Refresh
           </Button>
           
-          <Dialog open={showCreateForm} onOpenChange={setShowCreateForm}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="h-4 w-4 mr-2" />
-                Create Group
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create New Streaming Group</DialogTitle>
-                <DialogDescription>
-                  Set up a new multi-screen streaming group with Docker container management.
-                </DialogDescription>
-              </DialogHeader>
-              
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="group-name">Group Name</Label>
-                  <Input
-                    id="group-name"
-                    placeholder="Enter group name"
-                    value={newGroupForm.name}
-                    onChange={(e) => setNewGroupForm(prev => ({ ...prev, name: e.target.value }))}
-                  />
-                </div>
-                
-                <div>
-                  <Label htmlFor="group-description">Description (Optional)</Label>
-                  <Input
-                    id="group-description"
-                    placeholder="Enter group description"
-                    value={newGroupForm.description}
-                    onChange={(e) => setNewGroupForm(prev => ({ ...prev, description: e.target.value }))}
-                  />
-                </div>
-                
-                <div>
-                  <Label htmlFor="screen-count">Screen Count</Label>
-                  <Select
-                    value={newGroupForm.screen_count.toString()}
-                    onValueChange={(value) => setNewGroupForm(prev => ({ ...prev, screen_count: parseInt(value) }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {[2, 3, 4, 6, 8, 9].map(count => (
-                        <SelectItem key={count} value={count.toString()}>
-                          {count} screens
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                <div>
-                  <Label htmlFor="orientation">Layout Orientation</Label>
-                  <Select
-                    value={newGroupForm.orientation}
-                    onValueChange={(value: 'horizontal' | 'vertical' | 'grid') => 
-                      setNewGroupForm(prev => ({ ...prev, orientation: value }))
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="horizontal">Horizontal</SelectItem>
-                      <SelectItem value="vertical">Vertical</SelectItem>
-                      <SelectItem value="grid">Grid</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setShowCreateForm(false)}>
-                  Cancel
-                </Button>
-                <Button 
-                  onClick={createGroup}
-                  disabled={operationInProgress === 'create' || !newGroupForm.name.trim()}
-                >
-                  {operationInProgress === 'create' ? 'Creating...' : 'Create Group'}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+          <CreateGroupDialog
+            showCreateForm={showCreateForm}
+            setShowCreateForm={setShowCreateForm}
+            newGroupForm={newGroupForm}
+            setNewGroupForm={setNewGroupForm}
+            createGroup={createGroup}
+            operationInProgress={operationInProgress}
+          />
         </div>
       </div>
 
@@ -435,13 +355,13 @@ const StreamsTab = () => {
       </div>
 
       {/* Groups Section */}
-      <div className="space-y-4">
+      <div className="space-y-4" >
         <h3 className="text-lg font-semibold text-gray-800">Active Groups</h3>
         
         {groups.length === 0 ? (
-          <Card className="bg-white border border-gray-200">
-            <CardContent className="text-center py-12">
-              <Monitor className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+          <Card className="p-0">
+            <CardContent className="text-center py-12 px-6 " style={{paddingTop: '48px'}}>
+              <Monitor className="h-12 w-12 text-gray-400 mx-auto mb-4"/>
               <h3 className="text-lg font-medium text-gray-800 mb-2">No Groups Found</h3>
               <p className="text-gray-600 mb-6">
                 No Docker containers with multi-screen labels were discovered.
@@ -461,12 +381,7 @@ const StreamsTab = () => {
                 group={group}
                 videos={videos}
                 clients={clients.filter(c => c.group_id === group.id)}
-                unassignedClients={clients.filter(c => !c.group_id)}
-                isStreaming={streamingStatus[group.id] || false}
-                operationInProgress={operationInProgress}
-                onStop={stopGroup}
                 onDelete={deleteGroup}
-                onAssignClient={assignClientToGroup}
                 onStreamingStatusChange={handleStreamingStatusChange}
                 onRefresh={refreshData}
               />

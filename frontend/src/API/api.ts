@@ -52,7 +52,6 @@ export const groupApi = {
     const response = await fetch(`${API_BASE_URL}/get_groups`);
     const data = await handleApiResponse(response, 'GET /get_groups');
    
-    // Fix: Backend returns "total", not "total_groups"
     return {
       groups: data.groups.map((group: any) => ({
         id: group.id,
@@ -60,27 +59,23 @@ export const groupApi = {
         description: group.description || '',
         screen_count: group.screen_count,
         orientation: group.orientation,
+        streaming_mode: group.streaming_mode, 
         status: group.docker_running ? 'active' : 'inactive',
-        docker_container_id: group.container_id,
-        container_id: group.container_id || 'unknown',
         docker_running: group.docker_running,
         docker_status: group.docker_status,
-        container_name: group.container_name || 'unknown',
-        ffmpeg_process_id: null,
-        available_streams: group.available_streams || [],
-        current_video: null,
-        active_clients: 0,
-        total_clients: 0,
-        srt_port: group.ports?.srt_port || 10080,
+        active_clients: group.active_clients || 0,
+        total_clients: group.total_clients || 0,
+        container_id: group.container_id,
+        container_name: group.container_name,
         created_at_formatted: group.created_at_formatted,
-        ports: group.ports || {
-          rtmp_port: 1935,
-          http_port: 1985,
-          api_port: 8080,
-          srt_port: 10080
-        }
+        ports: group.ports || {},
+        srt_port: group.srt_port || 10080,
+        available_streams: group.available_streams || [],
+        current_video: group.current_video,
+        ffmpeg_process_id: group.ffmpeg_process_id,
+        docker_container_id: group.docker_container_id
       })),
-      total_groups: data.total // Fix: use "total" from backend
+      total_groups: data.total
     };
   },
 
@@ -89,6 +84,7 @@ export const groupApi = {
     description?: string;
     screen_count: number;
     orientation: string;
+    streaming_mode: string;
   }) {
     const response = await fetch(`${API_BASE_URL}/create_group`, {
       method: 'POST',
@@ -111,6 +107,49 @@ export const groupApi = {
     return await handleApiResponse(response, 'POST /delete_group');
   },
 
+  async startSingleVideoSplit(groupId: string, config: {
+    video_file: string;
+    screen_count?: number;
+    orientation?: string;
+    enable_looping?: boolean;
+    srt_ip?: string;
+    srt_port?: number;
+  }) {
+    try {
+      console.log(`🎬 Starting single video split for group ${groupId} with video: ${config.video_file}`);
+      
+      const requestData = {
+        group_id: groupId,
+        video_file: config.video_file,
+        screen_count: config.screen_count || 2,
+        orientation: config.orientation || 'horizontal',
+        enable_looping: config.enable_looping !== undefined ? config.enable_looping : true,
+        loop_count: -1, // Infinite loop by default
+        srt_ip: config.srt_ip || '127.0.0.1',
+        srt_port: config.srt_port || 10080,
+        sei: '681d5c8f-80cd-4847-930a-99b9484b4a32+000000'
+      };
+
+      console.log('📡 Single video split request data:', requestData);
+
+      const response = await fetch(`${API_BASE_URL}/start_single_video_split`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestData),
+      });
+
+      const result = await handleApiResponse(response, 'POST /start_single_video_split');
+      console.log('✅ Single video split started successfully:', result);
+      
+      return result;
+    } catch (error) {
+      console.error('❌ Error starting single video split:', error);
+      throw error;
+    }
+  },
+
   async startMultiVideoGroup(groupId: string, videoFiles: Array<{screen: number, file: string}>, config?: any) {
     try {
       console.log(`🎬 Starting multi-video stream for group ${groupId} with ${videoFiles.length} videos`);
@@ -129,7 +168,7 @@ export const groupApi = {
         sei: config?.sei || '681d5c8f-80cd-4847-930a-99b9484b4a32+000000'
       };
 
-      console.log('📡 Request data:', requestData);
+      console.log('📡 Multi-video request data:', requestData);
 
       const response = await fetch(`${API_BASE_URL}/start_multi_video_srt`, {
         method: 'POST',
@@ -144,16 +183,17 @@ export const groupApi = {
       
       return result;
     } catch (error) {
-      console.error('❌ Error starting multi-video stream:', error);
+      console.error('❌ Error starting multi-video:', error);
       throw error;
     }
   },
 
+
   async stopGroup(groupId: string) {
     try {
-      console.log(`🛑 Stopping streams for group ${groupId}`);
+      console.log(`🛑 Stopping streaming for group ${groupId}`);
       
-      const response = await fetch(`${API_BASE_URL}/stop_group_srt`, {
+      const response = await fetch(`${API_BASE_URL}/stop_group`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -161,12 +201,12 @@ export const groupApi = {
         body: JSON.stringify({ group_id: groupId }),
       });
 
-      const result = await handleApiResponse(response, 'POST /stop_group_srt');
-      console.log('✅ Group streams stopped successfully:', result);
+      const result = await handleApiResponse(response, 'POST /stop_group');
+      console.log('✅ Group streaming stopped successfully:', result);
       
       return result;
     } catch (error) {
-      console.error('❌ Error stopping group streams:', error);
+      console.error('❌ Error stopping group:', error);
       throw error;
     }
   },
@@ -268,49 +308,41 @@ export const clientApi = {
   },
 
   async assignClientToScreen(clientId: string, groupId: string, screenNumber: number) {
-    console.log(`🎯 Assigning client ${clientId} to screen ${screenNumber} in group ${groupId}`);
-    
-    // Get SRT IP - use current hostname or fallback to localhost
-    const srtIp = window.location.hostname === 'localhost' ? '127.0.0.1' : window.location.hostname;
-    
-    const response = await fetch(`${API_BASE_URL}/assign_client_to_screen`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        client_id: clientId,
-        group_id: groupId,
-        screen_number: screenNumber,
-        srt_ip: srtIp
-      })
-    });
+    try {
+      const response = await fetch(`${API_BASE_URL}/assign_client_to_screen`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          client_id: clientId,
+          group_id: groupId,
+          screen_number: screenNumber
+        }),
+      });
 
-    const result = await handleApiResponse(response, 'POST /assign_client_to_screen');
-    console.log(`✅ Successfully assigned client to screen:`, result);
-    return result;
+      return await handleApiResponse(response, 'POST /assign_client_to_screen');
+    } catch (error) {
+      console.warn('⚠️ assignClientToScreen: Backend endpoint not implemented yet');
+      throw new Error('Screen assignment not implemented in backend yet');
+    }
   },
 
-  async autoAssignScreens(groupId: string, srtIp?: string) {
-    console.log(`🎯 Auto-assigning screens for group ${groupId}`);
-    
-    // Get SRT IP - use provided value or determine from current hostname
-    const finalSrtIp = srtIp || (window.location.hostname === 'localhost' ? '127.0.0.1' : window.location.hostname);
-    
-    const response = await fetch(`${API_BASE_URL}/auto_assign_screens`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        group_id: groupId,
-        srt_ip: finalSrtIp
-      })
-    });
+  async autoAssignScreens(groupId: string) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/auto_assign_screens`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ group_id: groupId }),
+      });
 
-    const result = await handleApiResponse(response, 'POST /auto_assign_screens');
-    console.log(`✅ Successfully auto-assigned screens:`, result);
-    return result;
+      return await handleApiResponse(response, 'POST /auto_assign_screens');
+    } catch (error) {
+      console.warn('⚠️ autoAssignScreens: Backend endpoint not implemented yet');
+      throw new Error('Auto screen assignment not implemented in backend yet');
+    }
   },
 
   async getScreenAssignments(groupId: string) {

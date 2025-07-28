@@ -1,21 +1,22 @@
-// frontend/src/types/index.ts - Updated for Hybrid Architecture
+// frontend/src/types/index.ts - Updated with complete unified Client interface
 
 // Group interface updated for Docker discovery
 export interface Group {
   id: string;
   name: string;
-  description: string;
+  description?: string;
   screen_count: number;
   orientation: 'horizontal' | 'vertical' | 'grid';
+  streaming_mode?: 'multi_video' | 'single_video_split'; // NEW: streaming mode
   
   // Docker-related fields (from Docker discovery)
-  docker_running: boolean;
-  docker_status: 'running' | 'stopped' | 'starting' | 'stopping';
-  container_id: string;
-  container_name: string;
+  docker_running?: boolean;
+  docker_status?: 'running' | 'stopped' | 'starting' | 'stopping';
+  container_id?: string;
+  container_name?: string;
   
   // Ports from Docker container
-  ports: {
+  ports?: {
     rtmp_port: number;
     http_port: number;
     api_port: number;
@@ -26,46 +27,58 @@ export interface Group {
   status: 'active' | 'inactive' | 'starting' | 'stopping';
   
   // Stream-related (populated separately from stream management)
-  available_streams: string[];
+  available_streams?: string[];
   current_video?: string;
   streaming_active?: boolean;  // Whether FFmpeg is running
+  ffmpeg_process_id?: number | null;
   
   // Client counts (calculated from client data)
-  active_clients: number;
-  total_clients: number;
+  active_clients?: number;
+  total_clients?: number;
+  srt_port?: number;
   
   // Timestamps
-  created_at: number;
-  created_at_formatted: string;
+  created_at?: number;
+  created_at_formatted?: string;
 }
 
-// Client interface updated for hybrid architecture
+// UNIFIED Client interface - combines all requirements
 export interface Client {
-  id: string;  // For frontend compatibility
-  client_id: string;
+  // Required fields
+  id: string;                    // For frontend compatibility
+  client_id: string;             // Primary identifier
   hostname: string;
-  ip_address: string;
+  ip_address: string;            // Changed from 'ip' to 'ip_address' to match backend
+  
+  // Optional display info
   display_name?: string;
+  platform?: string;
   
   // Connection status (from app state)
   is_active: boolean;
   status: 'active' | 'inactive';
   last_seen: number;
-  seconds_ago: number;
-  last_seen_formatted: string;
+  seconds_ago?: number;
+  last_seen_formatted?: string;
   
   // Group assignment (references Docker groups)
   group_id?: string | null;
   group_name?: string | null;
   group_docker_running?: boolean;
+  group_docker_status?: string;
   
   // Stream assignment
-  stream_assignment?: string | null;
+  stream_assignment?: string | null;  // Backend uses this
+  stream_id?: string | null;          // Frontend might expect this (alias)
   stream_url?: string | null;
+  screen_number?: number;             // NEW: for screen assignments
   
   // Timestamps
-  registered_at: number;
+  registered_at?: number;
   assigned_at?: number;
+  
+  // Legacy/compatibility fields
+  order?: number;                     // For ClientsTab ordering
 }
 
 // Video interface (unchanged)
@@ -129,8 +142,7 @@ export interface CreateGroupRequest {
   description?: string;
   screen_count: number;
   orientation: 'horizontal' | 'vertical' | 'grid';
-  grid_rows?: number;  // For grid layout
-  grid_cols?: number;  // For grid layout
+  streaming_mode: 'multi_video' | 'single_video_split'; // NEW: streaming mode
 }
 
 export interface CreateGroupResponse {
@@ -142,7 +154,9 @@ export interface CreateGroupResponse {
 // Stream management types
 export interface StartStreamRequest {
   group_id: string;
-  video_file?: string;
+  streaming_mode?: 'multi_video' | 'single_video_split';
+  video_file?: string; // For single video split mode
+  video_files?: Array<{screen: number, file: string}>; // For multi-video mode
   enable_looping?: boolean;
   video_width?: number;
   video_height?: number;
@@ -178,6 +192,12 @@ export interface RegisterClientRequest {
 export interface AssignClientRequest {
   client_id: string;
   group_id: string;
+}
+
+export interface AssignClientToScreenRequest {
+  client_id: string;
+  group_id: string;
+  screen_number: number;
 }
 
 export interface ClientStatusRequest {
@@ -250,8 +270,7 @@ export interface GroupFormState {
   description: string;
   screen_count: number;
   orientation: 'horizontal' | 'vertical' | 'grid';
-  grid_rows: number;
-  grid_cols: number;
+  streaming_mode: 'multi_video' | 'single_video_split'; // NEW: streaming mode
 }
 
 // Toast message types
