@@ -1,4 +1,4 @@
-// frontend/src/components/ui/GroupCard.tsx - Integrated Compact Design with Streaming Mode Features
+// frontend/src/components/ui/GroupCard.tsx - Fixed Complete Version
 
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,6 +23,7 @@ interface GroupCardProps {
   clients: Client[];
   videos: VideoType[];
   unassignedClients?: Client[];
+  isStreaming?: boolean;
   onDelete: (groupId: string, groupName: string) => void;
   onStreamingStatusChange?: (groupId: string, isStreaming: boolean) => void;
   onRefresh?: () => void;
@@ -95,23 +96,28 @@ const GroupCard: React.FC<GroupCardProps> = ({
   clients,
   videos,
   unassignedClients = [],
+  isStreaming = false,
   onDelete,
   onStreamingStatusChange,
   onRefresh,
   onAssignClient
-}) => {
-  // Debug log to see what data is received
-  console.log(`🔍 GroupCard - Group "${group.name || 'Unknown'}":`, {
-    id: group.id,
-    name: group.name,
-    streaming_mode: group.streaming_mode,
-    docker_running: group.docker_running,
-    docker_status: group.docker_status,
-    total_clients: clients.length,
-    active_clients: clients.filter(c => c.status === 'active').length,
-    ports: group.ports,
-    container_id: group.container_id,
-    rawGroup: group
+}) => { 
+  // DEFENSIVE: Handle both boolean and object props
+  let actualIsStreaming = false;
+  if (typeof isStreaming === 'boolean') {
+    actualIsStreaming = isStreaming;
+  } else if (typeof isStreaming === 'object' && isStreaming !== null) {
+    actualIsStreaming = (isStreaming as any).is_streaming || false;
+  }
+  
+  console.log(`🔍 GroupCard DEBUG - Group "${group.name}":`, {
+    groupId: group.id,
+    isStreamingProp: isStreaming,
+    propType: typeof isStreaming,
+    actualIsStreaming: actualIsStreaming,
+    groupDockerRunning: group.docker_running,
+    groupDockerStatus: group.docker_status,
+    groupStatus: group.status
   });
 
   // Safety check - if essential fields are missing, show error state
@@ -128,7 +134,9 @@ const GroupCard: React.FC<GroupCardProps> = ({
     );
   }
 
-  const [localIsStreaming, setLocalIsStreaming] = useState(group.status === 'active');
+  // Use the corrected streaming status
+  const localIsStreaming = actualIsStreaming;
+  
   const [operationInProgress, setOperationInProgress] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   
@@ -150,7 +158,7 @@ const GroupCard: React.FC<GroupCardProps> = ({
 
   const isStoppingStream = operationInProgress === 'stopping';
   const isAnyOperationInProgress = operationInProgress !== null || isStartingMultiVideo || isStartingSingleVideo;
-
+  
   // Load saved video assignments when group changes or component mounts
   useEffect(() => {
     const savedAssignments = loadVideoAssignments(group.id, group.screen_count);
@@ -160,36 +168,6 @@ const GroupCard: React.FC<GroupCardProps> = ({
     const hasAssignments = savedAssignments.some(assignment => assignment.file);
     setShowVideoConfig(hasAssignments);
   }, [group.id, group.screen_count]);
-
-  // Check streaming status periodically with better error handling
-  useEffect(() => {
-    const checkStatus = async () => {
-      try {
-        const status = await api.group.getStreamingStatus(group.id);
-        const newIsStreaming = status.is_streaming;
-        
-        if (newIsStreaming !== localIsStreaming) {
-          console.log(`🔄 Streaming status changed for ${group.name}: ${localIsStreaming} -> ${newIsStreaming}`);
-          setLocalIsStreaming(newIsStreaming);
-          
-          if (onStreamingStatusChange) {
-            onStreamingStatusChange(group.id, newIsStreaming);
-          }
-        }
-      } catch (error) {
-        // More graceful error handling
-        if (process.env.NODE_ENV === 'development') {
-          console.error(`Error checking streaming status for group ${group.name}:`, error);
-        }
-      }
-    };
-
-    // Check immediately and then every 10 seconds
-    checkStatus();
-    const interval = setInterval(checkStatus, 10000);
-    
-    return () => clearInterval(interval);
-  }, [group.id, localIsStreaming, onStreamingStatusChange, group.name]);
 
   // Determine if streaming can be started (Docker must be running)
   const canStartStreaming = group.docker_running && !isAnyOperationInProgress;
@@ -220,7 +198,6 @@ const GroupCard: React.FC<GroupCardProps> = ({
     }
   };
 
-  // Get streaming mode badge (compact display)
   const getStreamingModeBadge = () => {
     const mode = group.streaming_mode || 'multi_video';
     const isActive = localIsStreaming;
@@ -323,7 +300,6 @@ const GroupCard: React.FC<GroupCardProps> = ({
     saveVideoAssignments(group.id, emptyAssignments);
   };
 
-  // Handle multi-video mode - using existing startMultiVideoGroup API
   const handleStartMultiVideo = async () => {
     try {
       setIsStartingMultiVideo(true);
@@ -333,33 +309,25 @@ const GroupCard: React.FC<GroupCardProps> = ({
         throw new Error(`Please assign videos to all ${group.screen_count} screens`);
       }
       
-      console.log(`🎬 Starting multi-video for group ${group.name} with assignments:`, validAssignments);
+      console.log(`🎬 Starting multi-video for group ${group.name} (${group.id})`);
       
       const result = await api.group.startMultiVideoGroup(group.id, validAssignments, {
         screen_count: group.screen_count,
         orientation: group.orientation
       });
       
-      console.log('✅ Multi-video started successfully:', result);
+      console.log(`✅ Multi-video started successfully for group ${group.id}`);
       
-      setLocalIsStreaming(true);
+      // Only notify parent - NO local state changes
       if (onStreamingStatusChange) {
         onStreamingStatusChange(group.id, true);
-      }
-      
-      // Try auto-assign clients to screens if API exists
-      try {
-        await api.client.autoAssignScreens(group.id);
-        console.log('✅ Auto-assigned clients to screens');
-      } catch (assignError) {
-        console.warn('⚠️ Auto-assign not available yet:', assignError);
       }
       
       setShowMultiVideoDialog(false);
       if (onRefresh) onRefresh();
       
     } catch (error) {
-      console.error('❌ Error starting multi-video:', error);
+      console.error(`❌ Error starting multi-video for group ${group.id}:`, error);
       alert(`Failed to start multi-video: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsStartingMultiVideo(false);
@@ -368,6 +336,8 @@ const GroupCard: React.FC<GroupCardProps> = ({
 
   // Handle single video split mode
   const handleStartSingleVideoSplit = async () => {
+    console.log(`🔥 handleStartSingleVideoSplit called for group ${group.id} with video: ${selectedVideoFile}`);
+    
     try {
       setIsStartingSingleVideo(true);
       
@@ -375,7 +345,7 @@ const GroupCard: React.FC<GroupCardProps> = ({
         throw new Error('Please select a video file');
       }
       
-      console.log(`🎬 Starting single video split for group ${group.name} with video: ${selectedVideoFile}`);
+      console.log(`🎬 Starting single video split for group ${group.name} (${group.id})`);
       
       const result = await api.group.startSingleVideoSplit(group.id, {
         video_file: selectedVideoFile,
@@ -384,26 +354,18 @@ const GroupCard: React.FC<GroupCardProps> = ({
         enable_looping: true
       });
       
-      console.log('✅ Single video split started successfully:', result);
+      console.log(`✅ Single video split started successfully for group ${group.id}:`, result);
       
-      setLocalIsStreaming(true);
+      // Only notify parent - NO local state changes
       if (onStreamingStatusChange) {
         onStreamingStatusChange(group.id, true);
-      }
-      
-      // Try auto-assign clients to screens if API exists
-      try {
-        await api.client.autoAssignScreens(group.id);
-        console.log('✅ Auto-assigned clients to screens');
-      } catch (assignError) {
-        console.warn('⚠️ Auto-assign not available yet:', assignError);
       }
       
       setShowSingleVideoDialog(false);
       if (onRefresh) onRefresh();
       
     } catch (error) {
-      console.error('❌ Error starting single video split:', error);
+      console.error(`❌ Error starting single video split for group ${group.id}:`, error);
       alert(`Failed to start single video split: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsStartingSingleVideo(false);
@@ -413,12 +375,12 @@ const GroupCard: React.FC<GroupCardProps> = ({
   const handleStopStreaming = async () => {
     try {
       setOperationInProgress('stopping');
-      console.log(`🛑 Stopping stream for group ${group.name}`);
+      console.log(`🛑 Stopping stream for group ${group.name} (${group.id})`);
       
       await api.group.stopGroup(group.id);
-      console.log('✅ Stream stopped successfully');
+      console.log(`✅ Stream stopped successfully for group ${group.id}`);
       
-      setLocalIsStreaming(false);
+      // Only notify parent - NO local state changes
       if (onStreamingStatusChange) {
         onStreamingStatusChange(group.id, false);
       }
@@ -426,7 +388,7 @@ const GroupCard: React.FC<GroupCardProps> = ({
       if (onRefresh) onRefresh();
       
     } catch (error) {
-      console.error('❌ Error stopping stream:', error);
+      console.error(`❌ Error stopping stream for group ${group.id}:`, error);
       alert(`Failed to stop stream: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setOperationInProgress(null);
@@ -506,11 +468,18 @@ const GroupCard: React.FC<GroupCardProps> = ({
                 ) : (
                   <Button
                     size="sm"
-                    onClick={() => setShowSingleVideoDialog(true)}
+                    onClick={() => {
+                      // If video is selected, start directly; otherwise show dialog
+                      if (selectedVideoFile) {
+                        handleStartSingleVideoSplit();
+                      } else {
+                        setShowSingleVideoDialog(true);
+                      }
+                    }}
                     disabled={!canStartStreaming}
                   >
                     <Play className="h-3 w-3 mr-1" />
-                    Start
+                    {selectedVideoFile ? 'Start' : 'Select Video'}
                   </Button>
                 )}
               </>
@@ -675,17 +644,32 @@ const GroupCard: React.FC<GroupCardProps> = ({
                                 )}
                               </div>
                             ) : (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setShowStreamingModeDropdown(false);
-                                  setShowSingleVideoDialog(true);
-                                }}
-                                className="w-full text-xs"
-                              >
-                                Select Video & Start Streaming
-                              </Button>
+                              <div className="space-y-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setShowStreamingModeDropdown(false);
+                                    setShowVideoConfig(true);
+                                  }}
+                                  className="w-full text-xs"
+                                >
+                                  Select Video File
+                                </Button>
+                                
+                                {selectedVideoFile && (
+                                  <Button
+                                    size="sm"
+                                    onClick={() => {
+                                      setShowStreamingModeDropdown(false);
+                                      handleStartSingleVideoSplit();
+                                    }}
+                                    className="w-full text-xs"
+                                  >
+                                    Start Single Video Split
+                                  </Button>
+                                )}
+                              </div>
                             )}
                           </div>
                         )}
@@ -802,7 +786,101 @@ const GroupCard: React.FC<GroupCardProps> = ({
               </div>
             )}
 
-            {/* Assigned Clients (Compact) */}
+            {/* Single Video Split Mode Info */}
+            {group.streaming_mode === 'single_video_split' && (
+              <div className="border rounded-lg overflow-hidden">
+                <div 
+                  className="bg-gray-50 px-3 py-2 flex items-center justify-between cursor-pointer hover:bg-gray-100 transition-colors"
+                  onClick={() => setShowVideoConfig(!showVideoConfig)}
+                >
+                  <div className="flex items-center gap-2">
+                    <Copy className="w-4 h-4 text-gray-600" />
+                    <h4 className="text-sm font-medium text-gray-700">Video Selection</h4>
+                    {selectedVideoFile && (
+                      <Badge variant="outline" className="text-green-600 border-green-300 text-xs">
+                        Selected
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {selectedVideoFile && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedVideoFile('');
+                        }}
+                        className="h-6 w-6 p-0"
+                        title="Clear selection"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                      </Button>
+                    )}
+                    {showVideoConfig ? (
+                      <ChevronUp className="w-4 h-4 text-gray-500" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4 text-gray-500" />
+                    )}
+                  </div>
+                </div>
+                
+                {showVideoConfig && (
+                  <div className="p-3 border-t bg-white space-y-3">
+                    <div className="text-xs text-gray-600">
+                      Select one video file that will be automatically split into {group.screen_count} equal sections 
+                      and distributed {group.orientation === 'horizontal' ? 'side-by-side' : 'top-to-bottom'} across all screens.
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Video File:</Label>
+                      <Select
+                        value={selectedVideoFile || ""}
+                        onValueChange={setSelectedVideoFile}
+                      >
+                        <SelectTrigger className="h-8 text-sm">
+                          <SelectValue placeholder="Select video file to split" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__CLEAR__">
+                            <span className="text-gray-400">Clear selection</span>
+                          </SelectItem>
+                          {videos.map((video) => (
+                            <SelectItem key={video.name} value={video.name}>
+                              {video.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {selectedVideoFile && (
+                      <div className="bg-blue-50 p-2 rounded border-l-4 border-blue-400">
+                        <p className="text-xs text-blue-800">
+                          <strong>{selectedVideoFile}</strong> will be automatically cropped into {group.screen_count} equal {group.orientation} sections. 
+                          Each client will receive their designated section.
+                        </p>
+                      </div>
+                    )}
+                    
+                    {selectedVideoFile && (
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setSelectedVideoFile('')}
+                          className="text-xs"
+                        >
+                          Clear Selection
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Assigned Clients */}
             {clients.length > 0 && (
               <div className="space-y-2">
                 <label className="text-sm font-medium text-gray-700">
@@ -818,14 +896,72 @@ const GroupCard: React.FC<GroupCardProps> = ({
                         </span>
                         <span className="text-gray-500">({client.ip_address})</span>
                       </div>
-                      <Badge variant={client.status === 'active' ? "default" : "secondary"} className="text-xs py-0 px-1">
-                        {client.status === 'active' ? "Online" : "Offline"}
-                      </Badge>
+                      
+                      <div className="flex items-center gap-1">
+                        <Badge variant={client.status === 'active' ? "default" : "secondary"} className="text-xs py-0 px-1">
+                          {client.status === 'active' ? "Online" : "Offline"}
+                        </Badge>
+                        
+                        <Select
+                          onValueChange={(groupId) => {
+                            if (groupId === "unassign") {
+                              // Handle unassign
+                              if (onAssignClient) onAssignClient(client.client_id, "");
+                            } else {
+                              // Handle assign to new group
+                              if (onAssignClient) onAssignClient(client.client_id, groupId);
+                            }
+                          }}
+                        >
+                          <SelectTrigger className="h-6 w-6 p-0">
+                            <MoreVertical className="h-3 w-3" />
+                          </SelectTrigger>
+                          <SelectContent className="w-48">
+                            <SelectItem value="unassign" className="text-xs text-red-600">
+                              <div className="flex items-center">
+                                <Power className="h-3 w-3 mr-2" />
+                                Unassign
+                              </div>
+                            </SelectItem>
+                            {/* Add other group options here if needed */}
+                            <SelectItem value={group.id} className="text-xs">
+                              <div className="flex items-center">
+                                <Users className="h-3 w-3 mr-2" />
+                                Keep in this group
+                              </div>
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
                   ))}
                 </div>
               </div>
             )}
+            
+            {/* Assign Client Button */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-700">
+                Assign New Client
+              </label>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="w-full text-xs"
+                onClick={() => {
+                  if (unassignedClients.length > 0 && onAssignClient) {
+                    // Assign the first available client
+                    onAssignClient(unassignedClients[0].client_id, group.id);
+                  }
+                }}
+                disabled={unassignedClients.length === 0}
+              >
+                <Users className="h-3 w-3 mr-1" />
+                {unassignedClients.length > 0 
+                  ? `Assign Client (${unassignedClients.length} available)` 
+                  : 'No clients available'}
+              </Button>
+            </div>
 
             {/* Quick Assign Unassigned Clients */}
             {unassignedClients.length > 0 && onAssignClient && (
@@ -873,18 +1009,22 @@ const GroupCard: React.FC<GroupCardProps> = ({
               </div>
             )}
 
-            {/* Single Video Split Mode Info */}
-            {group.streaming_mode === 'single_video_split' && !localIsStreaming && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                <div className="flex items-center gap-2 mb-2">
-                  <Copy className="w-4 h-4 text-blue-600" />
-                  <h4 className="text-sm font-medium text-blue-800">Single Video Split Mode</h4>
+            {/* Stream URLs (when active) */}
+            {localIsStreaming && group.available_streams && group.available_streams.length > 0 && (
+              <div className="p-2 bg-green-50 rounded text-xs">
+                <div className="font-medium text-green-800 mb-1">Active Streams</div>
+                <div className="space-y-1 max-h-16 overflow-y-auto">
+                  {group.available_streams.slice(0, 1).map((streamPath, index) => (
+                    <div key={index} className="font-mono bg-white p-1 rounded border text-xs break-all">
+                      srt://127.0.0.1:{group.ports?.srt_port || 10080}?streamid=#!::r={streamPath},m=request
+                    </div>
+                  ))}
+                  {group.available_streams.length > 1 && (
+                    <div className="text-green-700">
+                      +{group.available_streams.length - 1} more streams available
+                    </div>
+                  )}
                 </div>
-                <p className="text-xs text-blue-700">
-                  One video will be automatically divided into {group.screen_count} equal sections 
-                  and distributed {group.orientation === 'horizontal' ? 'side-by-side' : 'top-to-bottom'} 
-                  across all screens. Click "Start" to select and begin streaming.
-                </p>
               </div>
             )}
 
@@ -908,29 +1048,10 @@ const GroupCard: React.FC<GroupCardProps> = ({
                   onClick={() => setIsExpanded(false)}
                 >
                   <Settings className="h-3 w-3 mr-1" />
-                  Stream URLs
+                  Stream Info
                 </Button>
               )}
             </div>
-
-            {/* Stream URLs (when active) */}
-            {localIsStreaming && group.available_streams && group.available_streams.length > 0 && (
-              <div className="p-2 bg-green-50 rounded text-xs">
-                <div className="font-medium text-green-800 mb-1">Active Streams</div>
-                <div className="space-y-1 max-h-16 overflow-y-auto">
-                  {group.available_streams.slice(0, 1).map((streamPath, index) => (
-                    <div key={index} className="font-mono bg-white p-1 rounded border text-xs break-all">
-                      srt://127.0.0.1:{group.ports?.srt_port || 10080}?streamid=#!::r={streamPath},m=request
-                    </div>
-                  ))}
-                  {group.available_streams.length > 1 && (
-                    <div className="text-green-700">
-                      +{group.available_streams.length - 1} more streams available
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
           </CardContent>
         </CollapsibleContent>
       </Collapsible>
@@ -995,12 +1116,12 @@ const GroupCard: React.FC<GroupCardProps> = ({
         </Dialog>
       )}
 
-      {/* Single Video Split Dialog */}
+      {/* Simplified Single Video Split Dialog - only for video selection */}
       {showSingleVideoDialog && group.streaming_mode === 'single_video_split' && (
         <Dialog open={showSingleVideoDialog} onOpenChange={setShowSingleVideoDialog}>
           <DialogContent className="max-w-lg">
             <DialogHeader>
-              <DialogTitle>Configure Single Video Split</DialogTitle>
+              <DialogTitle>Select Video for Split Mode</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
               <p className="text-sm text-gray-600">
@@ -1015,10 +1136,13 @@ const GroupCard: React.FC<GroupCardProps> = ({
                   value={selectedVideoFile || ""}
                   onValueChange={setSelectedVideoFile}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="h-8 text-sm">
                     <SelectValue placeholder="Select video file to split" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="__CLEAR__">
+                      <span className="text-gray-400">Clear selection</span>
+                    </SelectItem>
                     {videos.map((video) => (
                       <SelectItem key={video.name} value={video.name}>
                         {video.name}
@@ -1028,24 +1152,33 @@ const GroupCard: React.FC<GroupCardProps> = ({
                 </Select>
               </div>
 
-              <div className="bg-blue-50 p-3 rounded border-l-4 border-blue-400">
-                <p className="text-sm text-blue-800">
-                  The video will be automatically cropped into {group.screen_count} equal {group.orientation} sections. 
-                  Each client will receive their designated section.
-                </p>
-              </div>
+              {selectedVideoFile && (
+                <div className="bg-blue-50 p-2 rounded border-l-4 border-blue-400">
+                  <p className="text-xs text-blue-800">
+                    <strong>{selectedVideoFile}</strong> will be automatically cropped into {group.screen_count} equal {group.orientation} sections. 
+                    Each client will receive their designated section.
+                  </p>
+                </div>
+              )}
               
               <div className="flex justify-end gap-2">
-                <Button
-                  onClick={handleStartSingleVideoSplit}
-                  disabled={isStartingSingleVideo || !selectedVideoFile}
-                >
-                  {isStartingSingleVideo ? 'Starting...' : 'Start Single Video Split'}
-                </Button>
+                {selectedVideoFile && (
+                  <Button
+                    onClick={() => {
+                      setShowSingleVideoDialog(false);
+                      handleStartSingleVideoSplit();
+                    }}
+                    disabled={isStartingSingleVideo}
+                    size="sm"
+                  >
+                    {isStartingSingleVideo ? 'Starting...' : 'Start Split Video'}
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   onClick={() => setShowSingleVideoDialog(false)}
                   disabled={isStartingSingleVideo}
+                  size="sm"
                 >
                   Cancel
                 </Button>

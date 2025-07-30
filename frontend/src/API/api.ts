@@ -132,7 +132,7 @@ export const groupApi = {
 
       console.log('📡 Single video split request data:', requestData);
 
-      const response = await fetch(`${API_BASE_URL}/start_single_video_split`, {
+      const response = await fetch(`${API_BASE_URL}/start_split_screen_srt`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -140,7 +140,7 @@ export const groupApi = {
         body: JSON.stringify(requestData),
       });
 
-      const result = await handleApiResponse(response, 'POST /start_single_video_split');
+      const result = await handleApiResponse(response, 'POST /start_split_screen_srt');
       console.log('✅ Single video split started successfully:', result);
       
       return result;
@@ -152,23 +152,23 @@ export const groupApi = {
 
   async startMultiVideoGroup(groupId: string, videoFiles: Array<{screen: number, file: string}>, config?: any) {
     try {
-      console.log(`🎬 Starting multi-video stream for group ${groupId} with ${videoFiles.length} videos`);
+      console.log(`🎬 Starting single-stream multi-video for group ${groupId} with ${videoFiles.length} videos`);
       
       const requestData = {
         group_id: groupId,
         video_files: videoFiles,
         screen_count: config?.screen_count || videoFiles.length,
         orientation: config?.orientation || 'horizontal',
-        output_width: config?.output_width || 3840,
+        output_width: config?.output_width || 1920,  // ✅ FIXED: Individual section size, not canvas
         output_height: config?.output_height || 1080,
         grid_rows: config?.grid_rows || 2,
         grid_cols: config?.grid_cols || 2,
         srt_ip: config?.srt_ip || '127.0.0.1',
         srt_port: config?.srt_port || 10080,
-        sei: config?.sei || '681d5c8f-80cd-4847-930a-99b9484b4a32+000000'
+        sei: config?.sei || '681d5c8f-80cd-4847-930a-99b9484b4a32'  // ✅ FIXED: Removed +000000
       };
 
-      console.log('📡 Multi-video request data:', requestData);
+      console.log('📡 Single-stream multi-video request data:', requestData);
 
       const response = await fetch(`${API_BASE_URL}/start_multi_video_srt`, {
         method: 'POST',
@@ -179,11 +179,23 @@ export const groupApi = {
       });
 
       const result = await handleApiResponse(response, 'POST /start_multi_video_srt');
-      console.log('✅ Multi-video stream started successfully:', result);
+      console.log('✅ Single-stream multi-video started successfully:', result);
+      
+      // ✅ NEW: Process the response to extract useful information
+      if (result.stream_info && result.stream_info.crop_information) {
+        console.log('📐 Crop information for clients:', result.stream_info.crop_information);
+        console.log('📺 Stream URL:', result.stream_info.stream_url);
+        
+        // Log example client commands for debugging
+        Object.keys(result.stream_info.crop_information).forEach(screenId => {
+          const crop = result.stream_info.crop_information[screenId];
+          console.log(`🖥️ Screen ${screenId} crop: ${crop.width}x${crop.height}+${crop.x}+${crop.y}`);
+        });
+      }
       
       return result;
     } catch (error) {
-      console.error('❌ Error starting multi-video:', error);
+      console.error('❌ Error starting single-stream multi-video:', error);
       throw error;
     }
   },
@@ -193,7 +205,7 @@ export const groupApi = {
     try {
       console.log(`🛑 Stopping streaming for group ${groupId}`);
       
-      const response = await fetch(`${API_BASE_URL}/stop_group`, {
+      const response = await fetch(`${API_BASE_URL}/stop_group_stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -201,7 +213,7 @@ export const groupApi = {
         body: JSON.stringify({ group_id: groupId }),
       });
 
-      const result = await handleApiResponse(response, 'POST /stop_group');
+      const result = await handleApiResponse(response, 'POST /stop_group_stream');
       console.log('✅ Group streaming stopped successfully:', result);
       
       return result;
@@ -244,7 +256,6 @@ export const groupApi = {
   }
 };
 
-// FIXED Client API - matching actual backend responses
 export const clientApi = {
   async getClients() {
     const response = await fetch(`${API_BASE_URL}/get_clients`);
