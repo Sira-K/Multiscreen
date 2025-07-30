@@ -1,4 +1,4 @@
-// frontend/src/components/StreamsTab.tsx - Fixed with renamed imports
+// frontend/src/components/StreamsTab.tsx - Fixed Complete Version
 
 import { useState, useEffect } from "react";
 import { Card, CardContent} from "@/components/ui/card";
@@ -36,21 +36,40 @@ const StreamsTab = () => {
   // Load initial data
   const loadInitialData = async () => {
     try {
+      console.log(`🔄 LOADING INITIAL DATA...`);
+      
       const [groupsData, videosData, clientsData] = await Promise.all([
         groupApi.getGroups(),
         videoApi.getVideos(),
         clientApi.getClients()
       ]);
 
+      console.log(`📊 LOADED GROUPS:`, groupsData.groups.map(g => ({
+        id: g.id,
+        name: g.name,
+        docker_running: g.docker_running,
+        docker_status: g.docker_status,
+        status: g.status
+      })));
+
       setGroups(groupsData.groups);
       setVideos(videosData.videos);
       setClients(clientsData.clients);
 
-      // Load streaming statuses for all groups
+      // Initialize all groups with false status first
+      const initialStatuses: { [groupId: string]: boolean } = {};
+      groupsData.groups.forEach(group => {
+        initialStatuses[group.id] = false;
+      });
+      
+      console.log(`📊 INITIAL STREAMING STATUS:`, initialStatuses);
+      setStreamingStatus(initialStatuses);
+
+      // Load actual streaming statuses
       await loadStreamingStatuses(groupsData.groups);
 
     } catch (error: any) {
-      console.error('Error loading data:', error);
+      console.error('❌ Error loading data:', error);
       toast({
         title: "Loading Failed",
         description: error?.message || "Failed to load application data",
@@ -64,25 +83,73 @@ const StreamsTab = () => {
   // Load streaming statuses for all groups
   const loadStreamingStatuses = async (groupsList: Group[]) => {
     try {
-      // Check if getAllStreamingStatuses API exists, otherwise check individually
+      console.log(`🔄 LOADING STREAMING STATUSES for ${groupsList.length} groups...`);
+      
+      // Try to get all statuses at once
       try {
         const statusData = await groupApi.getAllStreamingStatuses();
-        setStreamingStatus(statusData.streaming_statuses || {});
-      } catch {
+        console.log(`📊 API getAllStreamingStatuses response:`, statusData);
+        
+        const statuses: { [groupId: string]: boolean } = {};
+        const rawStatuses = statusData.streaming_statuses || {};
+        
+        // Process each group's status
+        groupsList.forEach(group => {
+          const rawStatus = rawStatuses[group.id];
+          
+          // IMPORTANT: Extract boolean from object if needed
+          let isStreaming = false;
+          if (typeof rawStatus === 'boolean') {
+            isStreaming = rawStatus;
+          } else if (typeof rawStatus === 'object' && rawStatus !== null) {
+            isStreaming = (rawStatus as any).is_streaming || false; // Type assertion for API objects
+          }
+          
+          statuses[group.id] = isStreaming;
+          
+          console.log(`📊 Group ${group.name} status processing:`, {
+            groupId: group.id,
+            rawStatus: rawStatus,
+            extractedBoolean: isStreaming
+          });
+        });
+        
+        console.log(`📊 FINAL BOOLEAN STREAMING STATUSES:`, statuses);
+        setStreamingStatus(statuses);
+        
+      } catch (getAllError) {
+        console.log(`⚠️ getAllStreamingStatuses failed, checking individually:`, getAllError);
+        
         // Fallback: check each group individually
         const statuses: { [groupId: string]: boolean } = {};
+        
         for (const group of groupsList) {
           try {
             const status = await groupApi.getStreamingStatus(group.id);
-            statuses[group.id] = status.is_streaming || false;
-          } catch {
+            console.log(`📊 Individual status for ${group.name}:`, status);
+            
+            // IMPORTANT: Extract boolean from response
+            let isStreaming = false;
+            if (typeof status === 'boolean') {
+              isStreaming = status;
+            } else if (typeof status === 'object' && status !== null) {
+              isStreaming = (status as any).is_streaming || false; // Type assertion for API objects
+            }
+            
+            statuses[group.id] = isStreaming;
+            
+          } catch (error) {
+            console.log(`⚠️ Failed to get status for ${group.name}, defaulting to false`);
             statuses[group.id] = false;
           }
         }
+        
+        console.log(`📊 FALLBACK BOOLEAN STREAMING STATUSES:`, statuses);
         setStreamingStatus(statuses);
       }
+      
     } catch (error) {
-      console.error('Error loading streaming statuses:', error);
+      console.error('❌ Error loading streaming statuses:', error);
       // Set all to false as fallback
       const fallbackStatuses: { [groupId: string]: boolean } = {};
       groupsList.forEach(group => {
@@ -94,16 +161,41 @@ const StreamsTab = () => {
 
   // Handle streaming status change (called by GroupCard)
   const handleStreamingStatusChange = (groupId: string, isStreaming: boolean) => {
-    setStreamingStatus(prev => ({
-      ...prev,
-      [groupId]: isStreaming
-    }));
+    console.log(`📡 STREAMING STATUS CHANGE:`, {
+      groupId,
+      isStreaming,
+      type: typeof isStreaming,
+      oldStatus: streamingStatus[groupId]
+    });
+    
+    // Ensure we always store a boolean
+    const booleanStatus = Boolean(isStreaming);
+    
+    setStreamingStatus(prev => {
+      const newStatus = {
+        ...prev,
+        [groupId]: booleanStatus  // Force boolean
+      };
+      
+      console.log(`📊 UPDATED STREAMING STATUS:`, newStatus);
+      return newStatus;
+    });
   };
 
   // Initial load
   useEffect(() => {
     loadInitialData();
   }, []);
+
+  // Debug effect to monitor streaming status changes
+  useEffect(() => {
+    console.log('🔍 Current streaming status:', streamingStatus);
+    console.log('🔍 Groups and their status:', groups.map(g => ({
+      id: g.id,
+      name: g.name,
+      status: streamingStatus[g.id]
+    })));
+  }, [streamingStatus, groups]);
 
   // Refresh data
   const refreshData = async () => {
@@ -117,6 +209,8 @@ const StreamsTab = () => {
     try {
       setOperationInProgress('create');
 
+      console.log(`🔄 CREATING GROUP:`, newGroupForm);
+
       if (!newGroupForm.name.trim()) {
         toast({
           title: "Validation Error",
@@ -126,13 +220,28 @@ const StreamsTab = () => {
         return;
       }
 
-      await groupApi.createGroup({
+      const result = await groupApi.createGroup({
         name: newGroupForm.name.trim(),
         description: newGroupForm.description.trim() || undefined,
         screen_count: newGroupForm.screen_count,
         orientation: newGroupForm.orientation,
         streaming_mode: newGroupForm.streaming_mode
       });
+
+      console.log(`✅ GROUP CREATED:`, result);
+
+      // Set new group streaming status to false
+      if (result.group && result.group.id) {
+        console.log(`📊 Setting streaming status to FALSE for new group: ${result.group.id}`);
+        setStreamingStatus(prev => {
+          const newStatus = {
+            ...prev,
+            [result.group.id]: false
+          };
+          console.log(`📊 NEW STREAMING STATUS AFTER CREATE:`, newStatus);
+          return newStatus;
+        });
+      }
 
       toast({
         title: "Group Created",
@@ -153,7 +262,7 @@ const StreamsTab = () => {
       await loadInitialData();
 
     } catch (error: any) {
-      console.error('Error creating group:', error);
+      console.error('❌ Error creating group:', error);
       toast({
         title: "Creation Failed",
         description: error?.message || "Failed to create group",
@@ -355,12 +464,12 @@ const StreamsTab = () => {
       </div>
 
       {/* Groups Section */}
-      <div className="space-y-4" >
+      <div className="space-y-4">
         <h3 className="text-lg font-semibold text-gray-800">Active Groups</h3>
         
         {groups.length === 0 ? (
           <Card className="p-0">
-            <CardContent className="text-center py-12 px-6 " style={{paddingTop: '48px'}}>
+            <CardContent className="text-center py-12 px-6" style={{paddingTop: '48px'}}>
               <Monitor className="h-12 w-12 text-gray-400 mx-auto mb-4"/>
               <h3 className="text-lg font-medium text-gray-800 mb-2">No Groups Found</h3>
               <p className="text-gray-600 mb-6">
@@ -375,17 +484,39 @@ const StreamsTab = () => {
           </Card>
         ) : (
           <div className="grid gap-6">
-            {groups.map((group) => (
-              <GroupCard
-                key={group.id}
-                group={group}
-                videos={videos}
-                clients={clients.filter(c => c.group_id === group.id)}
-                onDelete={deleteGroup}
-                onStreamingStatusChange={handleStreamingStatusChange}
-                onRefresh={refreshData}
-              />
-            ))}
+            {groups.map((group) => {
+              const rawGroupStreamingStatus = streamingStatus[group.id];
+              
+              // IMPORTANT: Ensure we always pass a boolean
+              let isStreamingBoolean = false;
+              if (typeof rawGroupStreamingStatus === 'boolean') {
+                isStreamingBoolean = rawGroupStreamingStatus;
+              } else if (typeof rawGroupStreamingStatus === 'object' && rawGroupStreamingStatus !== null) {
+                // Type assertion to handle API response objects
+                isStreamingBoolean = (rawGroupStreamingStatus as any).is_streaming || false;
+              }
+              
+              console.log(`🔍 RENDERING GROUP ${group.name}:`, {
+                groupId: group.id,
+                rawFromState: rawGroupStreamingStatus,
+                rawType: typeof rawGroupStreamingStatus,
+                convertedToBoolean: isStreamingBoolean,
+                willPassToProp: isStreamingBoolean
+              });
+              
+              return (
+                <GroupCard
+                  key={group.id}
+                  group={group}
+                  videos={videos}
+                  clients={clients.filter(c => c.group_id === group.id)}
+                  isStreaming={isStreamingBoolean}  // Always pass boolean
+                  onDelete={deleteGroup}
+                  onStreamingStatusChange={handleStreamingStatusChange}
+                  onRefresh={refreshData}
+                />
+              );
+            })}
           </div>
         )}
       </div>
