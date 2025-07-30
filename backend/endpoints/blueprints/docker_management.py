@@ -168,13 +168,14 @@ def create_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
             "com.multiscreen.group.description": group_data.get("description", ""),
             "com.multiscreen.group.screen_count": str(group_data.get("screen_count", 2)),
             "com.multiscreen.group.orientation": group_data.get("orientation", "horizontal"),
+            "com.multiscreen.group.streaming_mode": group_data.get("streaming_mode", "multi_video"),
             "com.multiscreen.group.created_at": str(group_data.get("created_at", time.time())),
             "com.multiscreen.ports.rtmp": str(ports["rtmp_port"]),
             "com.multiscreen.ports.http": str(ports["http_port"]),
             "com.multiscreen.ports.api": str(ports["api_port"]),
             "com.multiscreen.ports.srt": str(ports["srt_port"])
         }
-        
+            
         # Build Docker command - following the exact structure from README
         docker_cmd = [
             "docker", "run",
@@ -455,7 +456,9 @@ def discover_groups() -> Dict[str, Any]:
                 description = labels.get('com.multiscreen.group.description', '')
                 screen_count = int(labels.get('com.multiscreen.group.screen_count', 2))
                 orientation = labels.get('com.multiscreen.group.orientation', 'horizontal')
+                streaming_mode = labels.get('com.multiscreen.group.streaming_mode', 'multi_video')
                 created_timestamp = float(labels.get('com.multiscreen.group.created_at', time.time()))
+                
                 
                 # Extract port information
                 ports = {
@@ -476,6 +479,7 @@ def discover_groups() -> Dict[str, Any]:
                     "description": description,
                     "screen_count": screen_count,
                     "orientation": orientation,
+                    "streaming_mode": streaming_mode,
                     "created_at": created_timestamp,
                     "container_id": container_id,
                     "container_name": container_name,
@@ -491,7 +495,7 @@ def discover_groups() -> Dict[str, Any]:
                 }
                 
                 groups.append(group)
-                logger.debug(f"✅ Added group: {group_name} (Docker: {docker_status})")
+                logger.debug(f"✅ Added group: {group_name} (Docker: {docker_status}, Mode: {streaming_mode})")  # ✅ UPDATE THIS LINE
         
         # Sort groups by creation time (newest first)
         groups.sort(key=lambda g: g.get('created_at', 0), reverse=True)
@@ -516,7 +520,6 @@ def discover_groups() -> Dict[str, Any]:
             "traceback": traceback.format_exc()
         }
 
-# Health check endpoint for Docker management
 @docker_bp.route("/docker_status", methods=["GET"])
 def docker_status():
     """Get Docker system status and multi-screen containers"""

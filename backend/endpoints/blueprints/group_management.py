@@ -64,6 +64,8 @@ def create_group():
         description = data.get("description", "").strip()
         screen_count = data.get("screen_count", 2)
         orientation = data.get("orientation", "horizontal")
+        streaming_mode = data.get("streaming_mode", "multi_video")
+
         
         # Validate screen_count
         if not isinstance(screen_count, int) or screen_count < 1 or screen_count > 16:
@@ -74,12 +76,17 @@ def create_group():
         if orientation not in valid_orientations:
             return jsonify({"error": f"orientation must be one of: {valid_orientations}"}), 400
         
+        valid_streaming_modes = ["multi_video", "single_video_split"]
+        if streaming_mode not in valid_streaming_modes:
+            return jsonify({"error": f"streaming_mode must be one of: {valid_streaming_modes}"}), 400
+        
         # Prepare group data for Docker creation
         group_data = {
             "name": group_name,
             "description": description,
             "screen_count": screen_count,
             "orientation": orientation,
+            "streaming_mode": streaming_mode,
             "created_at": time.time()
         }
         
