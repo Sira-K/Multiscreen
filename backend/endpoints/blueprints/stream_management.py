@@ -7,6 +7,8 @@ import psutil
 import logging
 import time
 import uuid
+import socket
+import random
 from typing import Dict, List, Any, Optional
 
 # Create blueprint
@@ -62,7 +64,7 @@ class PersistentIDManager:
 # Global persistent ID manager
 id_manager = PersistentIDManager()
 
-def monitor_ffmpeg(process, stream_type="FFmpeg", startup_timeout=20, startup_max_lines=60):
+def monitor_ffmpeg(process, stream_type="FFmpeg", startup_timeout=5, startup_max_lines=20):
     """Monitor FFmpeg process startup and continuous operation"""
     streaming_detected = False
     startup_success = True
@@ -118,7 +120,7 @@ def monitor_ffmpeg(process, stream_type="FFmpeg", startup_timeout=20, startup_ma
                         logger.error(f"{stream_type} error: {line_stripped}")
                         startup_success = False
                         
-            time.sleep(0.1)
+            time.sleep(2)
         
         startup_complete = True
 
@@ -222,29 +224,54 @@ def start_multi_video_srt():
         group_id = data.get("group_id")
         video_files_config = data.get("video_files", [])
         
-        logger.info(f"Starting multi-video SRT for group {group_id}")
+        logger.info("="*60)
+        logger.info("🚀 STARTING MULTI-VIDEO SRT STREAM")
+        logger.info(f"📋 Group ID: {group_id}")
+        logger.info(f"📹 Video files count: {len(video_files_config)}")
+        logger.info("="*60)
         
         if not group_id or not video_files_config:
+            logger.error("❌ Missing required parameters: group_id or video_files")
             return jsonify({"error": "group_id and video_files are required"}), 400
         
+        # Log video files configuration
+        logger.info("📁 Video files configuration:")
+        for idx, video_config in enumerate(video_files_config):
+            logger.info(f"   Screen {video_config.get('screen', idx)}: {video_config.get('file', 'Unknown')}")
+        
         # Discover group
+        logger.info(f"🔍 Discovering group '{group_id}' from Docker...")
         group = discover_group_from_docker(group_id)
         if not group:
+            logger.error(f"❌ Group '{group_id}' not found in Docker")
             return jsonify({"error": f"Group '{group_id}' not found"}), 404
 
         group_name = group.get("name", group_id)
+        logger.info(f"✅ Found group: '{group_name}'")
         
-        if not group.get("docker_running", False):
+        # Check Docker status
+        docker_running = group.get("docker_running", False)
+        logger.info(f"🐳 Docker container status: {'Running' if docker_running else 'Stopped'}")
+        
+        if not docker_running:
+            logger.error(f"❌ Docker container for group '{group_name}' is not running")
             return jsonify({"error": f"Docker container for group '{group_name}' is not running"}), 400
         
         # Check for existing streams
         container_id = group.get("container_id")
+        logger.info(f"🔍 Checking for existing FFmpeg processes...")
+        logger.info(f"   Container ID: {container_id}")
+        
         existing_ffmpeg = find_running_ffmpeg_for_group_strict(group_id, group_name, container_id)
         if existing_ffmpeg:
+            logger.warning(f"⚠️  Found {len(existing_ffmpeg)} existing FFmpeg process(es)")
+            logger.info("   Streaming already active, returning current status")
             return jsonify({
                 "message": f"Multi-video streaming already active for group '{group_name}'",
                 "status": "already_active"
             }), 200
+        
+        logger.info("✅ No existing streams found")
         
         # Configuration
         screen_count = data.get("screen_count", group.get("screen_count", len(video_files_config)))
@@ -254,40 +281,62 @@ def start_multi_video_srt():
         grid_rows = data.get("grid_rows", 2)
         grid_cols = data.get("grid_cols", 2)
         
+        logger.info("⚙️  Stream configuration:")
+        logger.info(f"   Screen count: {screen_count}")
+        logger.info(f"   Orientation: {orientation}")
+        logger.info(f"   Output resolution: {output_width}x{output_height}")
+        if orientation.lower() == "grid":
+            logger.info(f"   Grid layout: {grid_rows}x{grid_cols}")
+        
         ports = group.get("ports", {})
         srt_port = data.get("srt_port", ports.get("srt_port", 10080))
         srt_ip = data.get("srt_ip", "127.0.0.1")
         sei = "681d5c8f-80cd-4847-930a-99b9484b4a32+000000"
         
+        logger.info(f"📡 SRT configuration:")
+        logger.info(f"   SRT server: {srt_ip}:{srt_port}")
+        logger.info(f"   SEI metadata: {sei[:20]}...")
+        
         # Calculate canvas dimensions
+        logger.info("📐 Calculating canvas dimensions...")
         if orientation.lower() == "horizontal":
             canvas_width = output_width * screen_count
             canvas_height = output_height
+            logger.info(f"   Horizontal layout: {canvas_width}x{canvas_height}")
         elif orientation.lower() == "vertical":
             canvas_width = output_width
             canvas_height = output_height * screen_count
+            logger.info(f"   Vertical layout: {canvas_width}x{canvas_height}")
         elif orientation.lower() == "grid":
             if grid_rows * grid_cols != screen_count:
                 grid_cols = int(screen_count ** 0.5)
                 grid_rows = (screen_count + grid_cols - 1) // grid_cols
+                logger.info(f"   Adjusted grid to: {grid_rows}x{grid_cols}")
             canvas_width = output_width * grid_cols
             canvas_height = output_height * grid_rows
+            logger.info(f"   Grid layout: {canvas_width}x{canvas_height}")
         else:
+            logger.error(f"❌ Invalid orientation: {orientation}")
             return jsonify({"error": f"Invalid orientation: {orientation}"}), 400
         
         # Validate and process video files
         if len(video_files_config) != screen_count:
+            logger.error(f"❌ Video file count ({len(video_files_config)}) doesn't match screen count ({screen_count})")
             return jsonify({"error": f"Video file count must match screen count"}), 400
         
         uploads_dir = current_app.config.get('UPLOAD_FOLDER', 'uploads')
         video_files_config.sort(key=lambda x: x.get("screen", 0))
         
+        logger.info("🔍 Validating video files...")
         for video_config in video_files_config:
             screen_num = video_config.get("screen", 0)
             file_name = video_config.get("file")
             
             if not file_name:
+                logger.error(f"❌ Missing file for screen {screen_num}")
                 return jsonify({"error": f"Missing file for screen {screen_num}"}), 400
+            
+            logger.info(f"   Checking screen {screen_num}: {file_name}")
             
             if file_name.startswith('uploads/'):
                 file_path = file_name
@@ -297,45 +346,85 @@ def start_multi_video_srt():
                 
                 if os.path.exists(upload_path):
                     file_path = upload_path
+                    logger.info(f"     ✓ Found in uploads: {upload_path}")
                 elif os.path.exists(resized_path):
                     file_path = resized_path
+                    logger.info(f"     ✓ Found in resized: {resized_path}")
                 else:
+                    logger.error(f"     ✗ File not found: {file_name}")
                     return jsonify({"error": f"Video file not found: {file_name}"}), 404
             
             if not os.path.exists(file_path):
+                logger.error(f"❌ Video file path doesn't exist: {file_path}")
                 return jsonify({"error": f"Video file not found: {file_path}"}), 404
             
             video_config["file_path"] = file_path
         
         video_files = [config["file_path"] for config in video_files_config]
+        logger.info(f"✅ All {len(video_files)} video files validated")
         
         # Wait for SRT server
+        logger.info(f"⏳ Waiting for SRT server at {srt_ip}:{srt_port}...")
         if not wait_for_srt_server(srt_ip, srt_port, timeout=30):
+            logger.error(f"❌ SRT server at {srt_ip}:{srt_port} not ready after 30 seconds")
             return jsonify({"error": f"SRT server at {srt_ip}:{srt_port} not ready"}), 500
+        logger.info("✅ SRT server is ready")
         
         # Test SRT connection
+        logger.info("🧪 Testing SRT connection...")
         test_result = test_ffmpeg_srt_connection(srt_ip, srt_port, group_name, sei)
         if not test_result["success"]:
+            logger.error(f"❌ SRT connection test failed: {test_result}")
             return jsonify({"error": "SRT connection test failed", "test_result": test_result}), 500
+        logger.info("✅ SRT connection test passed")
         
-        # Generate stream ID and build command
-        stream_id = f"combined_{group_id}"
+        # Generate stream ID - use persistent stream ID
+        persistent_streams = get_persistent_streams_for_group(group_id, group_name, screen_count)
+        stream_id = persistent_streams.get("test")  # Use the persistent "test" stream ID
+        logger.info(f"🔑 Using persistent stream ID: {stream_id}")
+
+        # Debug logging
+        debug_log_stream_info(group_id, group_name, stream_id, srt_ip, srt_port, "MULTI-VIDEO MODE", screen_count)
+
+        # Build FFmpeg command
+        logger.info("🔨 Building FFmpeg command...")
         ffmpeg_cmd = build_single_stream_ffmpeg_command(
-            video_files=video_files,
-            screen_count=screen_count,
-            orientation=orientation,
-            output_width=output_width,
-            output_height=output_height,
-            srt_ip=srt_ip,
-            srt_port=srt_port,
-            sei=sei,
-            group_name=group_name,
-            stream_id=stream_id,
-            grid_rows=grid_rows,
-            grid_cols=grid_cols
+            video_files,  # positional arguments
+            screen_count,
+            orientation,
+            output_width,
+            output_height,
+            srt_ip,
+            srt_port,
+            sei,
+            group_name,
+            group_id,  # This becomes 'base_stream_id' in the function
+            grid_rows,
+            grid_cols,
+            30,  # framerate
+            "6000k"  # bitrate
         )
         
+        logger.info(f"📝 FFmpeg command preview:")
+        logger.info(f"   {' '.join(ffmpeg_cmd[:10])}...")
+        logger.info(f"   Total arguments: {len(ffmpeg_cmd)}")
+        
+        # Log all the stream URLs that will be created
+        logger.info("="*60)
+        logger.info(f"🎬 CREATING MULTI-VIDEO STREAMS - SEPARATE OUTPUTS")
+        logger.info(f"📋 Group: {group_name} (ID: {group_id})")
+        logger.info(f"📺 Creating {screen_count + 1} streams:")
+        logger.info(f"   - Combined: live/{group_name}/combined_{group_id}")
+        
+        persistent_streams = get_persistent_streams_for_group(group_id, group_name, screen_count)
+        for i in range(screen_count):
+            screen_key = f"test{i}"
+            stream_id_screen = persistent_streams.get(screen_key)
+            logger.info(f"   - Screen {i}: live/{group_name}/{stream_id_screen}")
+        logger.info("="*60)
+        
         # Start FFmpeg process
+        logger.info("🚀 Starting FFmpeg process...")
         process = subprocess.Popen(
             ffmpeg_cmd,
             stdout=subprocess.PIPE,
@@ -344,21 +433,30 @@ def start_multi_video_srt():
             bufsize=0
         )
         
+        logger.info(f"✅ FFmpeg process started with PID: {process.pid}")
+        
+        # Monitor FFmpeg startup
+        logger.info("👀 Monitoring FFmpeg startup...")
         startup_success, streaming_detected = monitor_ffmpeg(
             process, 
             stream_type="Multi-video FFmpeg",
-            startup_timeout=20,
-            startup_max_lines=60
+            startup_timeout=5,
+            startup_max_lines=20
         )
         
         if not startup_success:
             if process.poll() is not None:
+                logger.error(f"❌ FFmpeg process died with exit code: {process.returncode}")
                 return jsonify({"error": f"Multi-video FFmpeg failed to start"}), 500
+            logger.warning("⚠️  FFmpeg startup reported failure but process is still running")
         
         if not streaming_detected:
-            logger.warning("No streaming output detected")
+            logger.warning("⚠️  No streaming output detected during startup monitoring")
+        else:
+            logger.info("✅ Streaming output detected")
         
         # Generate response
+        logger.info("📊 Generating response data...")
         crop_info = generate_client_crop_info(
             screen_count=screen_count,
             orientation=orientation,
@@ -368,9 +466,36 @@ def start_multi_video_srt():
             grid_cols=grid_cols
         )
         
-        stream_path = f"live/{group_name}/{stream_id}"
-        srt_params = "latency=200000&connect_timeout=5000&rcvbuf=67108864&sndbuf=67108864"
-        client_stream_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=request&{srt_params}"
+        # Generate client stream URLs for ALL streams
+        client_stream_urls = {}
+        
+        # Combined stream URL
+        combined_stream_path = f"live/{group_name}/combined_{group_id}"
+        srt_params = "latency=5000000&connect_timeout=10000&rcvbuf=67108864&sndbuf=67108864"
+        client_stream_urls["combined"] = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={combined_stream_path},m=request&{srt_params}"
+        
+        # Individual screen URLs
+        for i in range(screen_count):
+            screen_key = f"test{i}"
+            individual_stream_id = persistent_streams.get(screen_key)
+            individual_stream_path = f"live/{group_name}/{individual_stream_id}"
+            client_stream_urls[f"screen{i}"] = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={individual_stream_path},m=request&{srt_params}"
+        
+        logger.info("📺 Client stream URLs:")
+        for name, url in client_stream_urls.items():
+            logger.info(f"   {name}: {url}")
+        
+        # Generate test result string
+        test_result = f"ffplay '{client_stream_urls['combined']}'"
+        
+        logger.info("="*60)
+        logger.info("🎉 MULTI-VIDEO STREAMING STARTED SUCCESSFULLY")
+        logger.info(f"📋 Group: {group_name}")
+        logger.info(f"🔧 Process PID: {process.pid}")
+        logger.info(f"📺 Screens: {screen_count}")
+        logger.info(f"🔗 Combined Stream: {client_stream_urls['combined']}")
+        logger.info(f"📺 {screen_count} Individual streams also available")
+        logger.info("="*60)
         
         return jsonify({
             "message": f"Multi-video SRT streaming started for group '{group_name}'",
@@ -392,9 +517,9 @@ def start_multi_video_srt():
                 ]
             },
             "stream_info": {
-                "stream_url": client_stream_url,
-                "stream_path": stream_path,
-                "stream_id": stream_id,
+                "stream_urls": client_stream_urls,
+                "combined_stream_path": combined_stream_path,
+                "persistent_streams": persistent_streams,
                 "crop_information": crop_info
             },
             "status": "active",
@@ -402,9 +527,14 @@ def start_multi_video_srt():
         }), 200
         
     except Exception as e:
-        logger.error(f"Error in start_multi_video_srt: {e}")
+        logger.error("="*60)
+        logger.error("💥 EXCEPTION IN start_multi_video_srt")
+        logger.error(f"❌ Error type: {type(e).__name__}")
+        logger.error(f"❌ Error message: {str(e)}")
+        logger.error("Stack trace:", exc_info=True)
+        logger.error("="*60)
         return jsonify({"error": str(e)}), 500
-
+    
 @stream_bp.route("/start_split_screen_srt", methods=["POST"])
 def start_split_screen_srt():
     """Take one video file and split it across multiple screens"""
@@ -498,6 +628,9 @@ def start_split_screen_srt():
         
         # Generate stream ID and build command
         stream_id = f"split_{group_id}"
+
+        debug_log_stream_info(group_id, group_name, stream_id, srt_ip, srt_port, "SPLIT-SCREEN MODE", screen_count)
+
         ffmpeg_cmd = build_split_screen_ffmpeg_command(
             video_file=file_path,
             screen_count=screen_count,
@@ -527,8 +660,8 @@ def start_split_screen_srt():
         startup_success, streaming_detected = monitor_ffmpeg(
             process,
             stream_type="Split-screen FFmpeg", 
-            startup_timeout=20,
-            startup_max_lines=60
+            startup_timeout=5,
+            startup_max_lines=20
         )
         
         if not startup_success:
@@ -549,7 +682,7 @@ def start_split_screen_srt():
         )
         
         stream_path = f"live/{group_name}/{stream_id}"
-        srt_params = "latency=200000&connect_timeout=5000&rcvbuf=67108864&sndbuf=67108864"
+        srt_params = "latency=5000000&connect_timeout=5000&rcvbuf=67108864&sndbuf=67108864"
         client_stream_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=request&{srt_params}"
         
         return jsonify({
@@ -878,13 +1011,16 @@ def build_single_stream_ffmpeg_command(
     srt_port: int,
     sei: str,
     group_name: str,
-    stream_id: str,
+    base_stream_id: str,
     grid_rows: int = 2,
     grid_cols: int = 2,
     framerate: int = 30,
-    bitrate: str = "6000k"
+    bitrate: str = "3000k"  # Per-stream bitrate
 ) -> List[str]:
-    """Build FFmpeg command for single combined stream"""
+    """
+    Build FFmpeg command that creates multiple video streams - one combined and individual crops
+    Similar to hwsel's approach
+    """
     
     ffmpeg_path = find_ffmpeg_executable()
     
@@ -913,13 +1049,15 @@ def build_single_stream_ffmpeg_command(
         section_width = output_width
         section_height = output_height
     
-    # Build filter
+    # Build filter - first combine all videos
     filter_parts = []
     filter_parts.append(f"color=c=black:s={canvas_width}x{canvas_height}:r={framerate}[canvas]")
     
+    # Scale each input
     for i in range(screen_count):
         filter_parts.append(f"[{i}:v]scale={section_width}:{section_height}[scaled{i}]")
     
+    # Overlay videos onto canvas
     current_stream = "[canvas]"
     for i in range(screen_count):
         if orientation.lower() == "horizontal":
@@ -934,9 +1072,28 @@ def build_single_stream_ffmpeg_command(
             x_pos = col * section_width
             y_pos = row * section_height
         
-        next_stream = f"[overlay{i}]" if i < screen_count - 1 else "[final]"
+        next_stream = f"[overlay{i}]" if i < screen_count - 1 else "[combined]"
         filter_parts.append(f"{current_stream}[scaled{i}]overlay=x={x_pos}:y={y_pos}{next_stream}")
         current_stream = f"[overlay{i}]"
+    
+    # Now split the combined output and create crops for each screen
+    filter_parts.append(f"[combined]split={screen_count + 1}[full]" + "".join(f"[copy{i}]" for i in range(screen_count)))
+    
+    # Create crop filters for each screen
+    for i in range(screen_count):
+        if orientation.lower() == "horizontal":
+            x_pos = i * section_width
+            y_pos = 0
+        elif orientation.lower() == "vertical":
+            x_pos = 0
+            y_pos = i * section_height
+        elif orientation.lower() == "grid":
+            row = i // grid_cols
+            col = i % grid_cols
+            x_pos = col * section_width
+            y_pos = row * section_height
+        
+        filter_parts.append(f"[copy{i}]crop={section_width}:{section_height}:{x_pos}:{y_pos}[screen{i}]")
     
     complete_filter = ";".join(filter_parts)
     
@@ -948,9 +1105,10 @@ def build_single_stream_ffmpeg_command(
         "-stats"
     ]
     
-    ffmpeg_cmd.extend(input_args + [
-        "-filter_complex", complete_filter,
-        "-map", "[final]",
+    ffmpeg_cmd.extend(input_args + ["-filter_complex", complete_filter])
+    
+    # Common encoding parameters
+    encoding_params = [
         "-an",
         "-c:v", "libx264",
         "-preset", "veryfast",
@@ -963,13 +1121,25 @@ def build_single_stream_ffmpeg_command(
         "-g", "1",
         "-r", str(framerate),
         "-f", "mpegts"
-    ])
+    ]
     
-    # SRT output
-    srt_params = "latency=200000&connect_timeout=5000&rcvbuf=67108864&sndbuf=67108864"
-    stream_path = f"live/{group_name}/{stream_id}"
-    srt_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=publish&{srt_params}"
-    ffmpeg_cmd.append(srt_url)
+    # SRT parameters
+    srt_params = "latency=5000000&connect_timeout=5000&rcvbuf=67108864&sndbuf=67108864"
+    
+    # Add output for combined stream
+    combined_stream_path = f"live/{group_name}/combined_{base_stream_id}"
+    combined_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={combined_stream_path},m=publish&{srt_params}"
+    ffmpeg_cmd.extend(["-map", "[full]"] + encoding_params + [combined_url])
+    
+    # Add output for each individual screen
+    persistent_streams = get_persistent_streams_for_group(base_stream_id, group_name, screen_count)
+    for i in range(screen_count):
+        screen_key = f"test{i}"
+        individual_stream_id = persistent_streams.get(screen_key, f"screen{i}_{base_stream_id}")
+        stream_path = f"live/{group_name}/{individual_stream_id}"
+        stream_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=publish&{srt_params}"
+        
+        ffmpeg_cmd.extend(["-map", f"[screen{i}]"] + encoding_params + [stream_url])
     
     return ffmpeg_cmd
 
@@ -1026,55 +1196,60 @@ def build_split_screen_ffmpeg_command(
     ])
     
     # SRT output
-    srt_params = "latency=200000&connect_timeout=5000&rcvbuf=67108864&sndbuf=67108864"
+    srt_params = "latency=5000000&connect_timeout=5000&rcvbuf=67108864&sndbuf=67108864"
     stream_path = f"live/{group_name}/{stream_id}"
     srt_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=publish&{srt_params}"
     ffmpeg_cmd.append(srt_url)
     
     return ffmpeg_cmd
 
-def test_ffmpeg_srt_connection(srt_ip, srt_port, group_name, sei):
-    """Test FFmpeg SRT connection"""
+def test_ffmpeg_srt_connection(srt_ip, srt_port, group_name, sei, retry_count=3):
+    """Enhanced SRT connection test with retries and consistent parameters"""
     if '+' not in sei:
         sei = f"{sei}+000000"
-
-    test_cmd = [
-        find_ffmpeg_executable(),
-        "-v", "error",
-        "-y",
-        "-f", "lavfi", "-i", "testsrc=s=640x480:r=5:d=10",
-        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-        "-bsf:v", f"h264_metadata=sei_user_data={sei}",
-        "-f", "mpegts",
-        f"srt://{srt_ip}:{srt_port}?streamid=#!::r=live/{group_name}/test,m=publish"
-    ]
     
-    try:
-        result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=15)
+    # Use consistent SRT parameters
+    srt_params = "latency=5000000&connect_timeout=10000"  # Increased timeouts
+    
+    for attempt in range(retry_count):
+        test_stream_id = f"test_{random.randint(10000, 99999)}"  # Random ID to avoid conflicts
         
-        if result.returncode == 0:
-            return {"success": True, "output": result.stdout}
-        else:
-            error_output = (result.stderr + " " + result.stdout).lower()
+        test_cmd = [
+            find_ffmpeg_executable(),
+            "-v", "error",
+            "-y",
+            "-f", "lavfi", "-i", f"testsrc=s=640x480:r=5:d={attempt+2}",  # Vary duration
+            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+            "-bsf:v", f"h264_metadata=sei_user_data={sei}",
+            "-f", "mpegts",
+            f"srt://{srt_ip}:{srt_port}?streamid=#!::r=live/{group_name}/{test_stream_id},m=publish&{srt_params}"
+        ]
+        
+        try:
+            logger.info(f"SRT connection test attempt {attempt + 1}/{retry_count}")
+            result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=10)
             
-            if "connection refused" in error_output:
-                error_type = "Connection refused - SRT server may not be accepting connections"
-            elif "timeout" in error_output or "timed out" in error_output:
-                error_type = "Connection timeout - Network or server issue"
+            if result.returncode == 0:
+                logger.info("SRT connection test succeeded")
+                return {"success": True, "output": result.stdout}
             else:
-                error_type = "Unknown error"
-            
-            return {
-                "success": False,
-                "exit_code": result.returncode,
-                "stderr": result.stderr,
-                "error_analysis": error_type
-            }
+                logger.warning(f"SRT test attempt {attempt + 1} failed: {result.stderr}")
+                
+                if attempt < retry_count - 1:
+                    time.sleep(2)  # Wait before retry
+                    
+        except subprocess.TimeoutExpired:
+            logger.warning(f"SRT test attempt {attempt + 1} timed out")
+            if attempt < retry_count - 1:
+                time.sleep(1)
+        except Exception as e:
+            logger.error(f"SRT test error: {e}")
     
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": "timeout"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    return {
+        "success": False,
+        "error": "All connection attempts failed",
+        "retry_count": retry_count
+    }
 
 def generate_client_crop_info(
     screen_count: int,
@@ -1353,3 +1528,33 @@ def get_persistent_streams_for_group(group_id: str, group_name: str, split_count
         streams[f"test{i}"] = id_manager.get_stream_id(persistent_key, f"test{i}")
     
     return streams
+
+def debug_log_stream_info(group_id, group_name, stream_id, srt_ip, srt_port, mode="", screen_count=0):
+    """Simple debug function to log valid stream information"""
+    stream_path = f"live/{group_name}/{stream_id}"
+    client_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=request,latency=5000000"
+    
+    logger.info("="*60)
+    logger.info(f"🎬 STREAM STARTED - {mode}")
+    logger.info(f"📋 Group: {group_name} (ID: {group_id})")
+    logger.info(f"🔑 Stream ID: {stream_id}")
+    logger.info(f"📡 Stream Path: {stream_path}")
+    logger.info(f"🔗 Client URL: {client_url}")
+    logger.info(f"🧪 Test: ffplay '{client_url}'")
+    
+    # If multi-video mode, show individual screen URLs
+    if mode == "MULTI-VIDEO MODE" and screen_count > 0:
+        logger.info("-"*60)
+        logger.info("📺 Individual Screen URLs (if using separate streams):")
+        
+        # Get persistent stream IDs for each screen
+        streams = get_persistent_streams_for_group(group_id, group_name, screen_count)
+        for i in range(screen_count):
+            screen_key = f"test{i}"
+            if screen_key in streams:
+                screen_stream_id = streams[screen_key]
+                screen_path = f"live/{group_name}/{screen_stream_id}"
+                screen_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={screen_path},m=request,latency=5000000"
+                logger.info(f"   Screen {i}: {screen_url}")
+    
+    logger.info("="*60)

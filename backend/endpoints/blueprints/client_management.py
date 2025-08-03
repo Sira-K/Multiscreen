@@ -85,6 +85,27 @@ def register_client():
     """Register a client device with the server"""
     try:
         logger.info("==== REGISTER CLIENT REQUEST RECEIVED ====")
+        logger.info(f"Request headers: {dict(request.headers)}")
+        logger.info(f"Request remote_addr: {request.remote_addr}")
+        
+        # Parse and validate request data
+        data = request.get_json()
+        logger.info(f"Raw request data: {data}")
+        
+        if not data:
+            logger.error("No JSON data provided in request")
+            return jsonify({"error": "No JSON data provided"}), 400
+            
+        hostname = data.get("hostname")
+        ip_address = data.get("ip_address") or request.remote_addr
+        display_name = data.get("display_name")
+        platform = data.get("platform", "unknown")
+        
+        logger.info(f"Parsed data - hostname: {hostname}, ip: {ip_address}, display_name: {display_name}")
+        
+        if not hostname:
+            logger.error("Missing hostname in request data")
+            return jsonify({"error": "Missing hostname"}), 400
         
         # Get app state
         state = get_state()
@@ -329,9 +350,7 @@ def rename_client():
     except Exception as e:
         logger.error(f"Error renaming client: {e}")
         return jsonify({"error": str(e)}), 500
-    
-    
-    
+
 @client_bp.route("/assign_client_to_group", methods=["POST"])
 def assign_client_to_group():
     """Assign a client to a specific group (Admin function)"""
