@@ -5,6 +5,7 @@ import logging
 import subprocess
 import sys
 import os
+import json
 import tempfile
 import shutil
 import signal
@@ -365,6 +366,9 @@ set_target_properties(player PROPERTIES
                 status = data.get('status')
                 message = data.get('message', '')
                 
+                # Add debug logging to see what the server is sending
+                self.logger.debug(f"📡 Server response: status={status}, data={json.dumps(data, indent=2)}")
+                
                 if status == "ready_to_play":
                     # 🎉 Everything is ready!
                     original_stream_url = data.get('stream_url')
@@ -382,12 +386,21 @@ set_target_properties(player PROPERTIES
                     
                     group_name = data.get('group_name', 'unknown')
                     stream_assignment = data.get('stream_assignment', 'unknown')
+                    streaming_mode = data.get('mode', 'unknown')
                     
                     self.logger.info(f"🎉 Ready to play!")
                     self.logger.info(f"   Group: {group_name}")
                     self.logger.info(f"   Stream: {stream_assignment}")
+                    self.logger.info(f"   Mode: {streaming_mode}")
                     self.logger.info(f"   Version: {self.current_stream_version}")
-                    self.logger.info(f"   Final URL: {self.current_stream_url}")
+                    self.logger.info(f"   Stream URL: {self.current_stream_url}")
+                    
+                    # Log which specific screen stream we're getting
+                    if 'screen' in stream_assignment.lower():
+                        self.logger.info(f"   📺 Playing individual screen stream")
+                    elif 'combined' in self.current_stream_url:
+                        self.logger.info(f"   🖼️ Playing combined stream (all screens)")
+                    
                     return True
                 
                 elif status == "waiting_for_group_assignment":
