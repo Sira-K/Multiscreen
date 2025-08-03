@@ -1,24 +1,69 @@
-// frontend/src/components/ClientsTab.tsx - Fixed with global Client interface
+// Alternative: Self-loading ClientsTab - frontend/src/components/ClientsTab.tsx
 
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { ArrowUp, ArrowDown, Monitor, Wifi, WifiOff, Search, Users } from "lucide-react";import { useToast } from "@/hooks/use-toast";
+import { ArrowUp, ArrowDown, Monitor, Wifi, WifiOff, Search, Users, RefreshCw } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import { clientApi } from '@/API/api';
-import type { Client } from '@/types'; // Use the global Client interface
+import type { Client } from '@/types';
 
-// REMOVED: Local Client interface - now using global one from types/index.ts
-
-interface ClientsTabProps {
-  clients: Client[];
-  setClients: React.Dispatch<React.SetStateAction<Client[]>>;
-}
-
-const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
+// Make ClientsTab self-loading (remove props dependency)
+const ClientsTab = () => {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
+  const [clients, setClients] = useState<Client[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Load clients data
+  const loadClients = async (showRefreshing = false) => {
+    try {
+      if (showRefreshing) setRefreshing(true);
+      console.log('🔄 Loading clients data...');
+      
+      const clientsData = await clientApi.getClients();
+      console.log('📋 Raw API response:', clientsData);
+      console.log('📊 All clients:', clientsData.clients);
+      
+      // Filter to only show active/connected clients
+      const activeClients = (clientsData.clients || []).filter(client => client.status === 'active');
+      console.log('✅ Active clients only:', activeClients);
+      
+      setClients(activeClients);
+      
+      if (showRefreshing) {
+        toast({
+          title: "Clients Refreshed",
+          description: `Found ${activeClients.length} active clients (${clientsData.clients?.length || 0} total)`,
+        });
+      }
+    } catch (error) {
+      console.error('❌ Error loading clients:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load clients",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+      if (showRefreshing) setRefreshing(false);
+    }
+  };
+
+  // Load initial data and set up refresh interval
+  useEffect(() => {
+    loadClients();
+
+    // Refresh clients every 5 seconds
+    const interval = setInterval(() => {
+      loadClients();
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   const moveClient = (clientId: string, direction: 'up' | 'down') => {
     const clientIndex = clients.findIndex(c => c.client_id === clientId);
@@ -44,21 +89,56 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
       (client.display_name?.toLowerCase().includes(searchLower)) ||
       (client.hostname?.toLowerCase().includes(searchLower)) ||
       (client.client_id?.toLowerCase().includes(searchLower)) ||
-      (client.ip_address?.toLowerCase().includes(searchLower)) // Note: using ip_address from global interface
+      (client.ip_address?.toLowerCase().includes(searchLower))
     );
   });
+
+  // Debug logging
+  useEffect(() => {
+    console.log('🔍 ClientsTab state:', {
+      loading,
+      clientsCount: clients.length,
+      filteredCount: filteredClients.length,
+      clients: clients
+    });
+  }, [loading, clients, filteredClients]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-2 text-gray-600">Loading clients...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       <Card className="bg-white border border-gray-200">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="w-5 h-5" />
-            Client Management
-          </CardTitle>
-          <CardDescription>
-            View and manage connected clients. You can reorder clients and monitor their connection status.
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="w-5 h-5" />
+                Active Clients ({clients.length})
+              </CardTitle>
+              <CardDescription>
+                Connected clients only. Disconnected clients are automatically removed. Auto-refreshes every 5 seconds.
+              </CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => loadClients(true)}
+              disabled={refreshing}
+              className="flex items-center gap-2"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
         </CardHeader>
         
         <CardContent>
@@ -75,15 +155,37 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
             </div>
           </div>
 
+          {/* Debug Info */}
+          <div className="mb-4 p-3 bg-gray-100 rounded text-sm text-gray-600">
+            Debug: {clients.length} active clients connected, {filteredClients.length} shown after filtering
+          </div>
+
           {/* Clients List */}
           <div className="space-y-3">
             {filteredClients.length === 0 ? (
               <div className="text-center py-8">
                 <Monitor className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                <h3 className="text-lg font-medium text-gray-700 mb-2">No Clients Found</h3>
+                <h3 className="text-lg font-medium text-gray-700 mb-2">
+                  {clients.length === 0 ? 'No Active Clients' : 'No Clients Found'}
+                </h3>
                 <p className="text-gray-500">
-                  {searchTerm ? 'No clients match your search criteria.' : 'No clients are currently connected.'}
+                  {searchTerm 
+                    ? 'No active clients match your search criteria.' 
+                    : clients.length === 0 
+                      ? 'No clients are currently connected to the server. When clients connect, they will appear here automatically.'
+                      : 'All clients are filtered out.'
+                  }
                 </p>
+                {clients.length === 0 && (
+                  <Button 
+                    variant="outline" 
+                    onClick={() => loadClients(true)}
+                    className="mt-4"
+                  >
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Check for Clients
+                  </Button>
+                )}
               </div>
             ) : (
               filteredClients.map((client, index) => (
@@ -92,32 +194,31 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
                   className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors"
                 >
                   <div className="flex items-center gap-4">
-                    <div className={`w-3 h-3 rounded-full ${
-                      client.status === 'active' ? 'bg-green-500' : 'bg-red-500'
-                    }`} />
+                    {/* Always green since we only show connected clients */}
+                    <div className="w-3 h-3 rounded-full bg-green-500" />
                     
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <h3 className="font-medium text-gray-900">
                           {client.display_name || client.hostname || client.client_id}
                         </h3>
-                        {client.status === 'active' ? (
-                          <Wifi className="w-4 h-4 text-green-500" />
-                        ) : (
-                          <WifiOff className="w-4 h-4 text-red-500" />
-                        )}
+                        {/* Always show as connected since we only display active clients */}
+                        <Badge variant="default" className="bg-green-100 text-green-800 border-green-200">
+                          Connected
+                        </Badge>
                       </div>
                       
                       <div className="flex items-center gap-4 text-sm text-gray-600 mt-1">
-                        <span>IP: {client.ip_address}</span> {/* Using ip_address from global interface */}
+                        <span>IP: {client.ip_address}</span>
+                        <span>ID: {client.client_id}</span>
                         {client.group_name && (
                           <Badge variant="secondary" className="text-xs">
-                            {client.group_name}
+                            Group: {client.group_name}
                           </Badge>
                         )}
                         {client.stream_assignment && (
                           <Badge variant="outline" className="text-xs">
-                            {client.stream_assignment}
+                            Stream: {client.stream_assignment}
                           </Badge>
                         )}
                         {client.last_seen_formatted && (
@@ -125,7 +226,7 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
                             Last seen: {client.last_seen_formatted}
                           </span>
                         )}
-                        {client.screen_number !== undefined && (
+                        {client.screen_number !== undefined && client.screen_number !== null && (
                           <Badge variant="outline" className="text-xs">
                             Screen {client.screen_number + 1}
                           </Badge>
@@ -162,29 +263,15 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
         </CardContent>
       </Card>
 
-      {/* Client Statistics */}
+      {/* Client Statistics - Updated for active clients only */}
       {clients.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Card className="bg-white border border-gray-200">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Total Clients</p>
-                  <p className="text-2xl font-bold text-gray-900">{clients.length}</p>
-                </div>
-                <Monitor className="w-8 h-8 text-blue-500" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-white border border-gray-200">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Active Clients</p>
-                  <p className="text-2xl font-bold text-green-600">
-                    {clients.filter(c => c.status === 'active').length}
-                  </p>
+                  <p className="text-sm font-medium text-gray-600">Connected Clients</p>
+                  <p className="text-2xl font-bold text-green-600">{clients.length}</p>
                 </div>
                 <Wifi className="w-8 h-8 text-green-500" />
               </div>
@@ -195,12 +282,12 @@ const ClientsTab = ({ clients, setClients }: ClientsTabProps) => {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Inactive Clients</p>
-                  <p className="text-2xl font-bold text-red-600">
-                    {clients.filter(c => c.status === 'inactive').length}
+                  <p className="text-sm font-medium text-gray-600">Assigned to Groups</p>
+                  <p className="text-2xl font-bold text-blue-600">
+                    {clients.filter(c => c.group_id).length}
                   </p>
                 </div>
-                <WifiOff className="w-8 h-8 text-red-500" />
+                <Monitor className="w-8 h-8 text-blue-500" />
               </div>
             </CardContent>
           </Card>

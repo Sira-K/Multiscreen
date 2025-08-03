@@ -1,5 +1,3 @@
-// frontend/src/lib/api.ts - Fixed to match actual backend responses
-
 // Fix the API base URL
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5001';
 
@@ -159,13 +157,12 @@ export const groupApi = {
         video_files: videoFiles,
         screen_count: config?.screen_count || videoFiles.length,
         orientation: config?.orientation || 'horizontal',
-        output_width: config?.output_width || 1920,  // ✅ FIXED: Individual section size, not canvas
+        output_width: config?.output_width || 1920,
         output_height: config?.output_height || 1080,
         grid_rows: config?.grid_rows || 2,
         grid_cols: config?.grid_cols || 2,
         srt_ip: config?.srt_ip || '127.0.0.1',
-        srt_port: config?.srt_port || 10080,
-        sei: config?.sei || '681d5c8f-80cd-4847-930a-99b9484b4a32'  // ✅ FIXED: Removed +000000
+        srt_port: config?.srt_port || 10080
       };
 
       console.log('📡 Single-stream multi-video request data:', requestData);
@@ -257,53 +254,129 @@ export const groupApi = {
 };
 
 export const clientApi = {
-  async getClients() {
-    const response = await fetch(`${API_BASE_URL}/get_clients`);
-    const data = await handleApiResponse(response, 'GET /get_clients');
-    
-    // Backend response format is already correct
-    return {
-      clients: data.clients.map((client: any) => ({
-        id: client.client_id,
-        client_id: client.client_id,
-        display_name: client.display_name,
-        hostname: client.hostname,
-        ip: client.ip_address,
-        status: client.is_active ? 'active' : 'inactive',
-        stream_id: client.stream_assignment,
-        group_id: client.group_id,
-        group_name: client.group_name,
-        screen_number: client.screen_number,
-        last_seen_formatted: client.seconds_ago ? `${client.seconds_ago}s ago` : 'Unknown',
-        docker_running: client.group_docker_running
-      })),
-      total_clients: data.total_clients,
-      active_clients: data.active_clients
-    };
-  },
+  // ===================================
+  // CLIENT REGISTRATION & CONNECTION
+  // ===================================
 
   async registerClient(clientData: {
     hostname: string;
     ip_address: string;
     display_name?: string;
+    platform?: string;
   }) {
-    // Fix: Backend expects different format based on test results
+    console.log('🔗 Registering client:', clientData);
+    
     const response = await fetch(`${API_BASE_URL}/register_client`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      // Backend needs client_id and client_info format
       body: JSON.stringify({
-        client_id: `client-${Date.now()}`, // Generate a client ID
-        client_info: clientData
+        hostname: clientData.hostname,
+        ip_address: clientData.ip_address,
+        display_name: clientData.display_name,
+        platform: clientData.platform || 'web'
       }),
     });
 
-    return await handleApiResponse(response, 'POST /register_client');
+    const result = await handleApiResponse(response, 'POST /register_client');
+    console.log('✅ Client registered successfully:', result);
+    return result;
   },
 
+  async waitForStream(clientId: string) {
+    const response = await fetch(`${API_BASE_URL}/wait_for_stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: clientId,
+        hostname: clientId // Backend accepts either
+      }),
+    });
+
+    return await handleApiResponse(response, 'POST /wait_for_stream');
+  },
+
+  // ===================================
+  // CLIENT INFORMATION & STATUS
+  // ===================================
+
+  async getClients() {
+    console.log('📋 Fetching all clients...');
+    
+    const response = await fetch(`${API_BASE_URL}/get_clients`);
+    const data = await handleApiResponse(response, 'GET /get_clients');
+    
+    console.log('🔍 Raw backend response:', data);
+    console.log(`📊 Retrieved ${data.clients?.length || 0} clients`);
+    
+    return {
+      clients: (data.clients || []).map((client: any) => {
+        console.log('🔍 Processing client:', client);
+        
+        return {
+          // Primary identifiers
+          id: client.client_id,
+          client_id: client.client_id,
+          hostname: client.hostname,
+          ip_address: client.ip, // ✅ FIXED: Backend sends 'ip', map it to 'ip_address' for frontend consistency
+          
+          // Display info
+          display_name: client.display_name || client.hostname,
+          platform: client.platform || 'unknown',
+          
+          // Connection status
+          is_active: client.is_active || false,
+          status: client.is_active ? 'active' : 'inactive',
+          last_seen: client.last_seen || 0,
+          seconds_ago: client.seconds_ago,
+          last_seen_formatted: client.last_seen_formatted || 
+                              (client.seconds_ago ? `${client.seconds_ago}s ago` : 'Unknown'),
+          
+          // Group assignment
+          group_id: client.group_id,
+          group_name: client.group_name,
+          group_docker_running: client.group_docker_running || false,
+          group_docker_status: client.group_docker_status,
+          
+          // Stream assignment
+          stream_assignment: client.stream_assignment,
+          stream_id: client.stream_assignment, // Alias for frontend compatibility
+          stream_url: client.stream_url,
+          screen_number: client.screen_number,
+          
+          // Timestamps
+          registered_at: client.registered_at || 0,
+          assigned_at: client.assigned_at || 0,
+          
+          // Legacy fields
+          order: client.order || 0
+        };
+      }),
+      total_clients: data.total_clients || 0,
+      active_clients: data.active_clients || 0
+    };
+  },
+
+  async getClient(clientId: string) {
+    console.log(`🔍 Getting client details for: ${clientId}`);
+    
+    const response = await fetch(`${API_BASE_URL}/get_client/${encodeURIComponent(clientId)}`);
+    const result = await handleApiResponse(response, `GET /get_client/${clientId}`);
+    
+    console.log(`✅ Retrieved client details:`, result);
+    return result;
+  },
+
+  // ===================================
+  // GROUP ASSIGNMENT
+  // ===================================
+
   async assignClientToGroup(clientId: string, groupId: string) {
+    console.log(`🎯 Assigning client ${clientId} to group ${groupId}`);
+    
     const response = await fetch(`${API_BASE_URL}/assign_client_to_group`, {
       method: 'POST',
       headers: {
@@ -315,45 +388,87 @@ export const clientApi = {
       }),
     });
 
-    return await handleApiResponse(response, 'POST /assign_client_to_group');
+    const result = await handleApiResponse(response, 'POST /assign_client_to_group');
+    console.log(`✅ Client assigned to group successfully:`, result);
+    return result;
   },
 
-  async assignClientToScreen(clientId: string, groupId: string, screenNumber: number) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/assign_client_to_screen`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          client_id: clientId,
-          group_id: groupId,
-          screen_number: screenNumber
-        }),
-      });
+  async unassignClientFromGroup(clientId: string) {
+    console.log(`🎯 Unassigning client ${clientId} from group`);
+    
+    const response = await fetch(`${API_BASE_URL}/unassign_client_from_group`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: clientId
+      }),
+    });
 
-      return await handleApiResponse(response, 'POST /assign_client_to_screen');
-    } catch (error) {
-      console.warn('⚠️ assignClientToScreen: Backend endpoint not implemented yet');
-      throw new Error('Screen assignment not implemented in backend yet');
-    }
+    const result = await handleApiResponse(response, 'POST /unassign_client_from_group');
+    console.log(`✅ Client unassigned from group:`, result);
+    return result;
+  },
+
+  // ===================================
+  // SCREEN ASSIGNMENT
+  // ===================================
+
+  async assignClientToScreen(clientId: string, groupId: string, screenNumber: number) {
+    console.log(`🖥️ Assigning client ${clientId} to screen ${screenNumber} in group ${groupId}`);
+    
+    const response = await fetch(`${API_BASE_URL}/assign_client_to_screen`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: clientId,
+        group_id: groupId,
+        screen_number: screenNumber
+      }),
+    });
+
+    const result = await handleApiResponse(response, 'POST /assign_client_to_screen');
+    console.log(`✅ Client assigned to screen successfully:`, result);
+    return result;
+  },
+
+  async unassignClientFromScreen(clientId: string) {
+    console.log(`🖥️ Unassigning client ${clientId} from screen`);
+    
+    const response = await fetch(`${API_BASE_URL}/unassign_client_from_screen`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: clientId
+      })
+    });
+
+    const result = await handleApiResponse(response, 'POST /unassign_client_from_screen');
+    console.log(`✅ Client unassigned from screen:`, result);
+    return result;
   },
 
   async autoAssignScreens(groupId: string) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/auto_assign_screens`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ group_id: groupId }),
-      });
+    console.log(`🤖 Auto-assigning screens for group ${groupId}`);
+    
+    const response = await fetch(`${API_BASE_URL}/auto_assign_screens`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ 
+        group_id: groupId 
+      }),
+    });
 
-      return await handleApiResponse(response, 'POST /auto_assign_screens');
-    } catch (error) {
-      console.warn('⚠️ autoAssignScreens: Backend endpoint not implemented yet');
-      throw new Error('Auto screen assignment not implemented in backend yet');
-    }
+    const result = await handleApiResponse(response, 'POST /auto_assign_screens');
+    console.log(`✅ Auto-assigned screens:`, result);
+    return result;
   },
 
   async getScreenAssignments(groupId: string) {
@@ -371,24 +486,150 @@ export const clientApi = {
     return result;
   },
 
-  async unassignClientFromScreen(clientId: string) {
-    console.log(`🎯 Unassigning client ${clientId} from screen`);
+  // ===================================
+  // CLIENT MANAGEMENT
+  // ===================================
+
+  async renameClient(clientId: string, displayName: string) {
+    console.log(`✏️ Renaming client ${clientId} to "${displayName}"`);
     
-    const response = await fetch(`${API_BASE_URL}/unassign_client_from_screen`, {
+    const response = await fetch(`${API_BASE_URL}/rename_client`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        client_id: clientId
-      })
+        client_id: clientId,
+        display_name: displayName
+      }),
     });
 
-    const result = await handleApiResponse(response, 'POST /unassign_client_from_screen');
-    console.log(`✅ Successfully unassigned client from screen:`, result);
+    const result = await handleApiResponse(response, 'POST /rename_client');
+    console.log(`✅ Client renamed successfully:`, result);
     return result;
+  },
+
+  async moveClient(clientId: string, direction: 'up' | 'down') {
+    console.log(`↕️ Moving client ${clientId} ${direction}`);
+    
+    const response = await fetch(`${API_BASE_URL}/move_client`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: clientId,
+        direction: direction
+      }),
+    });
+
+    const result = await handleApiResponse(response, 'POST /move_client');
+    console.log(`✅ Client moved ${direction}:`, result);
+    return result;
+  },
+
+  async deleteClient(clientId: string) {
+    console.log(`🗑️ Deleting client ${clientId}`);
+    
+    const response = await fetch(`${API_BASE_URL}/delete_client`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: clientId
+      }),
+    });
+
+    const result = await handleApiResponse(response, 'DELETE /delete_client');
+    console.log(`✅ Client deleted:`, result);
+    return result;
+  },
+
+  // ===================================
+  // CLIENT POLLING & STREAMING
+  // ===================================
+
+  async startClientPolling(clientId: string, onStreamReady: (streamData: any) => void, onStatusUpdate?: (status: any) => void) {
+    console.log(`🔄 Starting polling for client ${clientId}`);
+    
+    const pollInterval = 3000; // Poll every 3 seconds
+    let pollCount = 0;
+    const maxPolls = 200; // Stop after 10 minutes (200 * 3 seconds)
+    
+    const poll = async () => {
+      try {
+        pollCount++;
+        
+        if (pollCount > maxPolls) {
+          console.warn(`⏰ Polling timeout for client ${clientId} after ${maxPolls} attempts`);
+          return;
+        }
+        
+        const result = await this.waitForStream(clientId);
+        
+        // Notify status update callback
+        if (onStatusUpdate) {
+          onStatusUpdate({
+            status: result.status,
+            message: result.message,
+            pollCount,
+            maxPolls
+          });
+        }
+        
+        console.log(`🔄 Poll ${pollCount}/${maxPolls} - Client ${clientId} status: ${result.status}`);
+        
+        if (result.status === 'ready_to_play') {
+          console.log(`🎬 Stream ready for client ${clientId}!`);
+          onStreamReady(result);
+          return; // Stop polling
+        } else if (result.status === 'not_registered') {
+          console.error(`❌ Client ${clientId} not registered - stopping polling`);
+          return; // Stop polling
+        } else {
+          console.log(`⏳ Client ${clientId}: ${result.message}`);
+          setTimeout(poll, pollInterval); // Continue polling
+        }
+      } catch (error) {
+        console.error(`❌ Polling error for client ${clientId}:`, error);
+        
+        // Retry with exponential backoff
+        const retryDelay = Math.min(pollInterval * Math.pow(1.5, pollCount % 5), 30000);
+        setTimeout(poll, retryDelay);
+      }
+    };
+
+    poll(); // Start polling
+  },
+
+  // ===================================
+  // UTILITY FUNCTIONS
+  // ===================================
+
+  async ping() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/ping`);
+      const result = await handleApiResponse(response, 'GET /ping');
+      return { success: true, ...result };
+    } catch (error) {
+      console.error('❌ Server ping failed:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async getServerStatus() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/status`);
+      const result = await handleApiResponse(response, 'GET /status');
+      return result;
+    } catch (error) {
+      console.error('❌ Failed to get server status:', error);
+      throw error;
+    }
   }
 };
+
 
 export const videoApi = {
   async getVideos() {

@@ -1,12 +1,9 @@
-// frontend/src/pages/Index.tsx - Fixed with unified Client interface
-
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import StreamsTab from "@/components/StreamsTab";
+import StreamsTab from "@/components/StreamsTab/StreamsTab";
 import ClientsTab from "@/components/ClientsTab";
 import VideoFilesTab from "@/components/VideoFilesTab";
 import { Monitor, Users, Video } from "lucide-react";
-import type { Client } from '@/types'; // Use the global Client interface
 
 interface Stream {
   id: string;
@@ -17,12 +14,42 @@ interface Stream {
   clients: string[];
 }
 
-// REMOVED: Local Client interface that was conflicting
-// Now using the global Client interface from types/index.ts
+const STORAGE_KEY = 'srt_control_active_tab';
 
 const Index = () => {
   const [streams, setStreams] = useState<Stream[]>([]);
-  const [clients, setClients] = useState<Client[]>([]); // Now uses global Client type
+
+  // Get initial tab from localStorage or default to "streams"
+  const getInitialTab = (): string => {
+    try {
+      const savedTab = localStorage.getItem(STORAGE_KEY);
+      // Validate that it's a valid tab value
+      if (savedTab && ['streams', 'clients', 'videos'].includes(savedTab)) {
+        return savedTab;
+      }
+    } catch (error) {
+      console.warn('Failed to read tab from localStorage:', error);
+    }
+    return 'streams'; // Default fallback
+  };
+
+  const [activeTab, setActiveTab] = useState<string>(getInitialTab());
+
+  // Save tab to localStorage whenever it changes
+  const handleTabChange = (newTab: string) => {
+    setActiveTab(newTab);
+    try {
+      localStorage.setItem(STORAGE_KEY, newTab);
+      console.log(`💾 Saved active tab: ${newTab}`);
+    } catch (error) {
+      console.warn('Failed to save tab to localStorage:', error);
+    }
+  };
+
+  // Debug: Log tab changes
+  useEffect(() => {
+    console.log(`🔄 Active tab changed to: ${activeTab}`);
+  }, [activeTab]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
@@ -32,7 +59,7 @@ const Index = () => {
           <p className="text-gray-600">Manage streams, clients, and video files for your digital signage system</p>
         </header>
 
-        <Tabs defaultValue="streams" className="w-full">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
           <TabsList className="grid w-full grid-cols-3 mb-8 bg-white border border-gray-200 shadow-sm">
             <TabsTrigger 
               value="streams" 
@@ -62,10 +89,7 @@ const Index = () => {
           </TabsContent>
 
           <TabsContent value="clients">
-            <ClientsTab 
-              clients={clients} 
-              setClients={setClients}
-            />
+            <ClientsTab />
           </TabsContent>
 
           <TabsContent value="videos">
