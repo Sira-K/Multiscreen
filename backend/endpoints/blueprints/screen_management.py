@@ -67,7 +67,7 @@ def set_screen_ips():
         
         # Build response message
         if new_orientation == "grid":
-            layout_description = f"{new_grid_rows}×{new_grid_cols} grid layout ({new_screen_count} screens)"
+            layout_description = f"{new_grid_rows}{new_grid_cols} grid layout ({new_screen_count} screens)"
         else:
             layout_description = f"{new_orientation} layout ({new_screen_count} screens)"
         
@@ -103,7 +103,7 @@ def get_screen_status():
         
         # Build layout description
         if orientation == "grid":
-            layout_description = f"{grid_rows}×{grid_cols} grid layout ({screen_count} screens)"
+            layout_description = f"{grid_rows}{grid_cols} grid layout ({screen_count} screens)"
         else:
             layout_description = f"{orientation} layout ({screen_count} screens)"
         
@@ -149,7 +149,7 @@ def launch_player():
         logger.info(f"Layout: {orientation}")
         
         if orientation == "grid":
-            logger.info(f"Grid layout: {grid_rows}×{grid_cols}")
+            logger.info(f"Grid layout: {grid_rows}{grid_cols}")
             if grid_position:
                 logger.info(f"Grid position: Row {grid_position.get('row', '?')}, Col {grid_position.get('col', '?')}")
         

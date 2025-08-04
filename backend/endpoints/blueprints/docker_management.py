@@ -32,7 +32,7 @@ def run_command(cmd: List[str], timeout: int = 30) -> Tuple[bool, str, str]:
         Tuple of (success, stdout, stderr)
     """
     try:
-        logger.debug(f"🔧 Running command: {' '.join(cmd)}")
+        logger.debug(f" Running command: {' '.join(cmd)}")
         
         # Execute command with timeout
         result = subprocess.run(
@@ -45,14 +45,14 @@ def run_command(cmd: List[str], timeout: int = 30) -> Tuple[bool, str, str]:
         
         success = result.returncode == 0
         if not success:
-            logger.warning(f"⚠️ Command failed with return code {result.returncode}: {' '.join(cmd)}")
+            logger.warning(f" Command failed with return code {result.returncode}: {' '.join(cmd)}")
             
         return success, result.stdout.strip(), result.stderr.strip()
     except subprocess.TimeoutExpired:
-        logger.error(f"⏰ Command timed out after {timeout} seconds: {' '.join(cmd)}")
+        logger.error(f" Command timed out after {timeout} seconds: {' '.join(cmd)}")
         return False, "", f"Command timed out after {timeout} seconds"
     except Exception as e:
-        logger.error(f"❌ Error executing command: {e}")
+        logger.error(f" Error executing command: {e}")
         return False, "", f"Error executing command: {str(e)}"
 
 def calculate_group_ports(group_index: int) -> Dict[str, int]:
@@ -87,13 +87,13 @@ def get_next_available_ports() -> Dict[str, int]:
         discovery_result = discover_groups()
         
         if not discovery_result.get("success", False):
-            logger.warning("⚠️ Could not discover existing groups, using default ports")
+            logger.warning(" Could not discover existing groups, using default ports")
             return calculate_group_ports(0)
         
         existing_groups = discovery_result.get("groups", [])
         
         if not existing_groups:
-            logger.info("📊 No existing groups found, using first port block")
+            logger.info(" No existing groups found, using first port block")
             return calculate_group_ports(0)
         
         # Find the highest port offset in use
@@ -108,11 +108,11 @@ def get_next_available_ports() -> Dict[str, int]:
         # Use the next available offset
         next_index = (max_offset // 10) + 1
         
-        logger.info(f"📊 Next available port index: {next_index}")
+        logger.info(f" Next available port index: {next_index}")
         return calculate_group_ports(next_index)
         
     except Exception as e:
-        logger.error(f"❌ Error calculating ports: {e}")
+        logger.error(f" Error calculating ports: {e}")
         # Fallback to default ports
         return calculate_group_ports(0)
 
@@ -127,19 +127,19 @@ def create_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
         Dict with success status, container info, and any errors
     """
     try:
-        logger.info(f"🐳 Creating Docker container for group: {group_data.get('name')}")
+        logger.info(f" Creating Docker container for group: {group_data.get('name')}")
         
         # Check if Docker is available
         success, docker_version, error = run_command(["docker", "--version"])
         if not success:
-            logger.error(f"❌ Docker not available: {error}")
+            logger.error(f" Docker not available: {error}")
             return {
                 "success": False,
                 "error": "Docker is not available on this system",
                 "details": error
             }
         
-        logger.info(f"✅ Docker available: {docker_version}")
+        logger.info(f" Docker available: {docker_version}")
         
         # Generate unique container ID and name
         group_name = group_data.get("name", "unnamed_group")
@@ -151,7 +151,7 @@ def create_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
         success, existing_output, _ = run_command(existing_check_cmd)
         
         if success and existing_output.strip():
-            logger.error(f"❌ Container with similar name already exists: {container_name}")
+            logger.error(f" Container with similar name already exists: {container_name}")
             return {
                 "success": False,
                 "error": f"Container with similar name already exists: {container_name}",
@@ -200,14 +200,14 @@ def create_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
             "./objs/srs", "-c", "conf/srt.conf"
         ])
         
-        logger.info(f"🚀 Starting Docker container: {container_name}")
-        logger.debug(f"🔧 Docker command: {' '.join(docker_cmd)}")
+        logger.info(f" Starting Docker container: {container_name}")
+        logger.debug(f" Docker command: {' '.join(docker_cmd)}")
         
         # Execute Docker command
         success, container_id_output, error = run_command(docker_cmd, timeout=60)
         
         if not success:
-            logger.error(f"❌ Failed to start Docker container: {error}")
+            logger.error(f" Failed to start Docker container: {error}")
             return {
                 "success": False,
                 "error": f"Failed to start Docker container: {error}",
@@ -215,10 +215,10 @@ def create_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
             }
         
         container_id = container_id_output.strip()
-        logger.info(f"✅ Docker container started successfully")
-        logger.info(f"📦 Container ID: {container_id}")
-        logger.info(f"🏷️ Container Name: {container_name}")
-        logger.info(f"🔌 Ports: RTMP={ports['rtmp_port']}, HTTP={ports['http_port']}, API={ports['api_port']}, SRT={ports['srt_port']}")
+        logger.info(f" Docker container started successfully")
+        logger.info(f" Container ID: {container_id}")
+        logger.info(f" Container Name: {container_name}")
+        logger.info(f" Ports: RTMP={ports['rtmp_port']}, HTTP={ports['http_port']}, API={ports['api_port']}, SRT={ports['srt_port']}")
         
         # Wait a moment for container to fully start
         time.sleep(2)
@@ -230,7 +230,7 @@ def create_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
         container_status = "unknown"
         if success and status_output.strip():
             container_status = status_output.strip()
-            logger.info(f"📊 Container status: {container_status}")
+            logger.info(f" Container status: {container_status}")
         
         return {
             "success": True,
@@ -245,7 +245,7 @@ def create_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        logger.error(f"❌ Error creating Docker container: {e}")
+        logger.error(f" Error creating Docker container: {e}")
         traceback.print_exc()
         return {
             "success": False,
@@ -268,11 +268,11 @@ def delete_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
         container_id = group_data.get("container_id")
         container_name = group_data.get("container_name")
         
-        logger.info(f"🗑️ Deleting Docker container for group: {group_name}")
+        logger.info(f" Deleting Docker container for group: {group_name}")
         
         # Need either container_id or container_name to delete
         if not container_id and not container_name:
-            logger.error("❌ No container_id or container_name provided for deletion")
+            logger.error(" No container_id or container_name provided for deletion")
             return {
                 "success": False,
                 "error": "No container_id or container_name provided for deletion"
@@ -282,7 +282,7 @@ def delete_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
         target = container_id if container_id else container_name
         target_type = "ID" if container_id else "name"
         
-        logger.info(f"🎯 Target container {target_type}: {target}")
+        logger.info(f" Target container {target_type}: {target}")
         
         # Check if container exists and get its status
         check_cmd = ["docker", "ps", "-a", "--filter", f"{'id' if container_id else 'name'}={target}", 
@@ -291,14 +291,14 @@ def delete_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
         success, check_output, error = run_command(check_cmd)
         
         if not success:
-            logger.error(f"❌ Failed to check container status: {error}")
+            logger.error(f" Failed to check container status: {error}")
             return {
                 "success": False,
                 "error": f"Failed to check container status: {error}"
             }
         
         if not check_output.strip():
-            logger.warning(f"⚠️ Container not found: {target}")
+            logger.warning(f" Container not found: {target}")
             return {
                 "success": True,  # Consider this success since container doesn't exist
                 "message": f"Container {target} not found (may already be deleted)",
@@ -311,17 +311,17 @@ def delete_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
         actual_container_name = container_info[1]
         current_status = container_info[2] if len(container_info) > 2 else "unknown"
         
-        logger.info(f"📋 Found container: {actual_container_name} (ID: {actual_container_id}) - Status: {current_status}")
+        logger.info(f" Found container: {actual_container_name} (ID: {actual_container_id}) - Status: {current_status}")
         
         # Stop container if it's running
         if "Up" in current_status:
-            logger.info(f"🛑 Stopping running container: {actual_container_name}")
+            logger.info(f" Stopping running container: {actual_container_name}")
             
             stop_cmd = ["docker", "stop", actual_container_id]
             success, stop_output, stop_error = run_command(stop_cmd, timeout=30)
             
             if not success:
-                logger.error(f"❌ Failed to stop container: {stop_error}")
+                logger.error(f" Failed to stop container: {stop_error}")
                 return {
                     "success": False,
                     "error": f"Failed to stop container: {stop_error}",
@@ -329,23 +329,23 @@ def delete_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
                     "container_name": actual_container_name
                 }
             
-            logger.info(f"✅ Container stopped successfully")
+            logger.info(f" Container stopped successfully")
         
         # Remove container (this will work whether it's stopped or already exited)
-        logger.info(f"🗑️ Removing container: {actual_container_name}")
+        logger.info(f" Removing container: {actual_container_name}")
         
         remove_cmd = ["docker", "rm", actual_container_id]
         success, remove_output, remove_error = run_command(remove_cmd)
         
         if not success:
             # If rm fails, try with force flag
-            logger.warning(f"⚠️ Normal remove failed, trying force remove: {remove_error}")
+            logger.warning(f" Normal remove failed, trying force remove: {remove_error}")
             
             force_remove_cmd = ["docker", "rm", "-f", actual_container_id]
             success, remove_output, remove_error = run_command(force_remove_cmd)
             
             if not success:
-                logger.error(f"❌ Failed to remove container even with force: {remove_error}")
+                logger.error(f" Failed to remove container even with force: {remove_error}")
                 return {
                     "success": False,
                     "error": f"Failed to remove container: {remove_error}",
@@ -353,8 +353,8 @@ def delete_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
                     "container_name": actual_container_name
                 }
         
-        logger.info(f"✅ Container removed successfully")
-        logger.info(f"🎉 Docker container deletion completed for group: {group_name}")
+        logger.info(f" Container removed successfully")
+        logger.info(f" Docker container deletion completed for group: {group_name}")
         
         return {
             "success": True,
@@ -365,7 +365,7 @@ def delete_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        logger.error(f"❌ Error deleting Docker container: {e}")
+        logger.error(f" Error deleting Docker container: {e}")
         traceback.print_exc()
         return {
             "success": False,
@@ -381,12 +381,12 @@ def discover_groups() -> Dict[str, Any]:
         Dict with success status, groups list, and any errors
     """
     try:
-        logger.info("🔍 Discovering groups from Docker containers")
+        logger.info(" Discovering groups from Docker containers")
         
         # Check if Docker is available
         success, docker_version, error = run_command(["docker", "--version"])
         if not success:
-            logger.error(f"❌ Docker not available: {error}")
+            logger.error(f" Docker not available: {error}")
             return {
                 "success": False,
                 "error": "Docker is not available on this system",
@@ -402,7 +402,7 @@ def discover_groups() -> Dict[str, Any]:
         
         success, output, error = run_command(cmd)
         if not success:
-            logger.error(f"❌ Failed to list Docker containers: {error}")
+            logger.error(f" Failed to list Docker containers: {error}")
             return {
                 "success": False,
                 "error": f"Failed to list Docker containers: {error}",
@@ -410,7 +410,7 @@ def discover_groups() -> Dict[str, Any]:
             }
         
         if not output.strip():
-            logger.info("📋 No multi-screen containers found")
+            logger.info(" No multi-screen containers found")
             return {
                 "success": True,
                 "message": "No groups found",
@@ -431,7 +431,7 @@ def discover_groups() -> Dict[str, Any]:
                 status = parts[2]
                 created_at = parts[3] if len(parts) > 3 else "unknown"
                 
-                logger.debug(f"🔍 Processing container: {container_name} ({container_id[:12]})")
+                logger.debug(f" Processing container: {container_name} ({container_id[:12]})")
                 
                 # Get all labels for this container
                 inspect_cmd = [
@@ -441,7 +441,7 @@ def discover_groups() -> Dict[str, Any]:
                 
                 success, inspect_output, inspect_error = run_command(inspect_cmd)
                 if not success:
-                    logger.warning(f"⚠️ Failed to inspect container {container_id}: {inspect_error}")
+                    logger.warning(f" Failed to inspect container {container_id}: {inspect_error}")
                     continue
                 
                 # Parse labels
@@ -496,12 +496,12 @@ def discover_groups() -> Dict[str, Any]:
                 }
                 
                 groups.append(group)
-                logger.debug(f"✅ Added group: {group_name} (Docker: {docker_status}, Mode: {streaming_mode})")  # ✅ UPDATE THIS LINE
+                logger.debug(f" Added group: {group_name} (Docker: {docker_status}, Mode: {streaming_mode})")  #  UPDATE THIS LINE
         
         # Sort groups by creation time (newest first)
         groups.sort(key=lambda g: g.get('created_at', 0), reverse=True)
         
-        logger.info(f"✅ Discovered {len(groups)} groups from Docker containers")
+        logger.info(f" Discovered {len(groups)} groups from Docker containers")
         
         return {
             "success": True,
@@ -512,7 +512,7 @@ def discover_groups() -> Dict[str, Any]:
         }
         
     except Exception as e:
-        logger.error(f"❌ Error discovering groups from Docker: {e}")
+        logger.error(f" Error discovering groups from Docker: {e}")
         traceback.print_exc()
         return {
             "success": False,
@@ -525,7 +525,7 @@ def discover_groups() -> Dict[str, Any]:
 def docker_status():
     """Get Docker system status and multi-screen containers"""
     try:
-        logger.info("🏥 Docker health check requested")
+        logger.info(" Docker health check requested")
         
         # Check Docker availability
         success, docker_version, error = run_command(["docker", "--version"])
@@ -548,7 +548,7 @@ def docker_status():
         }, 200
         
     except Exception as e:
-        logger.error(f"❌ Error in Docker status check: {e}")
+        logger.error(f" Error in Docker status check: {e}")
         return {
             "docker_available": False,
             "error": str(e),
