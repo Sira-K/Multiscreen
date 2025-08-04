@@ -517,7 +517,7 @@ def assign_client_stream():
                 "status": "stream_assigned"
             })
         
-        logger.info(f"✅ Assigned client {client_id} to group {group_id}, stream {stream_name}")
+        logger.info(f" Assigned client {client_id} to group {group_id}, stream {stream_name}")
         
         return jsonify({
             "message": f"Stream assigned successfully",
@@ -611,7 +611,7 @@ def auto_assign_group_clients():
                     "stream_url": stream_url
                 })
         
-        logger.info(f"✅ Auto-assigned {len(assignments)} clients in group {group_id}")
+        logger.info(f" Auto-assigned {len(assignments)} clients in group {group_id}")
         
         return jsonify({
             "message": f"Auto-assigned {len(assignments)} clients in group {group_id}",
@@ -659,7 +659,7 @@ def unassign_client():
                 "unassigned_at": time.time()
             })
         
-        logger.info(f"✅ Unassigned client {client_id} from group {old_group_id}")
+        logger.info(f" Unassigned client {client_id} from group {old_group_id}")
         
         return jsonify({
             "message": f"Client {client_id} unassigned successfully",
@@ -980,7 +980,7 @@ def assign_client_to_screen():
                 "status": "screen_assigned"
             })
         
-        logger.info(f"✅ Assigned client {client_id} to screen {screen_number} in group {group_name}")
+        logger.info(f" Assigned client {client_id} to screen {screen_number} in group {group_name}")
         
         return jsonify({
             "message": f"Client assigned to screen {screen_number}",
@@ -1113,7 +1113,7 @@ def auto_assign_screens():
                 else:
                     logger.warning(f"Screen {screen_number} stream not available for client {client_id}")
         
-        logger.info(f"✅ Auto-assignment complete: {len(assignments)} clients assigned to screens")
+        logger.info(f" Auto-assignment complete: {len(assignments)} clients assigned to screens")
         
         return jsonify({
             "message": f"Auto-assignment completed for group '{group_name}'",
@@ -1249,7 +1249,7 @@ def unassign_client_from_screen():
                 "unassigned_at": time.time()
             })
         
-        logger.info(f"✅ Unassigned client {client_id} from screen {old_screen_number} in group {old_group_id}")
+        logger.info(f" Unassigned client {client_id} from screen {old_screen_number} in group {old_group_id}")
         
         return jsonify({
             "message": f"Client {client_id} unassigned from screen {old_screen_number}",

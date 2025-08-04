@@ -267,7 +267,7 @@ def upload_video():
             with open(json_filename, 'w', encoding='utf-8') as f:
                 json.dump(comprehensive_data, f, indent=2, ensure_ascii=False)
             
-            logger.info(f"📄 Comprehensive timing data written to: {json_filename}")
+            logger.info(f" Comprehensive timing data written to: {json_filename}")
             
             # 2. Write CSV summary for easy analysis
             csv_filename = os.path.join(output_dir, f'upload_summary_{timestamp}.csv')
@@ -298,7 +298,7 @@ def upload_video():
                     timing_info['average_save_time_per_file']
                 ])
             
-            logger.info(f"📊 Summary CSV written to: {csv_filename}")
+            logger.info(f" Summary CSV written to: {csv_filename}")
             
             # 3. Write individual file details CSV
             files_csv_filename = os.path.join(output_dir, f'individual_files_{timestamp}.csv')
@@ -324,7 +324,7 @@ def upload_video():
                         file_data.get('error', '')
                     ])
             
-            logger.info(f"📋 Individual files CSV written to: {files_csv_filename}")
+            logger.info(f" Individual files CSV written to: {files_csv_filename}")
             
             # 4. Append to master log file for historical tracking
             master_log_filename = os.path.join(output_dir, 'upload_history_master.csv')
@@ -351,7 +351,7 @@ def upload_video():
                     timing_info['average_time_per_file']
                 ])
             
-            logger.info(f"📈 Master history log updated: {master_log_filename}")
+            logger.info(f" Master history log updated: {master_log_filename}")
             
             return {
                 'json_file': json_filename,
@@ -361,7 +361,7 @@ def upload_video():
             }
             
         except Exception as write_error:
-            logger.error(f"❌ Failed to write timing data to files: {write_error}")
+            logger.error(f" Failed to write timing data to files: {write_error}")
             return None
     
     try:
@@ -371,19 +371,19 @@ def upload_video():
         # Check if files are present
         if 'video' not in request.files:
             elapsed = time.time() - start_time
-            logger.error(f"❌ No 'video' key in request.files (after {elapsed:.2f}s)")
+            logger.error(f" No 'video' key in request.files (after {elapsed:.2f}s)")
             return jsonify({'success': False, 'message': 'No video file in the request'}), 400
         
         files_received_time = time.time()
         files = request.files.getlist('video')
         timing_data['request_processing_time'] = files_received_time - request_start
         
-        logger.info(f"📁 Files received after {files_received_time - start_time:.2f}s")
+        logger.info(f" Files received after {files_received_time - start_time:.2f}s")
         logger.info(f"Number of files received: {len(files)}")
         
         if not files or all(file.filename == '' for file in files):
             elapsed = time.time() - start_time
-            logger.error(f"❌ No files selected or all filenames are empty (after {elapsed:.2f}s)")
+            logger.error(f" No files selected or all filenames are empty (after {elapsed:.2f}s)")
             return jsonify({'success': False, 'message': 'No files selected'}), 400
         
         # Get upload folder
@@ -418,7 +418,7 @@ def upload_video():
             }
             
             try:
-                logger.info(f"🔄 Processing file {i+1}/{len(files)}: {file.filename}")
+                logger.info(f" Processing file {i+1}/{len(files)}: {file.filename}")
                 
                 # Validate file with timing
                 validation_start = time.time()
@@ -429,13 +429,13 @@ def upload_video():
                 
                 if not is_valid:
                     failed_uploads.append({'filename': file.filename, 'error': error_message})
-                    logger.warning(f"⚠️ File validation failed: {error_message}")
+                    logger.warning(f" File validation failed: {error_message}")
                     continue
                 
                 # Filename processing timing
                 filename_start = time.time()
                 filename = secure_filename(file.filename)
-                logger.info(f"🔐 Secured filename: {filename}")
+                logger.info(f" Secured filename: {filename}")
                 
                 # Handle duplicates
                 base_name, ext = os.path.splitext(filename)
@@ -447,10 +447,10 @@ def upload_video():
                     counter += 1
                 
                 if filename != original_filename:
-                    logger.info(f"📝 Renamed file from {original_filename} to {filename} to avoid duplicate")
+                    logger.info(f" Renamed file from {original_filename} to {filename} to avoid duplicate")
                 
                 file_path = os.path.join(upload_folder, filename)
-                logger.info(f"📍 Final file path: {file_path}")
+                logger.info(f" Final file path: {file_path}")
                 
                 filename_processing_time = time.time() - filename_start
                 file_timing['filename_processing_time'] = filename_processing_time
@@ -463,17 +463,17 @@ def upload_video():
                     save_duration = time.time() - save_start_time
                     file_timing['save_time'] = save_duration
                     total_save_time += save_duration
-                    logger.info(f"💾 File saved successfully in {save_duration:.2f}s to: {file_path}")
+                    logger.info(f" File saved successfully in {save_duration:.2f}s to: {file_path}")
                 except Exception as save_error:
                     save_duration = time.time() - save_start_time
                     file_timing['save_time'] = save_duration
-                    logger.error(f"❌ Failed to save file after {save_duration:.2f}s: {save_error}")
+                    logger.error(f" Failed to save file after {save_duration:.2f}s: {save_error}")
                     failed_uploads.append({'filename': file.filename, 'error': f'Save failed: {str(save_error)}'})
                     continue
                 
                 # Check if file was actually saved
                 if not os.path.exists(file_path):
-                    logger.error(f"❌ File was not saved successfully: {file_path}")
+                    logger.error(f" File was not saved successfully: {file_path}")
                     failed_uploads.append({'filename': file.filename, 'error': 'File was not saved to disk'})
                     continue
                 
@@ -486,13 +486,13 @@ def upload_video():
                     file_timing['size_check_time'] = size_check_time
                     file_timing['file_size_bytes'] = file_size
                     file_timing['file_size_mb'] = size_mb
-                    logger.info(f"📊 Saved file size: {file_size} bytes ({size_mb} MB)")
+                    logger.info(f" Saved file size: {file_size} bytes ({size_mb} MB)")
                 except Exception as size_error:
                     size_check_time = time.time() - size_check_start
                     file_timing['size_check_time'] = size_check_time
                     file_timing['file_size_bytes'] = 0
                     file_timing['file_size_mb'] = 0
-                    logger.error(f"❌ Could not get file size: {size_error}")
+                    logger.error(f" Could not get file size: {size_error}")
                     file_size = 0
                     size_mb = 0
                 
@@ -509,7 +509,7 @@ def upload_video():
                     'processing_time_seconds': round(file_total_time, 2)
                 })
                 
-                logger.info(f"✅ Successfully processed {filename} in {file_total_time:.2f}s")
+                logger.info(f" Successfully processed {filename} in {file_total_time:.2f}s")
                 
             except Exception as file_error:
                 file_error_time = time.time() - file_start_time
@@ -517,7 +517,7 @@ def upload_video():
                 file_timing['error'] = str(file_error)
                 timing_data['individual_files'].append(file_timing)
                 
-                logger.error(f"❌ Error processing file {file.filename} after {file_error_time:.2f}s: {file_error}")
+                logger.error(f" Error processing file {file.filename} after {file_error_time:.2f}s: {file_error}")
                 logger.error(f"Traceback: {traceback.format_exc()}")
                 failed_uploads.append({'filename': file.filename, 'error': str(file_error)})
         
@@ -555,20 +555,20 @@ def upload_video():
         output_files = write_timing_data_to_files(comprehensive_timing, upload_results, failed_uploads)
         
         # Log comprehensive timing data
-        logger.info(f"📋 Upload complete - Success: {len(upload_results)}, Failed: {len(failed_uploads)}")
-        logger.info(f"⏱️ Total processing time: {total_time:.2f} seconds")
-        logger.info(f"📊 COMPREHENSIVE TIMING DATA:")
-        logger.info(f"   • Request processing: {comprehensive_timing['request_processing_time']:.3f}s")
-        logger.info(f"   • Directory creation: {comprehensive_timing['directory_creation_time']:.3f}s")
-        logger.info(f"   • Total validation: {comprehensive_timing['total_validation_time']:.3f}s")
-        logger.info(f"   • File operations: {comprehensive_timing['total_file_operations_time']:.3f}s")
-        logger.info(f"   • Total save time: {comprehensive_timing['total_save_time']:.3f}s")
-        logger.info(f"   • Total files size: {comprehensive_timing['total_files_size_mb']} MB ({comprehensive_timing['total_files_size_bytes']} bytes)")
-        logger.info(f"   • Avg time per file: {comprehensive_timing['average_time_per_file']:.3f}s")
-        logger.info(f"   • Avg save time per file: {comprehensive_timing['average_save_time_per_file']:.3f}s")
-        logger.info(f"   • Avg file size: {comprehensive_timing['average_file_size_mb']} MB")
-        logger.info(f"   • Upload speed: {comprehensive_timing['upload_speed_mbps']} Mbps")
-        logger.info(f"🏁 === UPLOAD FINISHED at {end_datetime} ===")
+        logger.info(f" Upload complete - Success: {len(upload_results)}, Failed: {len(failed_uploads)}")
+        logger.info(f" Total processing time: {total_time:.2f} seconds")
+        logger.info(f" COMPREHENSIVE TIMING DATA:")
+        logger.info(f"    Request processing: {comprehensive_timing['request_processing_time']:.3f}s")
+        logger.info(f"    Directory creation: {comprehensive_timing['directory_creation_time']:.3f}s")
+        logger.info(f"    Total validation: {comprehensive_timing['total_validation_time']:.3f}s")
+        logger.info(f"    File operations: {comprehensive_timing['total_file_operations_time']:.3f}s")
+        logger.info(f"    Total save time: {comprehensive_timing['total_save_time']:.3f}s")
+        logger.info(f"    Total files size: {comprehensive_timing['total_files_size_mb']} MB ({comprehensive_timing['total_files_size_bytes']} bytes)")
+        logger.info(f"    Avg time per file: {comprehensive_timing['average_time_per_file']:.3f}s")
+        logger.info(f"    Avg save time per file: {comprehensive_timing['average_save_time_per_file']:.3f}s")
+        logger.info(f"    Avg file size: {comprehensive_timing['average_file_size_mb']} MB")
+        logger.info(f"    Upload speed: {comprehensive_timing['upload_speed_mbps']} Mbps")
+        logger.info(f" === UPLOAD FINISHED at {end_datetime} ===")
         
         # Add output file info to response if files were written successfully
         if output_files:
@@ -585,10 +585,10 @@ def upload_video():
             if failed_uploads:
                 response['failed'] = failed_uploads
             
-            logger.info("🎉 === UPLOAD SUCCESS ===")
+            logger.info(" === UPLOAD SUCCESS ===")
             return jsonify(response), 200
         else:
-            logger.error(f"💥 === ALL UPLOADS FAILED after {total_time:.2f}s ===")
+            logger.error(f" === ALL UPLOADS FAILED after {total_time:.2f}s ===")
             return jsonify({
                 'success': False,
                 'message': "All uploads failed",
@@ -610,10 +610,10 @@ def upload_video():
             'partial_file_timings': timing_data.get('individual_files', [])
         }
         
-        logger.error(f"💥 === UPLOAD ERROR after {total_time:.2f}s === {str(e)}")
+        logger.error(f" === UPLOAD ERROR after {total_time:.2f}s === {str(e)}")
         logger.error(f"Error occurred at: {error_datetime}")
         logger.error(f"Traceback: {traceback.format_exc()}")
-        logger.error(f"📊 ERROR TIMING DATA: {error_timing}")
+        logger.error(f" ERROR TIMING DATA: {error_timing}")
         
         return jsonify({
             'success': False, 
@@ -670,11 +670,11 @@ def delete_video_post():
             try:
                 os.remove(raw_path)
                 deleted_files.append(f"raw/{secure_name}")
-                logger.info(f"✅ Deleted raw video file: {raw_path}")
+                logger.info(f" Deleted raw video file: {raw_path}")
             except Exception as e:
                 error_msg = f"Failed to delete raw file: {str(e)}"
                 errors.append(error_msg)
-                logger.error(f"❌ {error_msg}")
+                logger.error(f" {error_msg}")
         else:
             logger.info(f"Raw video file not found: {raw_path}")
         
@@ -689,11 +689,11 @@ def delete_video_post():
             try:
                 os.remove(resized_path)
                 deleted_files.append(f"resized/{secure_name}")
-                logger.info(f"✅ Deleted resized video file: {resized_path}")
+                logger.info(f" Deleted resized video file: {resized_path}")
             except Exception as e:
                 error_msg = f"Failed to delete resized file: {str(e)}"
                 errors.append(error_msg)
-                logger.error(f"❌ {error_msg}")
+                logger.error(f" {error_msg}")
         else:
             logger.info(f"Resized video file not found: {resized_path}")
         
@@ -702,11 +702,11 @@ def delete_video_post():
             try:
                 os.remove(resized_path_with_prefix)
                 deleted_files.append(f"resized/2k_{secure_name}")
-                logger.info(f"✅ Deleted resized video file with prefix: {resized_path_with_prefix}")
+                logger.info(f" Deleted resized video file with prefix: {resized_path_with_prefix}")
             except Exception as e:
                 error_msg = f"Failed to delete resized file with prefix: {str(e)}"
                 errors.append(error_msg)
-                logger.error(f"❌ {error_msg}")
+                logger.error(f" {error_msg}")
         else:
             logger.info(f"Resized video file with prefix not found: {resized_path_with_prefix}")
         

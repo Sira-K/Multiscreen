@@ -51,12 +51,12 @@ def create_group():
     try:
         data = request.get_json() or {}
         
-        logger.info(f"🔨 CREATE GROUP REQUEST: {data}")
+        logger.info(f" CREATE GROUP REQUEST: {data}")
         
         # Validate input data
         is_valid, error_message = validate_group_data(data)
         if not is_valid:
-            logger.error(f"❌ Validation failed: {error_message}")
+            logger.error(f" Validation failed: {error_message}")
             return jsonify({"error": error_message}), 400
         
         # Extract group data
@@ -90,7 +90,7 @@ def create_group():
             "created_at": time.time()
         }
         
-        logger.info(f"📦 Creating Docker container for group: {group_name}")
+        logger.info(f" Creating Docker container for group: {group_name}")
         
         # Import and call Docker creation function
         try:
@@ -102,19 +102,19 @@ def create_group():
             # Check if Docker creation was successful
             if not docker_result.get("success", False):
                 error_msg = docker_result.get("error", "Unknown Docker creation error")
-                logger.error(f"❌ Docker creation failed: {error_msg}")
+                logger.error(f" Docker creation failed: {error_msg}")
                 return jsonify({
                     "error": f"Failed to create Docker container: {error_msg}",
                     "details": docker_result
                 }), 500
             
-            logger.info(f"✅ Docker container created successfully for group: {group_name}")
+            logger.info(f" Docker container created successfully for group: {group_name}")
             
             # Now get the updated groups list from Docker discovery
             groups_result = get_groups_from_docker()
             
             if not groups_result.get("success", False):
-                logger.warning("⚠️ Group created but failed to retrieve updated groups list")
+                logger.warning(" Group created but failed to retrieve updated groups list")
                 # Still return success since Docker container was created
                 return jsonify({
                     "message": f"Group '{group_name}' created successfully",
@@ -130,14 +130,14 @@ def create_group():
                     break
             
             if created_group:
-                logger.info(f"📋 Successfully created and verified group: {group_name}")
+                logger.info(f" Successfully created and verified group: {group_name}")
                 return jsonify({
                     "message": f"Group '{group_name}' created successfully",
                     "group": created_group,
                     "total_groups": len(groups_result.get("groups", []))
                 }), 201
             else:
-                logger.warning(f"⚠️ Group created but not found in discovery results")
+                logger.warning(f" Group created but not found in discovery results")
                 return jsonify({
                     "message": f"Group '{group_name}' created successfully",
                     "docker_info": docker_result,
@@ -145,13 +145,13 @@ def create_group():
                 }), 201
             
         except ImportError as e:
-            logger.error(f"❌ Could not import docker_management: {e}")
+            logger.error(f" Could not import docker_management: {e}")
             return jsonify({
                 "error": "Docker management module not available",
                 "details": str(e)
             }), 500
         except Exception as e:
-            logger.error(f"❌ Error during Docker creation: {e}")
+            logger.error(f" Error during Docker creation: {e}")
             traceback.print_exc()
             return jsonify({
                 "error": f"Failed to create group: {str(e)}",
@@ -159,7 +159,7 @@ def create_group():
             }), 500
         
     except Exception as e:
-        logger.error(f"❌ Error in create_group: {e}")
+        logger.error(f" Error in create_group: {e}")
         traceback.print_exc()
         return jsonify({
             "error": f"Error creating group: {str(e)}"
@@ -173,7 +173,7 @@ def delete_group():
         group_id = data.get("group_id")
         group_name = data.get("group_name")
         
-        logger.info(f"🗑️ DELETE GROUP REQUEST: group_id={group_id}, group_name={group_name}")
+        logger.info(f" DELETE GROUP REQUEST: group_id={group_id}, group_name={group_name}")
         
         # Need either group_id or group_name
         if not group_id and not group_name:
@@ -182,7 +182,7 @@ def delete_group():
         # First, get current groups to find the target group
         groups_result = get_groups_from_docker()
         if not groups_result.get("success", False):
-            logger.error("❌ Failed to get current groups for deletion")
+            logger.error(" Failed to get current groups for deletion")
             return jsonify({"error": "Could not retrieve current groups"}), 500
         
         # Find the target group
@@ -195,33 +195,33 @@ def delete_group():
         
         if not target_group:
             identifier = group_id or group_name
-            logger.warning(f"⚠️ Group not found for deletion: {identifier}")
+            logger.warning(f" Group not found for deletion: {identifier}")
             return jsonify({"error": f"Group '{identifier}' not found"}), 404
         
         target_name = target_group.get("name", "unknown")
         target_id = target_group.get("id", "unknown")
         
-        logger.info(f"🎯 Found target group for deletion: {target_name} (ID: {target_id})")
+        logger.info(f" Found target group for deletion: {target_name} (ID: {target_id})")
         
         # Step 1: Stop any running streams for this group
-        logger.info(f"🛑 Stopping streams for group: {target_name}")
+        logger.info(f" Stopping streams for group: {target_name}")
         try:
             from blueprints.stream_management import stop_group_streams
             
             # Try to stop streams (don't fail deletion if this fails)
             stop_result = stop_group_streams(target_group)
             if stop_result.get("success"):
-                logger.info(f"✅ Streams stopped for group: {target_name}")
+                logger.info(f" Streams stopped for group: {target_name}")
             else:
-                logger.warning(f"⚠️ Failed to stop streams, continuing with deletion: {stop_result.get('error')}")
+                logger.warning(f" Failed to stop streams, continuing with deletion: {stop_result.get('error')}")
                 
         except ImportError:
-            logger.warning("⚠️ Stream management not available, skipping stream stop")
+            logger.warning(" Stream management not available, skipping stream stop")
         except Exception as e:
-            logger.warning(f"⚠️ Error stopping streams, continuing with deletion: {e}")
+            logger.warning(f" Error stopping streams, continuing with deletion: {e}")
         
         # Step 2: Delete Docker container
-        logger.info(f"🐳 Deleting Docker container for group: {target_name}")
+        logger.info(f" Deleting Docker container for group: {target_name}")
         try:
             from blueprints.docker_management import delete_docker
             
@@ -229,34 +229,34 @@ def delete_group():
             
             if not docker_result.get("success", False):
                 error_msg = docker_result.get("error", "Unknown Docker deletion error")
-                logger.error(f"❌ Docker deletion failed: {error_msg}")
+                logger.error(f" Docker deletion failed: {error_msg}")
                 return jsonify({
                     "error": f"Failed to delete Docker container: {error_msg}",
                     "details": docker_result
                 }), 500
             
-            logger.info(f"✅ Docker container deleted successfully for group: {target_name}")
+            logger.info(f" Docker container deleted successfully for group: {target_name}")
             
         except ImportError as e:
-            logger.error(f"❌ Could not import docker_management: {e}")
+            logger.error(f" Could not import docker_management: {e}")
             return jsonify({
                 "error": "Docker management module not available",
                 "details": str(e)
             }), 500
         except Exception as e:
-            logger.error(f"❌ Error during Docker deletion: {e}")
+            logger.error(f" Error during Docker deletion: {e}")
             traceback.print_exc()
             return jsonify({
                 "error": f"Failed to delete Docker container: {str(e)}"
             }), 500
         
         # Step 3: Get updated groups list
-        logger.info("📋 Retrieving updated groups list after deletion")
+        logger.info(" Retrieving updated groups list after deletion")
         updated_groups_result = get_groups_from_docker()
         
         if updated_groups_result.get("success", False):
             remaining_groups = updated_groups_result.get("groups", [])
-            logger.info(f"✅ Group '{target_name}' deleted successfully. {len(remaining_groups)} groups remaining.")
+            logger.info(f" Group '{target_name}' deleted successfully. {len(remaining_groups)} groups remaining.")
             
             return jsonify({
                 "message": f"Group '{target_name}' deleted successfully",
@@ -268,7 +268,7 @@ def delete_group():
                 "total_remaining": len(remaining_groups)
             }), 200
         else:
-            logger.warning("⚠️ Group deleted but failed to retrieve updated groups list")
+            logger.warning(" Group deleted but failed to retrieve updated groups list")
             return jsonify({
                 "message": f"Group '{target_name}' deleted successfully",
                 "deleted_group": {
@@ -279,7 +279,7 @@ def delete_group():
             }), 200
         
     except Exception as e:
-        logger.error(f"❌ Error in delete_group: {e}")
+        logger.error(f" Error in delete_group: {e}")
         traceback.print_exc()
         return jsonify({
             "error": f"Error deleting group: {str(e)}"
@@ -289,14 +289,14 @@ def delete_group():
 def get_groups():
     """Get all groups by discovering them from Docker containers"""
     try:
-        logger.info("📋 GET GROUPS REQUEST - Discovering from Docker")
+        logger.info(" GET GROUPS REQUEST - Discovering from Docker")
         
         # Get groups from Docker discovery
         result = get_groups_from_docker()
         
         if result.get("success", False):
             groups = result.get("groups", [])
-            logger.info(f"✅ Found {len(groups)} groups from Docker discovery")
+            logger.info(f" Found {len(groups)} groups from Docker discovery")
             
             return jsonify({
                 "groups": groups,
@@ -306,7 +306,7 @@ def get_groups():
             }), 200
         else:
             error_msg = result.get("error", "Unknown error during Docker discovery")
-            logger.error(f"❌ Docker discovery failed: {error_msg}")
+            logger.error(f" Docker discovery failed: {error_msg}")
             return jsonify({
                 "error": f"Failed to discover groups: {error_msg}",
                 "groups": [],
@@ -314,7 +314,7 @@ def get_groups():
             }), 500
         
     except Exception as e:
-        logger.error(f"❌ Error in get_groups: {e}")
+        logger.error(f" Error in get_groups: {e}")
         traceback.print_exc()
         return jsonify({
             "error": f"Error retrieving groups: {str(e)}",
@@ -336,14 +336,14 @@ def get_groups_from_docker() -> Dict[str, Any]:
         return discover_groups()
         
     except ImportError as e:
-        logger.error(f"❌ Could not import docker_management: {e}")
+        logger.error(f" Could not import docker_management: {e}")
         return {
             "success": False,
             "error": "Docker management module not available",
             "groups": []
         }
     except Exception as e:
-        logger.error(f"❌ Error in Docker discovery: {e}")
+        logger.error(f" Error in Docker discovery: {e}")
         return {
             "success": False,
             "error": str(e),
