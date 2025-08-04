@@ -396,7 +396,7 @@ export const clientApi = {
   async unassignClientFromGroup(clientId: string) {
     console.log(`🎯 Unassigning client ${clientId} from group`);
     
-    const response = await fetch(`${API_BASE_URL}/unassign_client_from_group`, {
+    const response = await fetch(`${API_BASE_URL}/unassign_client`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -406,7 +406,7 @@ export const clientApi = {
       }),
     });
 
-    const result = await handleApiResponse(response, 'POST /unassign_client_from_group');
+    const result = await handleApiResponse(response, 'POST /unassign_client');
     console.log(`✅ Client unassigned from group:`, result);
     return result;
   },

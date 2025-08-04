@@ -1,4 +1,5 @@
-// frontend/src/components/ui/GroupCard/GroupCard.tsx - Main Component
+// frontend/src/components/ui/GroupCard/GroupCard.tsx - FIXED VERSION
+// This fixes the missing prop passing in the GroupCardExpandedContent
 
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -62,14 +63,15 @@ const GroupCard: React.FC<GroupCardProps> = ({
     actualIsStreaming = (isStreaming as any).is_streaming || false;
   }
 
-  console.log(`🔍 GroupCard DEBUG - Group "${group.name}":`, {
+  // 🔍 DEBUG: Log what screen assignment props we received
+  console.log(`🔍 GroupCard DEBUG - Group "${group.name}" screen assignment props:`, {
     groupId: group.id,
-    isStreamingProp: isStreaming,
-    propType: typeof isStreaming,
-    actualIsStreaming: actualIsStreaming,
-    groupDockerRunning: group.docker_running,
-    groupDockerStatus: group.docker_status,
-    groupStatus: group.status
+    hasOnAssignClientToScreen: !!onAssignClientToScreen,
+    hasOnUnassignClientFromScreen: !!onUnassignClientFromScreen,
+    hasOnAutoAssignScreens: !!onAutoAssignScreens,
+    hasGetScreenAssignments: !!getScreenAssignments,
+    hasScreenAssignmentInfo: !!screenAssignmentInfo,
+    screenAssignmentInfo
   });
 
   // Safety check - if essential fields are missing, show error state
@@ -168,23 +170,19 @@ const GroupCard: React.FC<GroupCardProps> = ({
               hasAnyAssignments={hasAnyAssignments}
               onDelete={onDelete}
               onAssignClient={onAssignClient}
+              
+              // Pass screen assignment props
+              onAssignClientToScreen={onAssignClientToScreen}
+              onUnassignClientFromScreen={onUnassignClientFromScreen}
+              onAutoAssignScreens={onAutoAssignScreens}
+              getScreenAssignments={getScreenAssignments}
+              screenAssignmentInfo={screenAssignmentInfo}
             />
           </CollapsibleContent>
         </Collapsible>
-
-        {/* Debug Info (remove in production) */}
-        {process.env.NODE_ENV === 'development' && (
-          <div className="text-xs text-gray-400 border-t pt-2 px-4 pb-2">
-            Debug: localIsStreaming={localIsStreaming.toString()}, 
-            operationInProgress={operationInProgress || 'none'},
-            hasAssignments={hasAnyAssignments.toString()},
-            completeAssignments={hasCompleteAssignments.toString()},
-            dockerRunning={group.docker_running?.toString() || 'unknown'},
-            streamingMode={group.streaming_mode || 'undefined'}
-          </div>
-        )}
       </Card>
 
+      {/* Streaming Dialogs */}
       <StreamingDialogs
         group={group}
         videos={videos}
