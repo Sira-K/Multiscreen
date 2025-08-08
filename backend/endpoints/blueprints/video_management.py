@@ -936,6 +936,7 @@ def cleanup_completed_jobs():
             'message': f"Error during cleanup: {str(e)}"
         }), 500
 
+
 @video_bp.route('/video_status', methods=['GET'])
 def get_video_status():
     """Get detailed status of video files and processing jobs"""
