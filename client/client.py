@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+"""
+Multi-Screen Client Runner
+Connects to server, waits for group assignment, and displays streams
+Refactored from the original MultiScreenClient code
+"""
+
 import argparse
 import requests
 import time
@@ -6,29 +13,32 @@ import subprocess
 import sys
 import os
 import json
-import tempfile
-import shutil
 import signal
 import atexit
 from typing import Optional
 from urllib.parse import urlparse
 import threading
 from pathlib import Path
+import shutil
 
 class MultiScreenClient:
-    def __init__(self, server_url: str, hostname: str = None, display_name: str = None):
+    def __init__(self, server_url: str, hostname: str = None, display_name: str = None, 
+                 force_ffplay: bool = False):
         """
         Client that waits for admin to assign it to a stream
-        Uses integrated C++ player instead of ffplay for better performance
+        Uses C++ player or ffplay fallback
         
         Args:
             server_url: Server URL (e.g., "http://128.205.39.64:5001")
             hostname: Unique client identifier
             display_name: Friendly display name
+            force_ffplay: Force use of ffplay instead of C++ player
         """
         self.server_url = server_url.rstrip('/')
         self.hostname = hostname or f"client-{int(time.time())}"
         self.display_name = display_name or self.hostname
+        self.force_ffplay = force_ffplay
+        
         self.current_stream_url = None
         self.current_stream_version = None
         self.player_process = None
@@ -40,10 +50,6 @@ class MultiScreenClient:
         # Extract server IP from server URL for stream URL fixing
         parsed_url = urlparse(self.server_url)
         self.server_ip = parsed_url.hostname or "127.0.0.1"
-        
-        # Player executable path
-        self.player_executable = None
-        self.build_dir = None
         
         # Configure logging
         logging.basicConfig(
@@ -59,8 +65,8 @@ class MultiScreenClient:
         # Register cleanup function
         atexit.register(self._emergency_cleanup)
         
-        # Initialize the C++ player
-        self._setup_cpp_player()
+        # Find the player executable
+        self.player_executable = self._find_player_executable()
 
     def _setup_signal_handlers(self):
         """Setup signal handlers for graceful shutdown"""
@@ -77,6 +83,33 @@ class MultiScreenClient:
         if hasattr(signal, 'SIGHUP'):
             signal.signal(signal.SIGHUP, signal_handler)
 
+    def _find_player_executable(self) -> Optional[str]:
+        """Find the C++ player executable"""
+        if self.force_ffplay:
+            self.logger.info("Forcing ffplay usage (--force-ffplay specified)")
+            return None
+        
+        # Look for built C++ player
+        search_paths = [
+            Path(__file__).parent / "multi-screen" / "cmake-build-debug" / "player" / "player",
+            Path(__file__).parent / "cmake-build-debug" / "player" / "player", 
+            Path(__file__).parent / "build" / "player" / "player",
+            Path(__file__).parent / "player" / "player",
+            Path("./multi-screen/cmake-build-debug/player/player"),
+            Path("./cmake-build-debug/player/player"),
+            Path("./build/player/player"),
+            Path("./player/player")
+        ]
+        
+        for player_path in search_paths:
+            if player_path.exists() and os.access(player_path, os.X_OK):
+                self.logger.info(f"Found C++ player: {player_path}")
+                return str(player_path.absolute())
+        
+        self.logger.warning("C++ player not found, will use ffplay fallback")
+        self.logger.info("To build the C++ player, run: python build_player.py")
+        return None
+
     def shutdown(self):
         """Initiate graceful shutdown"""
         if not self.running:
@@ -91,201 +124,6 @@ class MultiScreenClient:
         
         # Give monitoring threads a moment to notice shutdown
         time.sleep(0.5)
-
-    def _setup_cpp_player(self):
-        """Setup the C++ player - use existing build if available, fallback to building our own"""
-        try:
-            # First, try to use existing compiled player
-            existing_player_path = Path(__file__).parent / "multi-screen" / "cmake-build-debug" / "player" / "player"
-            
-            if existing_player_path.exists():
-                self.player_executable = str(existing_player_path)
-                self.logger.info(f"Using existing C++ player: {self.player_executable}")
-                self.build_dir = None  # No need for temporary build directory
-                return
-            
-            # Fallback to building our own if existing player not found
-            self.logger.info("Existing player not found, building C++ video player...")
-            
-            # Create build directory
-            self.build_dir = tempfile.mkdtemp(prefix="multiscreen_player_")
-            self.logger.info(f"Build directory: {self.build_dir}")
-            
-            # Copy source files to build directory
-            current_dir = Path(__file__).parent / "multi-screen" / "player"
-            source_files = [
-                "main.cpp",
-                "receive_from_server.cpp", 
-                "receive_from_server.h",
-                "display_to_screen.cpp",
-                "display_to_screen.h", 
-                "safe_queue.cpp",
-                "safe_queue.h",
-                "CMakeLists.txt"
-            ]
-            
-            for file in source_files:
-                src_path = current_dir / file
-                if src_path.exists():
-                    shutil.copy2(src_path, self.build_dir)
-                    self.logger.debug(f"Copied {file}")
-                else:
-                    self.logger.warning(f"Source file not found: {file}")
-            
-            # Create enhanced CMakeLists.txt
-            self._create_cmake_file()
-            
-            # Build the player
-            if self._build_player():
-                self.player_executable = os.path.join(self.build_dir, "player")
-                self.logger.info("C++ player built successfully")
-            else:
-                self.logger.error("Failed to build C++ player, falling back to ffplay")
-                self.player_executable = None
-                
-        except Exception as e:
-            self.logger.error(f"Error setting up C++ player: {e}")
-            self.player_executable = None
-
-    def _create_cmake_file(self):
-        """Create comprehensive CMakeLists.txt"""
-        cmake_content = """cmake_minimum_required(VERSION 3.16)
-project(MultiScreenPlayer)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# Find required packages
-find_package(PkgConfig REQUIRED)
-
-# Find FFmpeg components
-pkg_check_modules(PKG_FFMPEG REQUIRED IMPORTED_TARGET
-    libavformat
-    libavcodec
-    libavutil
-    libswscale
-)
-
-# Find other dependencies
-pkg_check_modules(PKG_CURL REQUIRED IMPORTED_TARGET libcurl)
-pkg_check_modules(PKG_SDL2 REQUIRED IMPORTED_TARGET sdl2)
-
-# Find spdlog
-find_package(spdlog REQUIRED)
-
-# Find nlohmann_json
-find_package(nlohmann_json REQUIRED)
-
-# Add executable
-add_executable(
-    player
-    main.cpp
-    receive_from_server.cpp
-    display_to_screen.cpp
-    safe_queue.cpp
-)
-
-# Link libraries
-target_link_libraries(
-    player PRIVATE
-    PkgConfig::PKG_FFMPEG
-    PkgConfig::PKG_CURL
-    PkgConfig::PKG_SDL2
-    spdlog::spdlog
-    nlohmann_json::nlohmann_json
-    $<$<BOOL:${MINGW}>:ws2_32>
-)
-
-# Compiler-specific options
-if(MSVC)
-    target_compile_options(player PRIVATE /W4)
-else()
-    target_compile_options(player PRIVATE -Wall -Wextra -Wpedantic)
-endif()
-
-# Set output directory
-set_target_properties(player PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-)
-"""
-        
-        cmake_path = os.path.join(self.build_dir, "CMakeLists.txt")
-        with open(cmake_path, 'w') as f:
-            f.write(cmake_content)
-
-    def _build_player(self) -> bool:
-        """Build the C++ player using CMake"""
-        try:
-            self.logger.info("Building C++ player...")
-            
-            # Check for required tools
-            if not self._check_build_dependencies():
-                return False
-            
-            build_commands = [
-                # Configure
-                ["cmake", "-B", "build", "-S", ".", "-DCMAKE_BUILD_TYPE=Release"],
-                # Build
-                ["cmake", "--build", "build", "--config", "Release"]
-            ]
-            
-            for cmd in build_commands:
-                self.logger.debug(f"Running: {' '.join(cmd)}")
-                result = subprocess.run(
-                    cmd,
-                    cwd=self.build_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=300  # 5 minute timeout
-                )
-                
-                if result.returncode != 0:
-                    self.logger.error(f"Build command failed: {' '.join(cmd)}")
-                    self.logger.error(f"Error output: {result.stderr}")
-                    return False
-                else:
-                    self.logger.debug(f"Command succeeded: {' '.join(cmd)}")
-            
-            # Check if executable was created
-            potential_paths = [
-                os.path.join(self.build_dir, "build", "player"),
-                os.path.join(self.build_dir, "build", "Release", "player"),
-                os.path.join(self.build_dir, "build", "player.exe"),
-                os.path.join(self.build_dir, "build", "Release", "player.exe"),
-            ]
-            
-            for path in potential_paths:
-                if os.path.exists(path):
-                    # Copy to root of build directory for easier access
-                    final_path = os.path.join(self.build_dir, "player")
-                    if not os.path.exists(final_path):
-                        shutil.copy2(path, final_path)
-                    self.logger.info(f"Player executable: {final_path}")
-                    return True
-            
-            self.logger.error("Player executable not found after build")
-            return False
-            
-        except subprocess.TimeoutExpired:
-            self.logger.error("Build timeout exceeded")
-            return False
-        except Exception as e:
-            self.logger.error(f"Build error: {e}")
-            return False
-
-    def _check_build_dependencies(self) -> bool:
-        """Check if required build tools are available"""
-        required_tools = ["cmake", "pkg-config"]
-        
-        for tool in required_tools:
-            if not shutil.which(tool):
-                self.logger.error(f"Required tool not found: {tool}")
-                self.logger.error("Please install build dependencies:")
-                self.logger.error("   Ubuntu/Debian: sudo apt-get install cmake pkg-config libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libcurl4-openssl-dev libsdl2-dev libspdlog-dev nlohmann-json3-dev")
-                self.logger.error("   macOS: brew install cmake pkg-config ffmpeg curl sdl2 spdlog nlohmann-json")
-                return False
-        
-        return True
 
     def fix_stream_url(self, stream_url: str) -> str:
         """
@@ -585,7 +423,7 @@ set_target_properties(player PROPERTIES
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,  # Merge stderr into stdout
                 env=env,
-                cwd=self.build_dir or os.path.dirname(self.player_executable),
+                cwd=os.path.dirname(self.player_executable),
                 universal_newlines=True,
                 bufsize=1  # Line buffered
             )
@@ -800,16 +638,6 @@ set_target_properties(player PROPERTIES
         """Emergency cleanup function for atexit"""
         if self.running:
             self.stop_stream()
-            self.cleanup()
-
-    def cleanup(self):
-        """Clean up build directory and other resources"""
-        try:
-            if self.build_dir and os.path.exists(self.build_dir):
-                shutil.rmtree(self.build_dir)
-                self.logger.debug(f" Cleaned up build directory: {self.build_dir}")
-        except Exception as e:
-            self.logger.warning(f" Error cleaning up: {e}")
 
     def run(self):
         """Main execution flow with stream restart capability and graceful shutdown"""
@@ -870,11 +698,10 @@ set_target_properties(player PROPERTIES
             self.logger.info(" Performing final cleanup...")
             self.running = False
             self.stop_stream()
-            self.cleanup()
             self.logger.info(" Client stopped cleanly")
 
 def main():
-    parser = argparse.ArgumentParser(description='Multi-Screen Display Client with C++ Player and Graceful Shutdown')
+    parser = argparse.ArgumentParser(description='Multi-Screen Display Client - Server Assignment Mode')
     parser.add_argument('--server', required=True, help='Server URL (e.g., http://128.205.39.64:5001)')
     parser.add_argument('--hostname', help='Custom client ID (default: auto-generated)')
     parser.add_argument('--name', help='Display name for admin interface')
@@ -889,13 +716,9 @@ def main():
     client = MultiScreenClient(
         server_url=args.server,
         hostname=args.hostname,
-        display_name=args.name
+        display_name=args.name,
+        force_ffplay=args.force_ffplay
     )
-    
-    # Override player if forced
-    if args.force_ffplay:
-        client.logger.info(" Forcing ffplay usage")
-        client.player_executable = None
     
     try:
         client.run()
