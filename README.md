@@ -1,378 +1,533 @@
 # Multi-Screen SRT Streaming System
 
-A comprehensive real-time video streaming solution designed for multi-display installations using SRT (Secure Reliable Transport) protocol. The system supports synchronized playback across multiple screens with flexible layout configurations including horizontal, vertical, and grid arrangements.asd
+A comprehensive real-time video streaming solution designed for multi-display installations using SRT (Secure Reliable Transport) protocol. This system, developed as part of the OpenVideoWalls project, supports synchronized playback across multiple screens with flexible layout configurations including horizontal, vertical, and grid arrangements.
 
-## 🎯 Project Overview
+##  Project Overview
+
+This is a full-stack application for managing video wall systems with recycled heterogeneous displays. The system enables real-time streaming to multiple screens simultaneously with precise synchronization, supporting various layout configurations and streaming modes.
+
+### Architecture Diagram
 
 ```mermaid
-flowchart LR
-    server["Server\nUbuntu 22.04\nFlask Control API"]
-    srt["SRT Server\nDocker Container"]
-    client_a["Client A\nRaspberry Pi 4B\nPlayer Application"]
-    client_b["Client B\nRaspberry Pi 4B\nPlayer Application"]
-    web["Web Interface\nReact Control Panel"]
+flowchart TB
+    subgraph "Frontend (React + TypeScript)"
+        web["Web Control Interface<br/>React 18 + Vite"]
+        comp["Component Library<br/>shadcn/ui + Tailwind CSS"]
+    end
     
-    server -->|push streams| srt
-    srt -->|pull stream| client_a
-    srt -->|pull stream| client_b
-    web -->|control| server
-    server -->|manage| srt
+    subgraph "Backend (Flask)"
+        flask["Flask API Server<br/>REST Endpoints"]
+        bp["Blueprints<br/> Group Management<br/> Video Processing<br/> Stream Control<br/> Client Management"]
+    end
+    
+    subgraph "Infrastructure"
+        docker["Docker Containers<br/>SRS v5 Streaming Server"]
+        ffmpeg["FFmpeg Processing<br/>Video Splitting & Encoding"]
+    end
+    
+    subgraph "Clients"
+        player1["C++ Player Application<br/>Raspberry Pi 4B"]
+        player2["C++ Player Application<br/>Raspberry Pi 4B"]
+        playerN["...Additional Players"]
+    end
+    
+    web --> flask
+    flask --> bp
+    bp --> docker
+    bp --> ffmpeg
+    docker --> player1
+    docker --> player2
+    docker --> playerN
 ```
 
-This system enables:
-- **Real-time video streaming** to multiple displays simultaneously
-- **Flexible screen layouts** (horizontal, vertical, grid arrangements)
-- **Group management** for organizing multiple screen setups
-- **Remote control** via web interface
-- **Video file processing** and test pattern generation
-- **Client registration** and automatic stream assignment
+##  Key Features
 
-## ✨ Features
+### Display Management
+- **Multi-Screen Support**: Control 2-16+ screens in various configurations
+- **Flexible Layouts**: 
+  - Horizontal (side-by-side)
+  - Vertical (top-bottom)
+  - Grid (2x2, 3x3, custom configurations)
+- **Group Organization**: Create and manage multiple screen groups independently
+- **Dynamic Port Assignment**: Automatic port allocation for each group
 
-- 🖥️ **Multi-Screen Support**: Control 2-16+ screens in various layouts
-- 🌐 **Web-Based Control Panel**: React interface for remote management
-- 🎬 **Video Processing**: Upload and stream custom video content
-- 🔄 **Real-Time Synchronization**: Low-latency SRT streaming
-- 📐 **Grid Layouts**: Support for 2x2, 3x3, and custom grid configurations
-- 🐳 **Containerized**: Docker-based SRT server deployment
-- 🎯 **Group Management**: Organize multiple screen installations
-- 📱 **Client Auto-Discovery**: Automatic client registration and assignment
+### Streaming Modes
+- **Multi-Video Mode**: Each screen displays different video content
+- **Single Video Split Mode**: One video automatically divided across all screens
+- **Real-Time Synchronization**: Low-latency SRT protocol with SEI timestamp embedding
+- **Persistent Stream IDs**: Consistent stream identification across sessions
 
-## 🏗️ Architecture
+### Client Management
+- **Auto-Registration**: Clients automatically register with the server
+- **Smart Assignment**: Automatic or manual assignment to groups and screens
+- **Status Monitoring**: Real-time client status and health checking
+- **Screen-Specific Assignment**: Direct client-to-screen mapping
 
-### Core Components
+### Video Processing
+- **Format Support**: MP4, AVI, MOV, MKV, WebM
+- **Automatic Resizing**: Optional 2K resolution processing
+- **Upload Management**: Web-based video file upload and management
+- **FFmpeg Integration**: Professional-grade video processing pipeline
 
-1. **Flask Control Server** (`/srt_control_server/`)
-   - RESTful API for system control
-   - Group and client management
-   - FFmpeg process orchestration
-   - Video file handling
+##  Project Structure
 
-2. **SRT Streaming Server** (Docker)
-   - Containerized SRS (Simple Realtime Server)
-   - Multi-stream support with dynamic ports
-   - Low-latency video distribution
+```
+multi-screen/
+ frontend/                    # React web interface
+    src/
+       components/         # React components
+          ui/            # UI component library
+             GroupCard/ # Group management components
+             CreateGroupDialog.tsx
+             ...shadcn components
+          NetworkConfiguration.tsx
+          ScreenLayout.tsx
+          SystemControls.tsx
+          StatusDisplay.tsx
+       hooks/             # Custom React hooks
+          useScreenManagement.tsx
+          useStreamSettings.tsx
+          useSystemCommands.tsx
+       types/             # TypeScript definitions
+       App.tsx            # Main application component
+       main.tsx           # Application entry point
+    package.json           # Frontend dependencies
+    vite.config.ts         # Vite configuration
 
-3. **Client Players** (`/player/`)
-   - C++ application using FFmpeg libraries
-   - Optimized for Raspberry Pi hardware
-   - Hardware-accelerated video decoding
+ backend/
+    endpoints/             # Flask backend server
+        flask_app.py       # Main Flask application
+        app_config.py      # Unified configuration system
+        models/
+           app_state.py   # Application state model
+        utils/
+           video_utils.py    # Video processing utilities
+           ffmpeg_utils.py   # FFmpeg command builders
+        blueprints/
+           group_management.py   # Group CRUD operations
+           video_management.py   # Video upload/processing
+           stream_management.py  # SRT stream control
+           client_management.py  # Client registration
+           docker_management.py  # Container orchestration
+        raw_video_file/    # Original video uploads
+        resized_video/     # Processed video storage
 
-4. **Web Control Interface** (`/web/`)
-   - React-based control panel
-   - Real-time status monitoring
-   - Layout configuration tools
+ player/                     # C++ client player application
+    main.cpp               # Player entry point
+    CMakeLists.txt         # Build configuration
 
-## 🚀 Quick Start
+ external/                   # Third-party dependencies
+ cmake-build-debug/          # Build output directory
+ CMakeLists.txt             # Root build configuration
+ documentation/
+     Open_video_wall_midterm_final.pdf  # Academic report
+```
+
+##  Quick Start Guide
 
 ### Prerequisites
 
-- **Server**: Ubuntu 22.04+ with Docker
-- **Clients**: Raspberry Pi 4B with Raspberry Pi OS (64-bit)
-- **Development**: CMake 3.25+, build-essential, ninja-build
-- **Network**: All devices on same subnet with firewall access to ports 1935, 1985, 8080, 10080
+#### Server Requirements
+- Ubuntu 22.04+ or similar Linux distribution
+- Docker and Docker Compose
+- Python 3.8+
+- Node.js 16+ and npm
+- FFmpeg with H.264 support
+- Git
 
-### 1. Clone the Repository
+#### Client Requirements
+- Raspberry Pi 4B with 4GB+ RAM
+- Raspberry Pi OS (64-bit recommended)
+- CMake 3.25+
+- Build tools (gcc, g++, make, ninja-build)
 
-Clone on the server and all client devices:
+#### Network Requirements
+- All devices on same subnet
+- Firewall access to ports:
+  - 5000 (Flask API)
+  - 5173 (Vite dev server)
+  - 1935, 1985, 8080, 10080+ (SRT streaming per group)
 
+### Installation
+
+#### 1. Clone Repository
 ```bash
 git clone https://github.com/hwsel/multi-screen.git
 cd multi-screen
 ```
 
-### 2. Setup Development Environment
-
-Configure CMake build environment on all machines:
-
+#### 2. Backend Setup
 ```bash
-cmake \
-  -DEP_BUILD_ALWAYS=1L \
-  -DEP_J=<max_jobs> \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=/usr/bin/ninja \
-  -G Ninja \
-  -S . \
-  -B ./cmake-build-debug
+cd backend/endpoints
+
+# Install Python dependencies
+pip install flask flask-cors psutil
+
+# Create video directories
+mkdir -p raw_video_file resized_video
+
+# Start Flask server
+python flask_app.py
 ```
 
-**Parameters:**
-- `<max_jobs>`: CPU cores (use 36 for server, 3 for Raspberry Pi)
-- Automatically compiles server-side components and FFmpeg
+The backend will start on `http://localhost:5000`
 
-**Examples:**
-- **Server**: `cmake -DEP_BUILD_ALWAYS=1L -DEP_J=36 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_MAKE_PROGRAM=/usr/bin/ninja -G Ninja -S . -B ./cmake-build-debug`
-- **Client**: `cmake -DEP_BUILD_ALWAYS=1L -DEP_J=3 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_MAKE_PROGRAM=/usr/bin/ninja -G Ninja -S . -B ./cmake-build-debug`
-
-### 3. Compile Client Player
-
-On all Raspberry Pi clients:
-
+#### 3. Frontend Setup
 ```bash
-cmake \
-  --build ./cmake-build-debug \
-  --clean-first \
-  --target player \
-  -j 3
+cd frontend
+
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
 ```
 
-### 4. Start SRT Server
+The frontend will be available at `http://localhost:5173`
 
-Install Docker and launch the SRT streaming server:
-
+#### 4. Build Player Application (on clients)
 ```bash
-# Install Docker (Ubuntu)
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
+cd player
+mkdir build && cd build
+cmake ..
+make -j4
 
-# Start SRT Server Container
-sudo docker run \
-  --rm \
-  -it \
-  -p 1935:1935 \
-  -p 1985:1985 \
-  -p 8080:8080 \
-  -p 10080:10080/udp \
-  ossrs/srs:5 \
-  ./objs/srs -c conf/srt.conf
+# The player binary will be at: ./player
 ```
 
-**Note:** Replace `<SRT_IP>` in subsequent commands with the IP address of this machine.
+### Docker Setup for SRT Server
 
-### 5. Configure Server Streaming
+The system uses Docker containers for SRT streaming. Each group gets its own container:
 
-Start video streaming with test pattern or custom video:
-
-#### Test Pattern (Default)
 ```bash
-SEI=681d5c8f-80cd-4847-930a-99b9484b4a32+000000 \
-./cmake-build-debug/external/Install/bin/ffmpeg \
-  -y \
-  -re \
-  -f lavfi -i testsrc=s=3840x1080:r=30 \
-  -filter_complex "\
-    color=c=black:s=3840x1080[main];\
-    [main][0:v]overlay=x=0:y=0[main];\
-    [main]split=3[mon][mon1][mon2];\
-    [mon1]crop=w=1920:h=1080:x=0:y=0[mon1];\
-    [mon2]crop=w=1920:h=1080:x=1920:y=0[mon2]" \
-  -map "[mon]" \
-  -an -c:v libx264 \
-  -bsf:v h264_metadata=sei_user_data=$SEI \
-  -pes_payload_size 0 -bf 0 -g 1 \
-  -f mpegts "srt://<SRT_IP>:10080?streamid=#!::r=live/test,m=publish" \
-  -map "[mon1]" \
-  -an -c:v libx264 \
-  -bsf:v h264_metadata=sei_user_data=$SEI \
-  -pes_payload_size 0 -bf 0 -g 1 \
-  -f mpegts "srt://<SRT_IP>:10080?streamid=#!::r=live/test1,m=publish" \
-  -map "[mon2]" \
-  -an -c:v libx264 \
-  -bsf:v h264_metadata=sei_user_data=$SEI \
-  -pes_payload_size 0 -bf 0 -g 1 \
-  -f mpegts "srt://<SRT_IP>:10080?streamid=#!::r=live/test2,m=publish"
+# Pull the SRS image
+docker pull ossrs/srs:5
+
+# Containers are managed automatically via the web interface
+# Or manually via API:
+curl -X POST http://localhost:5000/create_group \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Main Display",
+    "screen_count": 4,
+    "orientation": "horizontal",
+    "streaming_mode": "multi_video"
+  }'
 ```
 
-This creates:
-- A 3840x1080 combined stream (`test`)
-- Left half stream 1920x1080 (`test1`)
-- Right half stream 1920x1080 (`test2`)
+##  Usage Guide
 
-### 6. Launch Client Players
+### Creating a Screen Group
+
+1. **Access Web Interface**: Navigate to `http://localhost:5173`
+
+2. **Create New Group**: Click "Create New Group" button
+
+3. **Configure Group Settings**:
+   - **Name**: Descriptive name for the group
+   - **Screen Count**: Number of displays (2-16)
+   - **Orientation**: 
+     - Horizontal (side-by-side)
+     - Vertical (stacked)
+     - Grid (custom rows/columns)
+   - **Streaming Mode**:
+     - Multi-Video: Different content per screen
+     - Single Video Split: One video divided across screens
+
+4. **Start Docker Container**: Click "Start Docker" for the group
+
+### Uploading Videos
+
+1. **Navigate to Videos Section**: Click on "Videos" tab
+
+2. **Upload Video Files**:
+   ```bash
+   # Via web interface: Use the upload button
+   
+   # Via API:
+   curl -X POST http://localhost:5000/upload_video \
+     -F "video=@your_video.mp4"
+   ```
+
+3. **Optional Processing**: Enable 2K resolution conversion if needed
+
+### Configuring Streams
+
+#### Multi-Video Mode
+1. Select group in web interface
+2. Click "Configure Videos"
+3. Assign a different video to each screen
+4. Click "Start Streaming"
+
+#### Single Video Split Mode
+1. Select group in web interface
+2. Choose single video file
+3. System automatically splits based on layout
+4. Click "Start Split Video"
+
+### Client Setup
 
 On each Raspberry Pi client:
 
-#### For Screen 1 (Left Half)
-```bash
-./cmake-build-debug/player/player 'srt://<SRT_IP>:10080?streamid=#!::r=live/test1,m=publish'
-```
+1. **Register Client**:
+   ```bash
+   curl -X POST http://server:5000/register_client \
+     -H "Content-Type: application/json" \
+     -d '{
+       "hostname": "rpi-screen-1",
+       "display_name": "Living Room Left"
+     }'
+   ```
 
-#### For Screen 2 (Right Half)
-```bash
-./cmake-build-debug/player/player 'srt://<SRT_IP>:10080?streamid=#!::r=live/test2,m=publish'
-```
+2. **Assign to Group**: Use web interface to assign client to group and screen
 
-#### Alternative: Using FFplay for Testing
-```bash
-# Basic playback
-./cmake-build-debug/external/Install/bin/ffplay 'srt://<SRT_IP>:10080?streamid=#!::r=live/test2,m=request,latency=5000000'
+3. **Start Player**:
+   ```bash
+   # Client will receive stream URL from server
+   ./player 'srt://server:10080?streamid=#!::r=live/group_name/stream_id,m=request'
+   ```
 
-# With logging
-./cmake-build-debug/external/Install/bin/ffplay 'srt://<SRT_IP>:10080?streamid=#!::r=live/test2,m=request,latency=5000000' 2>&1 | tee ffplay.log
-```
+##  API Reference
 
-## 🎛️ Advanced Configuration
+### Group Management
 
-### Flask Control Server
+#### Create Group
+```http
+POST /create_group
+Content-Type: application/json
 
-Start the web-based control server:
-
-```bash
-cd srt_control_server
-pip install flask flask-cors psutil
-python app.py
-```
-
-Access the control panel at `http://localhost:5000`
-
-### API Endpoints
-
-#### Screen Management
-- `POST /set_screen_ips` - Configure screen count, IPs, and orientation
-- `GET /screen_status` - Get current screen configuration
-- `POST /launch_player` - Launch player on specific screen
-
-#### Stream Management
-- `POST /start_srt` - Start SRT stream using FFmpeg
-- `POST /stop_srt` - Stop running FFmpeg process
-- `POST /upload_video` - Upload and validate video file
-
-#### Docker Management
-- `POST /start_docker` - Start SRT Docker container
-- `POST /stop_docker` - Stop SRT Docker container
-
-#### Client Management
-- `POST /register_client` - Register client device
-- `POST /client_status` - Check client stream assignment
-- `GET /get_clients` - List all registered clients
-- `POST /assign_stream` - Assign stream to client
-
-#### Group Management
-- `POST /create_group` - Create new screen group
-- `GET /groups` - List all groups
-- `POST /assign_client_to_group` - Assign client to group
-
-### Layout Configurations
-
-#### Horizontal Layout (2-4 screens)
-```json
 {
+  "name": "Display Wall 1",
+  "screen_count": 4,
   "orientation": "horizontal",
-  "screen_count": 3,
-  "screen_ips": {
-    "1": "192.168.1.101",
-    "2": "192.168.1.102", 
-    "3": "192.168.1.103"
-  }
+  "streaming_mode": "multi_video",
+  "grid_rows": 2,  // For grid layout
+  "grid_cols": 2   // For grid layout
 }
 ```
 
-#### Grid Layout (2x2, 3x3, etc.)
-```json
+#### List Groups
+```http
+GET /get_groups
+```
+
+#### Delete Group
+```http
+POST /delete_group
+Content-Type: application/json
+
 {
-  "orientation": "grid",
-  "grid_rows": 2,
-  "grid_cols": 3,
-  "screen_count": 6,
-  "screen_ips": {
-    "1": "192.168.1.101",
-    "2": "192.168.1.102",
-    "3": "192.168.1.103",
-    "4": "192.168.1.104",
-    "5": "192.168.1.105",
-    "6": "192.168.1.106"
-  }
+  "group_id": "group_uuid"
 }
 ```
 
-### Custom Video Processing
+### Stream Management
 
-Upload custom videos via the web interface or API:
+#### Start Multi-Video Stream
+```http
+POST /start_multi_video_srt
+Content-Type: application/json
 
-```bash
-curl -X POST \
-  -F "video=@your_video.mp4" \
-  http://localhost:5000/upload_video
+{
+  "group_id": "group_uuid",
+  "video_files": [
+    {"screen": 0, "file": "video1.mp4"},
+    {"screen": 1, "file": "video2.mp4"},
+    {"screen": 2, "file": "video3.mp4"},
+    {"screen": 3, "file": "video4.mp4"}
+  ]
+}
 ```
 
-Supported formats: MP4, AVI, MOV, MKV
+#### Start Single Video Split
+```http
+POST /start_single_video_split
+Content-Type: application/json
 
-## 🔧 Project Structure
-
-```
-multi-screen/
-├── cmake-build-debug/          # Build output directory
-├── srt_control_server/         # Flask-based control server
-│   ├── app.py                  # Main application entry
-│   ├── config.py               # Configuration management
-│   ├── models/                 # Data models
-│   ├── utils/                  # Utility functions
-│   ├── blueprints/             # API route modules
-│   ├── static/                 # Static web assets
-│   ├── templates/              # HTML templates
-│   └── uploads/                # Video file storage
-├── player/                     # C++ client player source
-├── web/                        # React control interface
-│   ├── src/
-│   │   ├── components/         # React components
-│   │   ├── hooks/              # Custom React hooks
-│   │   └── types/              # TypeScript definitions
-│   └── public/                 # Static assets
-├── external/                   # Third-party dependencies
-├── CMakeLists.txt              # Build configuration
-└── README.md                   # This file
+{
+  "group_id": "group_uuid",
+  "video_file": "main_video.mp4"
+}
 ```
 
-## 🐛 Troubleshooting
+#### Stop Streaming
+```http
+POST /stop_group_srt
+Content-Type: application/json
+
+{
+  "group_id": "group_uuid"
+}
+```
+
+### Client Management
+
+#### Register Client
+```http
+POST /register_client
+Content-Type: application/json
+
+{
+  "hostname": "rpi-client-1",
+  "display_name": "Conference Room Screen 1",
+  "platform": "raspberry_pi"
+}
+```
+
+#### Assign Client to Group
+```http
+POST /assign_client_to_group
+Content-Type: application/json
+
+{
+  "client_id": "client_uuid",
+  "group_id": "group_uuid"
+}
+```
+
+#### Get Client Stream URL
+```http
+POST /client_status
+Content-Type: application/json
+
+{
+  "client_id": "client_uuid"
+}
+```
+
+### Video Management
+
+#### Upload Video
+```http
+POST /upload_video
+Content-Type: multipart/form-data
+
+video: [binary video file]
+```
+
+#### List Videos
+```http
+GET /list_videos
+```
+
+#### Delete Video
+```http
+POST /delete_video
+Content-Type: application/json
+
+{
+  "filename": "video_to_delete.mp4"
+}
+```
+
+##  Troubleshooting
 
 ### Common Issues
 
-**FFmpeg not found**
+#### Docker Container Won't Start
+```bash
+# Check if ports are in use
+netstat -tulpn | grep -E "1935|1985|8080|10080"
+
+# Check Docker logs
+docker logs multiscreen_group_[id]
+
+# Restart Docker service
+sudo systemctl restart docker
+```
+
+#### FFmpeg Process Fails
 ```bash
 # Verify FFmpeg installation
-./cmake-build-debug/external/Install/bin/ffmpeg -version
+ffmpeg -version
+
+# Check FFmpeg supports H.264
+ffmpeg -codecs | grep h264
+
+# Test manual stream
+ffmpeg -re -i test.mp4 -c:v libx264 -f mpegts "srt://localhost:10080?streamid=#!::r=live/test,m=publish"
 ```
 
-**Docker permission denied**
+#### Client Can't Connect
 ```bash
-# Add user to docker group
-sudo usermod -aG docker $USER
-logout  # and log back in
+# Test network connectivity
+ping server_ip
+
+# Test SRT port
+telnet server_ip 10080
+
+# Check firewall rules
+sudo ufw status
 ```
 
-**Client connection timeout**
-- Check firewall settings (ports 1935, 1985, 8080, 10080)
-- Verify SRT server is running: `docker ps`
-- Test connectivity: `telnet <SRT_IP> 10080`
+#### Web Interface Issues
+```bash
+# Check backend is running
+curl http://localhost:5000/
 
-**Poor streaming quality**
-- Reduce bitrate in FFmpeg command
-- Check network bandwidth
-- Adjust SRT latency parameter
+# Verify frontend build
+cd frontend && npm run build
+
+# Check browser console for errors (F12)
+```
 
 ### Debug Mode
 
-Enable verbose logging:
+Enable detailed logging:
+
+```python
+# In backend/endpoints/flask_app.py
+import logging
+logging.basicConfig(level=logging.DEBUG)
+```
 
 ```bash
-# Server-side debugging
-export LOG_LEVEL=DEBUG
-python app.py
-
-# Client-side debugging
-./cmake-build-debug/player/player -v 'srt://...'
+# Run with debug output
+LOG_LEVEL=DEBUG python flask_app.py
 ```
 
 ### Performance Optimization
 
-**Raspberry Pi Clients:**
-- Enable GPU memory split: `sudo raspi-config` → Advanced → Memory Split → 128
-- Overclock safely: Add to `/boot/config.txt`:
-  ```
-  arm_freq=1750
-  gpu_freq=600
-  ```
-- Use hardware acceleration: `--enable-decoder=h264_v4l2m2m`
+#### Raspberry Pi Optimization
+```bash
+# Increase GPU memory split
+sudo raspi-config
+# Advanced Options -> Memory Split -> 256
 
-**Server Optimization:**
-- Use dedicated network interface
-- Increase UDP buffer sizes:
-  ```bash
-  echo 'net.core.rmem_max = 134217728' >> /etc/sysctl.conf
-  echo 'net.core.rmem_default = 134217728' >> /etc/sysctl.conf
-  ```
+# Enable hardware acceleration in /boot/config.txt
+gpu_mem=256
+start_x=1
+```
 
-## 🤝 Contributing
+#### Network Optimization
+```bash
+# Increase UDP buffer sizes
+echo 'net.core.rmem_max = 134217728' | sudo tee -a /etc/sysctl.conf
+echo 'net.core.wmem_max = 134217728' | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+```
+
+##  Technical Details
+
+### SRT Protocol Configuration
+- **Latency**: 5000ms default (configurable)
+- **Packet Size**: 1316 bytes
+- **Encryption**: Optional AES-128/256
+- **Mode**: Live streaming with timestamp embedding
+
+### Video Processing Pipeline
+1. **Input**: Original video file (any format)
+2. **Optional Resize**: Scale to 2K resolution
+3. **Segmentation**: Split based on screen layout
+4. **Encoding**: H.264 with SEI metadata
+5. **Streaming**: SRT protocol with unique stream IDs
+
+### State Management
+- **Backend**: In-memory state with optional persistence
+- **Frontend**: React hooks with localStorage for settings
+- **Synchronization**: REST API with polling for updates
+
+##  Contributing
 
 1. Fork the repository
 2. Create feature branch: `git checkout -b feature/new-feature`
@@ -380,24 +535,30 @@ python app.py
 4. Push to branch: `git push origin feature/new-feature`
 5. Submit pull request
 
-## 📄 License
+### Development Guidelines
+- Follow TypeScript best practices for frontend
+- Use Flask blueprints for backend modularity
+- Write unit tests for new features
+- Update documentation for API changes
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+##  License
 
-## 🙋 Support
+This project is part of the OpenVideoWalls research initiative. See LICENSE file for details.
+
+##  Acknowledgments
+
+- **OpenVideoWalls Project**: For the video wall synchronization research
+- **SRS (Simple Realtime Server)**: For reliable SRT streaming infrastructure
+- **FFmpeg**: For powerful video processing capabilities
+- **shadcn/ui**: For the modern React component library
+- **Flask**: For the flexible Python web framework
+
+##  Support
 
 - **Issues**: [GitHub Issues](https://github.com/hwsel/multi-screen/issues)
-- **Documentation**: [Wiki](https://github.com/hwsel/multi-screen/wiki)
-- **Discussions**: [GitHub Discussions](https://github.com/hwsel/multi-screen/discussions)
-
-## 🏷️ Version History
-
-- **v2.0.0** - Group management, grid layouts, React interface
-- **v1.5.0** - Flask control server, client registration
-- **v1.0.0** - Basic SRT streaming, horizontal/vertical layouts
-- **v0.9.0** - Initial CMake build system, FFmpeg integration
+- **Documentation**: See `/documentation` folder
+- **Academic Paper**: Open_video_wall_midterm_final.pdf
 
 ---
 
-**Note:** This system is designed for professional AV installations, digital signage, and multi-display applications requiring synchronized, low-latency video playback across multiple screens.
-# Mulitiscreen
+**Note**: This system is designed for professional AV installations, digital signage, and multi-display applications requiring synchronized, low-latency video playback across multiple screens.
