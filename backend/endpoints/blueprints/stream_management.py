@@ -217,7 +217,7 @@ def monitor_ffmpeg(process, stream_type="FFmpeg", startup_timeout=5, startup_max
 
 @stream_bp.route("/start_multi_video_srt", methods=["POST"])
 def start_multi_video_srt():
-    """Combine multiple video files and stream as one SRT stream"""
+    """Combine multiple video files and stream as one SRT stream - FIXED VERSION"""
     try:
         data = request.get_json() or {}
         
@@ -225,7 +225,7 @@ def start_multi_video_srt():
         video_files_config = data.get("video_files", [])
         
         logger.info("="*60)
-        logger.info(" STARTING MULTI-VIDEO SRT STREAM")
+        logger.info(" STARTING MULTI-VIDEO SRT STREAM - FIXED VERSION")
         logger.info(f" Group ID: {group_id}")
         logger.info(f" Video files count: {len(video_files_config)}")
         logger.info("="*60)
@@ -256,6 +256,17 @@ def start_multi_video_srt():
         if not docker_running:
             logger.error(f" Docker container for group '{group_name}' is not running")
             return jsonify({"error": f"Docker container for group '{group_name}' is not running"}), 400
+        
+        # *** CRITICAL FIX: Get the actual SRT port from the group configuration ***
+        ports = group.get("ports", {})
+        actual_srt_port = ports.get("srt_port", 10080)
+        
+        logger.info("="*50)
+        logger.info("   PORT CONFIGURATION FIX")
+        logger.info(f" Group ports configuration: {ports}")
+        logger.info(f" Using ACTUAL SRT port: {actual_srt_port}")
+        logger.info(f" (NOT the default 10080)")
+        logger.info("="*50)
         
         # Check for existing streams
         container_id = group.get("container_id")
@@ -288,13 +299,25 @@ def start_multi_video_srt():
         if orientation.lower() == "grid":
             logger.info(f"   Grid layout: {grid_rows}x{grid_cols}")
         
-        ports = group.get("ports", {})
-        srt_port = data.get("srt_port", ports.get("srt_port", 10080))
+        srt_port = actual_srt_port
         srt_ip = data.get("srt_ip", "127.0.0.1")
         sei = "681d5c8f-80cd-4847-930a-99b9484b4a32+000000"
         
+        logger.info(" PORT DEBUG:")
+        logger.info(f"   actual_srt_port (from group): {actual_srt_port}")
+        logger.info(f"   data.get('srt_port'): {data.get('srt_port')}")
+        logger.info(f"   Final srt_port variable: {srt_port}")
+        logger.info(f"   Type of srt_port: {type(srt_port)}")
+
         logger.info(f" SRT configuration:")
         logger.info(f"   SRT server: {srt_ip}:{srt_port}")
+        logger.info(f"   ✅ Using group's actual SRT port: {srt_port}")
+        logger.info(f"   ✅ Ignoring any client-provided srt_port override")
+        logger.info(f"   SEI metadata: {sei[:20]}...")
+
+        logger.info(f" SRT configuration:")
+        logger.info(f"   SRT server: {srt_ip}:{srt_port}")
+        logger.info(f"   Using group's actual SRT port: {srt_port}")
         logger.info(f"   SEI metadata: {sei[:20]}...")
         
         # Calculate canvas dimensions
@@ -363,12 +386,38 @@ def start_multi_video_srt():
         video_files = [config["file_path"] for config in video_files_config]
         logger.info(f" All {len(video_files)} video files validated")
         
-        # Wait for SRT server
+        # *** CRITICAL: Wait for SRT server on the CORRECT port ***
         logger.info(f" Waiting for SRT server at {srt_ip}:{srt_port}...")
+        logger.info(f"   Using ACTUAL group SRT port: {srt_port}")
+        logger.info(f"   NOT using default port 10080")
+        
         if not wait_for_srt_server(srt_ip, srt_port, timeout=30):
             logger.error(f" SRT server at {srt_ip}:{srt_port} not ready after 30 seconds")
+            
+            # Add diagnostic information
+            logger.error("🔍 DIAGNOSTIC INFO:")
+            logger.error(f"   Checked port: {srt_port}")
+            logger.error(f"   Group ports: {ports}")
+            logger.error(f"   Container ID: {container_id}")
+            
+            # Check if maybe it's running on default port 10080
+            if srt_port != 10080:
+                logger.info(f"🔍 Testing if server is on default port 10080...")
+                if wait_for_srt_server(srt_ip, 10080, timeout=5):
+                    logger.error(f"❌ SERVER IS RUNNING ON PORT 10080, BUT GROUP CONFIG SAYS {srt_port}")
+                    logger.error(f"❌ THIS IS A PORT CONFIGURATION MISMATCH!")
+                    return jsonify({
+                        "error": f"Port mismatch: Server on 10080, group config says {srt_port}",
+                        "diagnostic": {
+                            "expected_port": srt_port,
+                            "server_actually_on": 10080,
+                            "group_ports": ports
+                        }
+                    }), 500
+            
             return jsonify({"error": f"SRT server at {srt_ip}:{srt_port} not ready"}), 500
-        logger.info(" SRT server is ready")
+        
+        logger.info(f" SRT server is ready on port {srt_port}")
         
         # Test SRT connection
         logger.info(" Testing SRT connection...")
@@ -386,7 +435,7 @@ def start_multi_video_srt():
         # Debug logging
         debug_log_stream_info(group_id, group_name, stream_id, srt_ip, srt_port, "MULTI-VIDEO MODE", screen_count)
 
-        # Build FFmpeg command
+        # Build FFmpeg command - *** PASS THE CORRECT SRT PORT ***
         logger.info(" Building FFmpeg command...")
         ffmpeg_cmd = build_single_stream_ffmpeg_command(
             video_files,  # positional arguments
@@ -395,7 +444,7 @@ def start_multi_video_srt():
             output_width,
             output_height,
             srt_ip,
-            srt_port,
+            srt_port,  # *** Use the actual port, not hardcoded 10080 ***
             sei,
             group_name,
             group_id,  # This becomes 'base_stream_id' in the function
@@ -413,6 +462,7 @@ def start_multi_video_srt():
         logger.info("="*60)
         logger.info(f" CREATING MULTI-VIDEO STREAMS - SEPARATE OUTPUTS")
         logger.info(f" Group: {group_name} (ID: {group_id})")
+        logger.info(f" SRT Port: {srt_port}")
         logger.info(f" Creating {screen_count + 1} streams:")
         logger.info(f"   - Combined: live/{group_name}/combined_{group_id}")
         
@@ -466,7 +516,7 @@ def start_multi_video_srt():
             grid_cols=grid_cols
         )
         
-        # Generate client stream URLs for ALL streams
+        # Generate client stream URLs for ALL streams - *** USE CORRECT PORT ***
         client_stream_urls = {}
         
         # Combined stream URL
@@ -489,10 +539,11 @@ def start_multi_video_srt():
         test_result = f"ffplay '{client_stream_urls['combined']}'"
         
         logger.info("="*60)
-        logger.info(" MULTI-VIDEO STREAMING STARTED SUCCESSFULLY")
+        logger.info(" ✅ MULTI-VIDEO STREAMING STARTED SUCCESSFULLY")
         logger.info(f" Group: {group_name}")
         logger.info(f" Process PID: {process.pid}")
         logger.info(f" Screens: {screen_count}")
+        logger.info(f" SRT Port: {srt_port}")
         logger.info(f" Combined Stream: {client_stream_urls['combined']}")
         logger.info(f" {screen_count} Individual streams also available")
         logger.info("="*60)
@@ -508,6 +559,7 @@ def start_multi_video_srt():
                 "canvas_resolution": f"{canvas_width}x{canvas_height}",
                 "section_resolution": f"{output_width}x{output_height}",
                 "grid_layout": f"{grid_rows}x{grid_cols}" if orientation == "grid" else None,
+                "srt_port": srt_port,  # Include actual port in response
                 "video_files": [
                     {
                         "screen": i,
@@ -520,7 +572,8 @@ def start_multi_video_srt():
                 "stream_urls": client_stream_urls,
                 "combined_stream_path": combined_stream_path,
                 "persistent_streams": persistent_streams,
-                "crop_information": crop_info
+                "crop_information": crop_info,
+                "srt_port": srt_port  # Include actual port
             },
             "status": "active",
             "test_result": test_result
@@ -604,7 +657,9 @@ def start_split_screen_srt():
             logger.info(f"   Grid layout: {grid_rows}x{grid_cols}")
         
         ports = group.get("ports", {})
-        srt_port = data.get("srt_port", ports.get("srt_port", 10080))
+        actual_srt_port = ports.get("srt_port", 10080)
+        srt_port = actual_srt_port  # Always use the group's configured port
+        logger.info(f"   Using group's SRT port: {srt_port} (ignoring client override)")
         srt_ip = data.get("srt_ip", "127.0.0.1")
         sei_raw = data.get("sei", "681d5c8f-80cd-4847-930a-99b9484b4a32+000000")
         sei = sei_raw if '+' in sei_raw else f"{sei_raw}+000000"

@@ -28,7 +28,7 @@ class UnifiedConfig:
             # Flask/Server settings
             "server": {
                 "host": "0.0.0.0",
-                "port": 5001,
+                "port": 5000,
                 "debug": True,
                 "secret_key": "your-secret-key-change-in-production"
             },

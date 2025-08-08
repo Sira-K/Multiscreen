@@ -325,7 +325,7 @@ if __name__ == "__main__":
     # Server settings from config
     server_config = config.get('server')
     host = server_config.get('host', '0.0.0.0')
-    port = server_config.get('port', 5001)
+    port = server_config.get('port', 5000)
     debug = server_config.get('debug', True)
     
     logger.info(f"Server config: {host}:{port}, debug={debug}")
