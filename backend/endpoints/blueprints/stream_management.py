@@ -17,52 +17,7 @@ stream_bp = Blueprint('stream_management', __name__)
 # Configure logger
 logger = logging.getLogger(__name__)
 
-# File to store only persistent stream IDs (not group state)
-PERSISTENT_IDS_FILE = "persistent_stream_ids.json"
 
-class PersistentIDManager:
-    """Manages only persistent stream IDs - no group state"""
-    
-    def __init__(self):
-        self.ids_data = {"streams": {}}
-        self._lock = threading.RLock()
-        self._load_ids()
-    
-    def _load_ids(self):
-        """Load persistent stream IDs from file"""
-        try:
-            if os.path.exists(PERSISTENT_IDS_FILE):
-                with open(PERSISTENT_IDS_FILE, 'r') as f:
-                    self.ids_data = json.load(f)
-                logger.debug(f"Loaded persistent stream IDs from {PERSISTENT_IDS_FILE}")
-        except Exception as e:
-            logger.error(f"Error loading persistent stream IDs: {e}")
-            self.ids_data = {"streams": {}}
-    
-    def _save_ids(self):
-        """Save persistent stream IDs to file"""
-        try:
-            with open(PERSISTENT_IDS_FILE, 'w') as f:
-                json.dump(self.ids_data, f, indent=2)
-        except Exception as e:
-            logger.error(f"Error saving persistent stream IDs: {e}")
-    
-    def get_stream_id(self, group_key: str, stream_name: str) -> str:
-        """Get or create persistent stream ID"""
-        with self._lock:
-            if group_key not in self.ids_data["streams"]:
-                self.ids_data["streams"][group_key] = {}
-            
-            if stream_name not in self.ids_data["streams"][group_key]:
-                stream_id = str(uuid.uuid4())[:8]
-                self.ids_data["streams"][group_key][stream_name] = stream_id
-                self._save_ids()
-                logger.debug(f"Created new stream ID: {stream_name} -> {stream_id}")
-            
-            return self.ids_data["streams"][group_key][stream_name]
-
-# Global persistent ID manager
-id_manager = PersistentIDManager()
 
 def monitor_ffmpeg(process, stream_type="FFmpeg", startup_timeout=5, startup_max_lines=20):
     """Monitor FFmpeg process startup and continuous operation"""
@@ -378,18 +333,17 @@ def start_multi_video_srt():
             return jsonify({"error": "SRT connection test failed", "test_result": test_result}), 500
         logger.info(" SRT connection test passed")
         
-        # Generate stream ID - use persistent stream ID
-        persistent_streams = get_persistent_streams_for_group(group_id, group_name, screen_count)
-        stream_id = persistent_streams.get("test")  # Use the persistent "test" stream ID
-        logger.info(f" Using persistent stream ID: {stream_id}")
+        # Generate dynamic stream IDs for this session
+        stream_ids = generate_stream_ids(group_id, group_name, screen_count)
+        logger.info(f" Generated dynamic stream IDs: {stream_ids}")
 
         # Debug logging
-        debug_log_stream_info(group_id, group_name, stream_id, srt_ip, srt_port, "MULTI-VIDEO MODE", screen_count)
+        debug_log_stream_info(group_id, group_name, stream_ids["test"], srt_ip, srt_port, "MULTI-VIDEO MODE", screen_count)
 
         # Build FFmpeg command
         logger.info(" Building FFmpeg command...")
         ffmpeg_cmd = build_single_stream_ffmpeg_command(
-            video_files,  # positional arguments
+            video_files,
             screen_count,
             orientation,
             output_width,
@@ -398,11 +352,12 @@ def start_multi_video_srt():
             srt_port,
             sei,
             group_name,
-            group_id,  # This becomes 'base_stream_id' in the function
+            group_id,
             grid_rows,
             grid_cols,
-            30,  # framerate
-            "6000k"  # bitrate
+            30,
+            "6000k",
+            stream_ids  # Add this parameter
         )
         
         logger.info(f" FFmpeg command preview:")
@@ -415,12 +370,6 @@ def start_multi_video_srt():
         logger.info(f" Group: {group_name} (ID: {group_id})")
         logger.info(f" Creating {screen_count + 1} streams:")
         logger.info(f"   - Combined: live/{group_name}/combined_{group_id}")
-        
-        persistent_streams = get_persistent_streams_for_group(group_id, group_name, screen_count)
-        for i in range(screen_count):
-            screen_key = f"test{i}"
-            stream_id_screen = persistent_streams.get(screen_key)
-            logger.info(f"   - Screen {i}: live/{group_name}/{stream_id_screen}")
         logger.info("="*60)
         
         # Start FFmpeg process
@@ -477,7 +426,7 @@ def start_multi_video_srt():
         # Individual screen URLs
         for i in range(screen_count):
             screen_key = f"test{i}"
-            individual_stream_id = persistent_streams.get(screen_key)
+            individual_stream_id = stream_ids.get(screen_key)
             individual_stream_path = f"live/{group_name}/{individual_stream_id}"
             client_stream_urls[f"screen{i}"] = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={individual_stream_path},m=request&{srt_params}"
         
@@ -519,7 +468,7 @@ def start_multi_video_srt():
             "stream_info": {
                 "stream_urls": client_stream_urls,
                 "combined_stream_path": combined_stream_path,
-                "persistent_streams": persistent_streams,
+                "stream_ids": stream_ids,
                 "crop_information": crop_info
             },
             "status": "active",
@@ -677,8 +626,8 @@ def start_split_screen_srt():
         logger.info(" SRT connection test passed")
         
         # Get persistent stream IDs
-        persistent_streams = get_persistent_streams_for_group(group_id, group_name, screen_count)
-        logger.info(f" Persistent streams: {persistent_streams}")
+        stream_ids = generate_stream_ids(group_id, group_name, screen_count)
+        logger.info(f" Generated dynamic stream IDs: {stream_ids}")
 
         # Debug logging
         debug_log_stream_info(group_id, group_name, f"split_{group_id}", srt_ip, srt_port, "SPLIT-SCREEN MODE", screen_count)
@@ -697,9 +646,10 @@ def start_split_screen_srt():
             srt_port=srt_port,
             sei=sei,
             group_name=group_name,
-            base_stream_id=group_id,  # Pass group_id as base_stream_id
+            base_stream_id=group_id,
             grid_rows=grid_rows,
-            grid_cols=grid_cols
+            grid_cols=grid_cols,
+            stream_ids=stream_ids
         )
         
         logger.info(f" FFmpeg command preview:")
@@ -715,7 +665,7 @@ def start_split_screen_srt():
         
         for i in range(screen_count):
             screen_key = f"test{i}"
-            stream_id_screen = persistent_streams.get(screen_key)
+            stream_id_screen = stream_ids.get(screen_key)
             logger.info(f"   - Screen {i}: live/{group_name}/{stream_id_screen}")
         logger.info("="*60)
         
@@ -773,7 +723,7 @@ def start_split_screen_srt():
         # Individual screen URLs
         for i in range(screen_count):
             screen_key = f"test{i}"
-            individual_stream_id = persistent_streams.get(screen_key)
+            individual_stream_id = stream_ids.get(screen_key)
             individual_stream_path = f"live/{group_name}/{individual_stream_id}"
             client_stream_urls[f"screen{i}"] = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={individual_stream_path},m=request&{srt_params}"
         
@@ -810,7 +760,7 @@ def start_split_screen_srt():
             "stream_info": {
                 "stream_urls": client_stream_urls,
                 "combined_stream_path": combined_stream_path,
-                "persistent_streams": persistent_streams,
+                "stream_ids": stream_ids,
                 "crop_information": crop_info
             },
             "status": "active",
@@ -902,26 +852,26 @@ def get_streaming_status(group_id: str):
         running_processes = find_running_ffmpeg_for_group_strict(group_id, group_name, container_id)
         is_streaming = len(running_processes) > 0
         
-        # Get persistent streams for this group
+        # Generate dynamic stream IDs for status display (these won't match actual running streams)
         screen_count = group.get("screen_count", 2)
-        persistent_streams = get_persistent_streams_for_group(group_id, group_name, screen_count)
+        stream_ids = generate_stream_ids(group_id, group_name, screen_count) if is_streaming else {}
         
         # Generate client URLs if streaming
         client_stream_urls = {}
         available_streams = []
         
-        if is_streaming:
+        if is_streaming and stream_ids:
             ports = group.get("ports", {})
             srt_port = ports.get("srt_port", 10080)
             srt_ip = "127.0.0.1"
             
-            combined_stream_path = f"live/{group_name}/{persistent_streams['test']}"
+            combined_stream_path = f"live/{group_name}/{stream_ids.get('test', 'unknown')}"
             client_stream_urls["combined"] = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={combined_stream_path},m=request,latency=5000000"
             available_streams.append(combined_stream_path)
             
             for i in range(screen_count):
                 stream_name = f"screen{i}"
-                screen_stream_id = persistent_streams.get(f"test{i}", f"screen{i}")
+                screen_stream_id = stream_ids.get(f"test{i}", f"screen{i}")
                 screen_stream_path = f"live/{group_name}/{screen_stream_id}"
                 client_stream_urls[stream_name] = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={screen_stream_path},m=request,latency=5000000"
                 available_streams.append(screen_stream_path)
@@ -937,7 +887,7 @@ def get_streaming_status(group_id: str):
             "process_id": running_processes[0]["pid"] if running_processes else None,
             "available_streams": available_streams,
             "client_stream_urls": client_stream_urls,
-            "persistent_streams": persistent_streams,
+            "stream_ids": stream_ids,
             "running_processes": [
                 {
                     "pid": proc["pid"],
@@ -1128,7 +1078,8 @@ def build_single_stream_ffmpeg_command(
     grid_rows: int = 2,
     grid_cols: int = 2,
     framerate: int = 30,
-    bitrate: str = "3000k"  # Per-stream bitrate
+    bitrate: str = "3000k",
+    stream_ids: Dict[str, str] = None 
 ) -> List[str]:
     """
     Build FFmpeg command that creates multiple video streams - one combined and individual crops
@@ -1245,10 +1196,12 @@ def build_single_stream_ffmpeg_command(
     ffmpeg_cmd.extend(["-map", "[full]"] + encoding_params + [combined_url])
     
     # Add output for each individual screen
-    persistent_streams = get_persistent_streams_for_group(base_stream_id, group_name, screen_count)
+    if stream_ids is None:
+        stream_ids = generate_stream_ids(base_stream_id, group_name, screen_count)
+
     for i in range(screen_count):
         screen_key = f"test{i}"
-        individual_stream_id = persistent_streams.get(screen_key, f"screen{i}_{base_stream_id}")
+        individual_stream_id = stream_ids.get(screen_key, f"screen{i}_{base_stream_id}")
         stream_path = f"live/{group_name}/{individual_stream_id}"
         stream_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=publish&{srt_params}"
         
@@ -1257,23 +1210,23 @@ def build_single_stream_ffmpeg_command(
     return ffmpeg_cmd
 
 def build_split_screen_ffmpeg_command(
-    video_file: str,
+    video_file: str,  # Change from video_files: List[str] to video_file: str
     screen_count: int,
     orientation: str,
     output_width: int,
     output_height: int,
-    canvas_width: int,
-    canvas_height: int,
+    canvas_width: int,    # Keep these parameters or calculate them
+    canvas_height: int,   # Keep these parameters or calculate them
     srt_ip: str,
     srt_port: int,
     sei: str,
     group_name: str,
-    base_stream_id: str,  # Changed from stream_id to match multi-video
+    base_stream_id: str,
     grid_rows: int = 2,
     grid_cols: int = 2,
     framerate: int = 30,
-    bitrate: str = "3000k",  # Per-stream bitrate
-    debug_mode: bool = False
+    bitrate: str = "3000k",
+    stream_ids: Dict[str, str] = None
 ) -> List[str]:
     """Build FFmpeg command for split-screen streaming with multiple outputs"""
     
@@ -1327,7 +1280,7 @@ def build_split_screen_ffmpeg_command(
     ffmpeg_cmd = [
         ffmpeg_path,
         "-y",
-        "-v", "error" if not debug_mode else "info",
+        "-v", "error",
         "-stats"
     ]
     
@@ -1358,10 +1311,12 @@ def build_split_screen_ffmpeg_command(
     ffmpeg_cmd.extend(["-map", "[full]"] + encoding_params + [combined_url])
     
     # Add output for each individual screen
-    persistent_streams = get_persistent_streams_for_group(base_stream_id, group_name, screen_count)
+    if stream_ids is None:
+        stream_ids = generate_stream_ids(base_stream_id, group_name, screen_count)
+
     for i in range(screen_count):
         screen_key = f"test{i}"
-        individual_stream_id = persistent_streams.get(screen_key, f"screen{i}_{base_stream_id}")
+        individual_stream_id = stream_ids.get(screen_key, f"screen{i}_{base_stream_id}")
         stream_path = f"live/{group_name}/{individual_stream_id}"
         stream_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=publish&{srt_params}"
         
@@ -1683,15 +1638,19 @@ def wait_for_srt_server(srt_ip: str, srt_port: int, timeout: int = 30) -> bool:
     
     return False
 
-def get_persistent_streams_for_group(group_id: str, group_name: str, split_count: int) -> Dict[str, str]:
-    """Get persistent stream IDs for a group"""
-    persistent_key = f"group_{group_id}"
-    
+def generate_stream_ids(group_id: str, group_name: str, screen_count: int) -> Dict[str, str]:
+    """Generate dynamic stream IDs for a session (not persistent)"""
     streams = {}
-    streams["test"] = id_manager.get_stream_id(persistent_key, "test")
     
-    for i in range(split_count):
-        streams[f"test{i}"] = id_manager.get_stream_id(persistent_key, f"test{i}")
+    # Generate a unique session ID based on current time and group
+    session_id = str(uuid.uuid4())[:8]
+    
+    # Main/combined stream
+    streams["test"] = f"{session_id}"
+    
+    # Individual screen streams
+    for i in range(screen_count):
+        streams[f"test{i}"] = f"{session_id}_{i}"
     
     return streams
 
@@ -1711,16 +1670,6 @@ def debug_log_stream_info(group_id, group_name, stream_id, srt_ip, srt_port, mod
     # If multi-video mode, show individual screen URLs
     if mode == "MULTI-VIDEO MODE" and screen_count > 0:
         logger.info("-"*60)
-        logger.info(" Individual Screen URLs (if using separate streams):")
-        
-        # Get persistent stream IDs for each screen
-        streams = get_persistent_streams_for_group(group_id, group_name, screen_count)
-        for i in range(screen_count):
-            screen_key = f"test{i}"
-            if screen_key in streams:
-                screen_stream_id = streams[screen_key]
-                screen_path = f"live/{group_name}/{screen_stream_id}"
-                screen_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={screen_path},m=request,latency=5000000"
-                logger.info(f"   Screen {i}: {screen_url}")
+        logger.info(" Individual Screen URLs available when streaming is active")
     
     logger.info("="*60)
