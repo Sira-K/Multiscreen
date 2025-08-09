@@ -1,0 +1,79 @@
+{
+  "session_info": {
+    "timestamp": "20250808_165353",
+    "session_id": "upload_20250808_165353",
+    "started_at": "2025-08-08 16:53:53.156",
+    "completed_at": "2025-08-08 16:53:53.156",
+    "total_duration_seconds": 0.0
+  },
+  "summary_metrics": {
+    "files_processed": 2,
+    "successful_uploads": 1,
+    "failed_uploads": 1,
+    "success_rate_percent": 50.0,
+    "total_files_size_mb": 0.05,
+    "total_files_size_bytes": 52428,
+    "average_file_size_mb": 0.05,
+    "upload_speed_mbps": 7876.63
+  },
+  "timing_breakdown": {
+    "request_processing_time": 0.001,
+    "directory_creation_time": 0.0,
+    "total_validation_time": 0.0,
+    "total_file_operations_time": 0.0,
+    "total_save_time": 0.0,
+    "average_time_per_file": 0.0,
+    "average_save_time_per_file": 0.0
+  },
+  "individual_files": [
+    {
+      "filename": "valid.mp4",
+      "file_size_bytes": 52428,
+      "file_size_mb": 0.05,
+      "validation_time": 6.4373016357421875e-06,
+      "filename_processing_time": 3.3855438232421875e-05,
+      "save_time": 5.078315734863281e-05,
+      "size_check_time": 3.0994415283203125e-06,
+      "total_time": 0.00013709068298339844
+    },
+    {
+      "filename": "invalid.txt",
+      "file_size_bytes": 0,
+      "file_size_mb": 0,
+      "validation_time": 5.7220458984375e-06,
+      "filename_processing_time": 0,
+      "save_time": 0,
+      "size_check_time": 0,
+      "total_time": 0,
+      "error": "Validation failed: System configuration error"
+    }
+  ],
+  "successful_uploads": [
+    {
+      "original_filename": "valid.mp4",
+      "saved_filename": "valid.mp4",
+      "size_mb": 0.05,
+      "status": "completed",
+      "path": "/home/sirakong/Mulitiscreen/backend/endpoints/uploads/valid.mp4",
+      "processing_time_seconds": 0.0
+    }
+  ],
+  "failed_uploads": [
+    {
+      "filename": "invalid.txt",
+      "error_code": 501,
+      "error_message": "System configuration error",
+      "context": {
+        "filename": "invalid.txt",
+        "invalid_extension": ".txt",
+        "allowed_extensions": [
+          ".mkv",
+          ".mp4",
+          ".webm",
+          ".mov",
+          ".avi"
+        ]
+      }
+    }
+  ]
+}

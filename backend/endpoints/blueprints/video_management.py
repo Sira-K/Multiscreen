@@ -12,6 +12,14 @@ import csv
 import json
 from datetime import datetime
 
+from errors.system_errors import (
+    SystemException,
+    DatabaseException,
+    NetworkException,
+    format_system_error_response,
+    get_system_error_info
+)
+
 # Configure logger
 logger = logging.getLogger(__name__)
 
@@ -25,31 +33,45 @@ def get_state():
     """Get application state from current app context"""
     return current_app.config['APP_STATE']
 
-def validate_upload(file) -> Tuple[bool, Optional[str]]:
+def validate_upload(file) -> Tuple[bool, Optional[dict]]:
     """
     Validate an uploaded file
     
-    Args:
-        file: The file to validate
-        
     Returns:
-        Tuple of (is_valid, error_message)
+        Tuple of (is_valid, error_info_dict)
     """
     if not file:
-        return False, "No file provided"
-        
+        return False, format_system_error_response(
+            503,  # SYSTEM_PERMISSION_DENIED
+            {'reason': 'No file provided in request'}
+        )
+    
     # Check file extension
     allowed_extensions = {'.mp4', '.mkv', '.avi', '.mov', '.webm'}
     filename = file.filename.lower()
     file_ext = os.path.splitext(filename)[1]
     
     if file_ext not in allowed_extensions:
-        return False, f"Invalid file type. Allowed types: {', '.join(allowed_extensions)}"
+        return False, format_system_error_response(
+            501,  # SYSTEM_CONFIGURATION_ERROR
+            {
+                'filename': filename,
+                'invalid_extension': file_ext,
+                'allowed_extensions': list(allowed_extensions)
+            }
+        )
     
-    # Check file size (e.g., max 2GB per file)
-    max_size = 2 * 1024 * 1024 * 1024  # 2GB in bytes
+    # Check file size
+    max_size = 2 * 1024 * 1024 * 1024  # 2GB
     if hasattr(file, 'content_length') and file.content_length and file.content_length > max_size:
-        return False, f"File too large. Maximum size: 2GB"
+        return False, format_system_error_response(
+            508,  # SYSTEM_CAPACITY_EXCEEDED
+            {
+                'file_size': file.content_length,
+                'max_allowed': max_size,
+                'size_mb': round(file.content_length / (1024 * 1024), 2)
+            }
+        )
     
     return True, None
 
@@ -132,17 +154,67 @@ def resize_video_async(job_id: str, input_path: str, output_path: str, original_
             
             logger.info(f"Successfully resized video for job {job_id}: {output_path}")
         else:
+            # FFmpeg processing error
+            error_info = get_system_error_info(506)  # SYSTEM_INTERNAL_ERROR
             processing_jobs[job_id]['status'] = 'failed'
-            processing_jobs[job_id]['error'] = f"FFmpeg error: {stderr}"
-            processing_jobs[job_id]['failed_at'] = time.time()
-            logger.error(f"FFmpeg error for job {job_id}: {stderr}")
-            
-    except Exception as e:
+            processing_jobs[job_id]['error_code'] = 506
+            processing_jobs[job_id]['error_info'] = error_info
+            processing_jobs[job_id]['error_context'] = {
+                'ffmpeg_stderr': stderr,
+                'return_code': process.returncode
+            }
+        
+    except subprocess.TimeoutExpired:
+        error_info = get_system_error_info(505)  # SYSTEM_TIMEOUT
         processing_jobs[job_id]['status'] = 'failed'
-        processing_jobs[job_id]['error'] = f"Processing error: {str(e)}"
-        processing_jobs[job_id]['failed_at'] = time.time()
-        logger.error(f"Error processing video for job {job_id}: {e}")
+        processing_jobs[job_id]['error_code'] = 505
+        processing_jobs[job_id]['error_info'] = error_info
 
+    except Exception as e:
+        error_info = get_system_error_info(506)  # SYSTEM_INTERNAL_ERROR
+        processing_jobs[job_id]['status'] = 'failed'
+        processing_jobs[job_id]['error_code'] = 506
+        processing_jobs[job_id]['error_info'] = error_info
+        processing_jobs[job_id]['error_context'] = {'exception': str(e)}
+
+def create_video_response(success: bool, data: dict = None, error_code: int = None) -> Tuple[dict, int]:
+    """
+    Create a standardized response for video endpoints
+    
+    Args:
+        success: Whether the operation was successful
+        data: Response data for successful operations
+        error_code: System error code for failures
+        
+    Returns:
+        Tuple of (response_dict, http_status_code)
+    """
+    if success:
+        response = {'success': True}
+        if data:
+            response.update(data)
+        return response, 200
+    else:
+        if error_code:
+            response = format_system_error_response(error_code, data or {})
+        else:
+            response = {
+                'success': False,
+                'error_code': 506,  # Default to internal error
+                'error_message': 'Unknown error occurred',
+                'context': data or {}
+            }
+        
+        # Map error codes to HTTP status codes
+        http_status_map = {
+            500: 500, 501: 400, 502: 503, 503: 403, 504: 503,
+            505: 504, 506: 500, 507: 503, 508: 507, 509: 400,
+            520: 503, 524: 507, 525: 403
+        }
+        
+        http_status = http_status_map.get(error_code, 500)
+        return response, http_status
+    
 @video_bp.route('/get_videos', methods=['GET'])
 def get_videos():
     """
@@ -370,9 +442,12 @@ def upload_video():
         
         # Check if files are present
         if 'video' not in request.files:
-            elapsed = time.time() - start_time
-            logger.error(f" No 'video' key in request.files (after {elapsed:.2f}s)")
-            return jsonify({'success': False, 'message': 'No video file in the request'}), 400
+            error_response = format_system_error_response(
+                501,  # SYSTEM_CONFIGURATION_ERROR
+                {'missing_field': 'video', 'elapsed_time': time.time() - start_time}
+            )
+            logger.error(f"Error {error_response['error_code']}: {error_response['error_message']}")
+            return jsonify(error_response), 400
         
         files_received_time = time.time()
         files = request.files.getlist('video')
@@ -395,8 +470,16 @@ def upload_video():
             os.makedirs(upload_folder, exist_ok=True)
             timing_data['directory_creation_time'] = time.time() - dir_start
         except Exception as mkdir_error:
-            elapsed = time.time() - start_time
-            return jsonify({'success': False, 'message': f'Cannot create upload directory: {str(mkdir_error)}'}), 500
+            error_response = format_system_error_response(
+                524,  # DATABASE_DISK_FULL or use 503 for permission
+                {
+                    'directory': upload_folder,
+                    'error': str(mkdir_error),
+                    'elapsed_time': time.time() - start_time
+                }
+            )
+            logger.error(f"Error {error_response['error_code']}: {error_response['error_message']}")
+            return jsonify(error_response), 500
         
         upload_results = []
         failed_uploads = []
@@ -420,19 +503,26 @@ def upload_video():
             try:
                 logger.info(f" Processing file {i+1}/{len(files)}: {file.filename}")
                 
-                # Validate file with timing
+                # Validate file with proper timing
                 validation_start = time.time()
-                is_valid, error_message = validate_upload(file)
+                is_valid, error_info = validate_upload(file)
                 validation_time = time.time() - validation_start
                 file_timing['validation_time'] = validation_time
                 total_validation_time += validation_time
                 
                 if not is_valid:
-                    failed_uploads.append({'filename': file.filename, 'error': error_message})
-                    logger.warning(f" File validation failed: {error_message}")
+                    failed_uploads.append({
+                        'filename': file.filename, 
+                        'error_code': error_info.get('error_code'),
+                        'error_message': error_info.get('error_message'),
+                        'context': error_info.get('context', {})
+                    })
+                    logger.warning(f"File validation failed with error {error_info.get('error_code')}")
+                    file_timing['error'] = f"Validation failed: {error_info.get('error_message')}"
+                    timing_data['individual_files'].append(file_timing)
                     continue
                 
-                # Filename processing timing
+                # Filename processing
                 filename_start = time.time()
                 filename = secure_filename(file.filename)
                 logger.info(f" Secured filename: {filename}")
@@ -456,7 +546,7 @@ def upload_video():
                 file_timing['filename_processing_time'] = filename_processing_time
                 total_file_ops_time += filename_processing_time
                 
-                # Save the file - this is where the time is spent for large files
+                # Save the file with proper error handling
                 save_start_time = time.time()
                 try:
                     file.save(file_path)
@@ -464,20 +554,55 @@ def upload_video():
                     file_timing['save_time'] = save_duration
                     total_save_time += save_duration
                     logger.info(f" File saved successfully in {save_duration:.2f}s to: {file_path}")
+                    
+                except IOError as save_error:
+                    save_duration = time.time() - save_start_time
+                    file_timing['save_time'] = save_duration
+                    # Disk full or write permission error
+                    error_info = format_system_error_response(
+                        524 if 'space' in str(save_error).lower() else 503,
+                        {'filename': filename, 'path': file_path, 'error': str(save_error)}
+                    )
+                    failed_uploads.append({
+                        'filename': file.filename,
+                        **error_info
+                    })
+                    file_timing['error'] = error_info.get('error_message')
+                    timing_data['individual_files'].append(file_timing)
+                    continue
+                    
                 except Exception as save_error:
                     save_duration = time.time() - save_start_time
                     file_timing['save_time'] = save_duration
-                    logger.error(f" Failed to save file after {save_duration:.2f}s: {save_error}")
-                    failed_uploads.append({'filename': file.filename, 'error': f'Save failed: {str(save_error)}'})
+                    # Generic system error
+                    error_info = format_system_error_response(
+                        506,  # SYSTEM_INTERNAL_ERROR
+                        {'filename': filename, 'error': str(save_error)}
+                    )
+                    failed_uploads.append({
+                        'filename': file.filename,
+                        **error_info
+                    })
+                    file_timing['error'] = error_info.get('error_message')
+                    timing_data['individual_files'].append(file_timing)
                     continue
                 
                 # Check if file was actually saved
                 if not os.path.exists(file_path):
                     logger.error(f" File was not saved successfully: {file_path}")
-                    failed_uploads.append({'filename': file.filename, 'error': 'File was not saved to disk'})
+                    error_info = format_system_error_response(
+                        506,  # SYSTEM_INTERNAL_ERROR
+                        {'filename': filename, 'reason': 'File not found after save'}
+                    )
+                    failed_uploads.append({
+                        'filename': file.filename,
+                        **error_info
+                    })
+                    file_timing['error'] = 'File not found after save'
+                    timing_data['individual_files'].append(file_timing)
                     continue
                 
-                # Get file size with timing
+                # Get file size
                 size_check_start = time.time()
                 try:
                     file_size = os.path.getsize(file_path)
@@ -496,6 +621,7 @@ def upload_video():
                     file_size = 0
                     size_mb = 0
                 
+                # Success - add to results
                 file_total_time = time.time() - file_start_time
                 file_timing['total_time'] = file_total_time
                 timing_data['individual_files'].append(file_timing)
@@ -512,14 +638,27 @@ def upload_video():
                 logger.info(f" Successfully processed {filename} in {file_total_time:.2f}s")
                 
             except Exception as file_error:
+                # Catch-all for unexpected errors
                 file_error_time = time.time() - file_start_time
                 file_timing['total_time'] = file_error_time
                 file_timing['error'] = str(file_error)
                 timing_data['individual_files'].append(file_timing)
                 
+                error_info = format_system_error_response(
+                    506,  # SYSTEM_INTERNAL_ERROR
+                    {
+                        'filename': file.filename,
+                        'error': str(file_error),
+                        'file_index': i
+                    }
+                )
+                failed_uploads.append({
+                    'filename': file.filename,
+                    **error_info
+                })
+                
                 logger.error(f" Error processing file {file.filename} after {file_error_time:.2f}s: {file_error}")
                 logger.error(f"Traceback: {traceback.format_exc()}")
-                failed_uploads.append({'filename': file.filename, 'error': str(file_error)})
         
         # Calculate additional metrics for comprehensive timing
         total_files_size_bytes = sum(ft.get('file_size_bytes', 0) for ft in timing_data['individual_files'] if 'error' not in ft)
@@ -636,10 +775,10 @@ def delete_video_post():
     try:
         data = request.get_json()
         if not data or 'video_name' not in data:
-            return jsonify({
-                'success': False,
-                'message': 'video_name is required in request body'
-            }), 400
+            return jsonify(format_system_error_response(
+                501,  # SYSTEM_CONFIGURATION_ERROR
+                {'missing_field': 'video_name'}
+            )), 400
         
         video_name = data['video_name']
         logger.info(f"Received delete request for video: {video_name}")
@@ -712,16 +851,17 @@ def delete_video_post():
         
         # Check if any files were deleted
         if not deleted_files and not errors:
-            logger.warning(f"Video file '{secure_name}' not found in any location")
-            return jsonify({
-                'success': False,
-                'message': f'Video file "{secure_name}" not found in any location',
-                'searched_locations': [
-                    f"raw/{secure_name}",
-                    f"resized/{secure_name}",
-                    f"resized/2k_{secure_name}"
-                ]
-            }), 404
+            return jsonify(format_system_error_response(
+                224,  # Container not found (or create a video-specific code)
+                {
+                    'video_name': secure_name,
+                    'searched_locations': [
+                        f"raw/{secure_name}",
+                        f"resized/{secure_name}",
+                        f"resized/2k_{secure_name}"
+                    ]
+                }
+            )), 404
         
         # Prepare response
         if deleted_files and not errors:
@@ -741,6 +881,11 @@ def delete_video_post():
                 'deleted_files': deleted_files,
                 'errors': errors
             }), 200
+        elif errors and not deleted_files:
+            return jsonify(format_system_error_response(
+                503,  # SYSTEM_PERMISSION_DENIED
+                {'video_name': secure_name, 'errors': errors}
+            )), 500
         else:
             # Complete failure
             logger.error(f"Failed to delete video '{secure_name}': {errors}")
@@ -751,12 +896,10 @@ def delete_video_post():
             }), 500
         
     except Exception as e:
-        logger.error(f"Error deleting video via POST: {str(e)}")
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'message': f"Error deleting video: {str(e)}"
-        }), 500
+        return jsonify(format_system_error_response(
+            506,  # SYSTEM_INTERNAL_ERROR
+            {'operation': 'delete_video', 'error': str(e)}
+        )), 500
 
 
 @video_bp.route('/batch_upload_status', methods=['GET'])
