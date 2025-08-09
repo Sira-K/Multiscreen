@@ -1,0 +1,2 @@
+Timestamp,Session_ID,Total_Duration_Seconds,Files_Processed,Successful_Uploads,Failed_Uploads,Success_Rate_Percent,Total_Size_MB,Total_Size_Bytes,Average_File_Size_MB,Upload_Speed_Mbps,Request_Processing_Time,Directory_Creation_Time,Total_Validation_Time,Total_File_Operations_Time,Total_Save_Time,Average_Time_Per_File,Average_Save_Time_Per_File
+20250808_174458,upload_20250808_174458,18.45,1,1,0,100.0,490.36,514177411,490.36,17091.4,18.219,0.0,0.0,0.0,0.23,18.449,0.23
