@@ -721,19 +721,19 @@ CLIENT_ERROR_MESSAGES = {
     
     466: {
         "message": "Client synchronization lost",
-        "description": "Client lost synchronization with other clients or server",
+        "description": "Client lost time synchronization with server",
         "common_causes": [
-            "Client clock drift from system time",
-            "Network jitter affecting synchronization",
-            "Client processing delays causing desync",
-            "Synchronization protocol errors"
+            "Network interruption affecting NTP",
+            "Client clock drift beyond tolerance",
+            "NTP service stopped on client",
+            "Time sync monitoring detected failure"
         ],
         "solutions": [
-            "Synchronize client clock with network time",
-            "Implement jitter buffer for network stability",
-            "Optimize client processing for consistent timing",
-            "Fix synchronization protocol implementation",
-            "Use hardware-based synchronization if available"
+            "Restart NTP service on client",
+            "Check network connectivity to NTP server",
+            "Verify chrony configuration on client",
+            "Re-register client after fixing sync",
+            "Check system time and hardware clock"
         ]
     },
     
