@@ -1,0 +1,51 @@
+{
+  "session_info": {
+    "timestamp": "20250808_174555",
+    "session_id": "upload_20250808_174555",
+    "started_at": "2025-08-08 17:45:55.608",
+    "completed_at": "2025-08-08 17:45:55.744",
+    "total_duration_seconds": 0.14
+  },
+  "summary_metrics": {
+    "files_processed": 1,
+    "successful_uploads": 1,
+    "failed_uploads": 0,
+    "success_rate_percent": 100.0,
+    "total_files_size_mb": 2.83,
+    "total_files_size_bytes": 2971650,
+    "average_file_size_mb": 2.83,
+    "upload_speed_mbps": 5475.67
+  },
+  "timing_breakdown": {
+    "request_processing_time": 0.131,
+    "directory_creation_time": 0.0,
+    "total_validation_time": 0.0,
+    "total_file_operations_time": 0.0,
+    "total_save_time": 0.004,
+    "average_time_per_file": 0.136,
+    "average_save_time_per_file": 0.004
+  },
+  "individual_files": [
+    {
+      "filename": "writing.mp4",
+      "file_size_bytes": 2971650,
+      "file_size_mb": 2.83,
+      "validation_time": 2.9802322387695312e-05,
+      "filename_processing_time": 0.00012063980102539062,
+      "save_time": 0.004134654998779297,
+      "size_check_time": 1.2636184692382812e-05,
+      "total_time": 0.0044972896575927734
+    }
+  ],
+  "successful_uploads": [
+    {
+      "original_filename": "writing.mp4",
+      "saved_filename": "writing.mp4",
+      "size_mb": 2.83,
+      "status": "completed",
+      "path": "/home/sirakong/Mulitiscreen/backend/endpoints/uploads/writing.mp4",
+      "processing_time_seconds": 0.0
+    }
+  ],
+  "failed_uploads": []
+}

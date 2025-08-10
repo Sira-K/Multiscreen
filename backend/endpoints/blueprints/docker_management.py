@@ -75,29 +75,30 @@ def calculate_group_ports(group_index: int) -> Dict[str, int]:
         "srt_port": 10080 + base_port_offset       # 10080, 10090, 10100, etc.
     }
 
+def check_port_available(port: int, host: str = "0.0.0.0") -> bool:
+    """
+    Check if a port is actually available on the system
+    """
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            result = sock.bind((host, port))
+            return True
+    except OSError:
+        return False
+    
 def get_next_available_ports() -> Dict[str, int]:
     """
-    Get the next available port block by checking existing containers
-    
-    Returns:
-        Dictionary with port assignments for the new group
+    Get the next available port block by checking both containers AND actual port availability
     """
     try:
-        # Get all existing containers with our labels
+        # First check existing containers
         discovery_result = discover_groups()
-        
-        if not discovery_result.get("success", False):
-            logger.warning(" Could not discover existing groups, using default ports")
-            return calculate_group_ports(0)
-        
-        existing_groups = discovery_result.get("groups", [])
-        
-        if not existing_groups:
-            logger.info(" No existing groups found, using first port block")
-            return calculate_group_ports(0)
+        existing_groups = discovery_result.get("groups", []) if discovery_result.get("success", False) else []
         
         # Find the highest port offset in use
-        max_offset = 0
+        max_offset = -1
         for group in existing_groups:
             ports = group.get("ports", {})
             if ports:
@@ -105,16 +106,29 @@ def get_next_available_ports() -> Dict[str, int]:
                 current_offset = srt_port - 10080
                 max_offset = max(max_offset, current_offset)
         
-        # Use the next available offset
-        next_index = (max_offset // 10) + 1
+        # Start checking from the next offset
+        start_index = (max_offset // 10) + 1 if max_offset >= 0 else 0
         
-        logger.info(f" Next available port index: {next_index}")
-        return calculate_group_ports(next_index)
+        # Check up to 10 possible port blocks
+        for index in range(start_index, start_index + 10):
+            ports = calculate_group_ports(index)
+            
+            # Check if all ports in this block are available
+            if (check_port_available(ports["rtmp_port"]) and
+                check_port_available(ports["http_port"]) and 
+                check_port_available(ports["api_port"]) and
+                check_port_available(ports["srt_port"])):
+                
+                logger.info(f"Found available port block at index {index}: {ports}")
+                return ports
+        
+        # If we get here, no ports were available
+        raise Exception("No available port blocks found in range")
         
     except Exception as e:
-        logger.error(f" Error calculating ports: {e}")
-        # Fallback to default ports
-        return calculate_group_ports(0)
+        logger.error(f"Error finding available ports: {e}")
+        # Try starting from a higher range
+        return calculate_group_ports(10)  # Start from much higher ports
 
 def create_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
     """

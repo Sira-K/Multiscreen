@@ -1,0 +1,51 @@
+{
+  "session_info": {
+    "timestamp": "20250808_174440",
+    "session_id": "upload_20250808_174440",
+    "started_at": "2025-08-08 17:44:20.268",
+    "completed_at": "2025-08-08 17:44:40.396",
+    "total_duration_seconds": 20.13
+  },
+  "summary_metrics": {
+    "files_processed": 1,
+    "successful_uploads": 1,
+    "failed_uploads": 0,
+    "success_rate_percent": 100.0,
+    "total_files_size_mb": 489.75,
+    "total_files_size_bytes": 513543856,
+    "average_file_size_mb": 489.75,
+    "upload_speed_mbps": 17260.98
+  },
+  "timing_breakdown": {
+    "request_processing_time": 19.901,
+    "directory_creation_time": 0.0,
+    "total_validation_time": 0.0,
+    "total_file_operations_time": 0.0,
+    "total_save_time": 0.227,
+    "average_time_per_file": 20.128,
+    "average_save_time_per_file": 0.227
+  },
+  "individual_files": [
+    {
+      "filename": "UB_2S_1.mp4",
+      "file_size_bytes": 513543856,
+      "file_size_mb": 489.75,
+      "validation_time": 1.4066696166992188e-05,
+      "filename_processing_time": 3.981590270996094e-05,
+      "save_time": 0.22698593139648438,
+      "size_check_time": 5.7220458984375e-06,
+      "total_time": 0.22719693183898926
+    }
+  ],
+  "successful_uploads": [
+    {
+      "original_filename": "UB_2S_1.mp4",
+      "saved_filename": "UB_2S_1.mp4",
+      "size_mb": 489.75,
+      "status": "completed",
+      "path": "/home/sirakong/Mulitiscreen/backend/endpoints/uploads/UB_2S_1.mp4",
+      "processing_time_seconds": 0.23
+    }
+  ],
+  "failed_uploads": []
+}

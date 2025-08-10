@@ -1,0 +1,51 @@
+{
+  "session_info": {
+    "timestamp": "20250808_174420",
+    "session_id": "upload_20250808_174420",
+    "started_at": "2025-08-08 17:43:58.015",
+    "completed_at": "2025-08-08 17:44:20.247",
+    "total_duration_seconds": 22.23
+  },
+  "summary_metrics": {
+    "files_processed": 1,
+    "successful_uploads": 1,
+    "failed_uploads": 0,
+    "success_rate_percent": 100.0,
+    "total_files_size_mb": 583.63,
+    "total_files_size_bytes": 611984394,
+    "average_file_size_mb": 583.63,
+    "upload_speed_mbps": 17258.8
+  },
+  "timing_breakdown": {
+    "request_processing_time": 21.961,
+    "directory_creation_time": 0.0,
+    "total_validation_time": 0.0,
+    "total_file_operations_time": 0.0,
+    "total_save_time": 0.271,
+    "average_time_per_file": 22.232,
+    "average_save_time_per_file": 0.271
+  },
+  "individual_files": [
+    {
+      "filename": "service-mbrs-ntscrm-00068306-00068306.mp4",
+      "file_size_bytes": 611984394,
+      "file_size_mb": 583.63,
+      "validation_time": 3.504753112792969e-05,
+      "filename_processing_time": 0.00012683868408203125,
+      "save_time": 0.27053093910217285,
+      "size_check_time": 5.4836273193359375e-06,
+      "total_time": 0.27086710929870605
+    }
+  ],
+  "successful_uploads": [
+    {
+      "original_filename": "service-mbrs-ntscrm-00068306-00068306.mp4",
+      "saved_filename": "service-mbrs-ntscrm-00068306-00068306.mp4",
+      "size_mb": 583.63,
+      "status": "completed",
+      "path": "/home/sirakong/Mulitiscreen/backend/endpoints/uploads/service-mbrs-ntscrm-00068306-00068306.mp4",
+      "processing_time_seconds": 0.27
+    }
+  ],
+  "failed_uploads": []
+}

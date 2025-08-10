@@ -48,7 +48,7 @@ os.makedirs(app.config['DOWNLOAD_FOLDER'], exist_ok=True)
 # Register blueprints
 app.register_blueprint(group_bp)
 app.register_blueprint(video_bp)
-app.register_blueprint(client_bp)
+app.register_blueprint(client_bp, url_prefix='/api/clients')
 app.register_blueprint(stream_bp)
 app.register_blueprint(docker_bp)
 
