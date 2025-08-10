@@ -55,6 +55,7 @@ app.register_blueprint(docker_bp)
 # Initialize application state
 load_config(state)
 
+
 def initialize_app_state():
     """Initialize app state - hybrid architecture (clients only)"""
     try:
@@ -70,21 +71,11 @@ def initialize_app_state():
         if not hasattr(state, 'config_lock'):
             state.config_lock = threading.RLock()
         
-        # Log current state
-        total_clients = len(getattr(state, 'clients', {}))
-        
-        logger.info(f"Application state initialized:")
-        logger.info(f"  - Total clients: {total_clients}")
-        logger.info(f"  - Groups: Managed by Docker discovery")
-        
+        logger.info("Application state initialized successfully")
         return True
         
-    except SystemException as e:
-        logger.error(f"System error initializing app state: {e}")
-        return False
     except Exception as e:
-        logger.error(f"Unexpected error initializing app state: {e}")
-        traceback.print_exc()
+        logger.error(f"Failed to initialize app state: {e}")
         return False
 
 def get_system_status():

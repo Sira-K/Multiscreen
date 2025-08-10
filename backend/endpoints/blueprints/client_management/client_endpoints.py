@@ -90,8 +90,8 @@ def register_client():
             else:
                 client_data["assignment_status"] = "group_assigned"
         
-        # Save client
-        state.add_client(client_id, client_data)
+        # Save client - FIXED: Use the correct method name
+        state.add_or_update_client(client_id, client_data)
         
         logger.info(f"Client {action}: {client_id} (status: {client_data['assignment_status']})")
         
@@ -103,6 +103,7 @@ def register_client():
             "action": action,
             "status": client_data["assignment_status"],
             "server_time": current_time,
+            # FIXED: Only pass client_data (one argument)
             "next_steps": get_next_steps(client_data)
         }
         
@@ -177,108 +178,111 @@ def wait_for_assignment():
         if not client:
             return jsonify({
                 "status": "not_registered",
-                "action": "register_first",
-                "message": "Client not registered, please register first",
-                "registration_endpoint": "/api/clients/register"
+                "message": "Client not found. Please register first."
             }), 404
         
         # Update last seen
-        client["last_seen"] = current_time
-        client["status"] = "active"
-        state.add_client(client_id, client)
+        state.update_client_heartbeat(client_id)
         
-        # Check assignment status
+        # Check assignment status and stream availability
         assignment_status = client.get("assignment_status", "waiting_for_assignment")
+        group_id = client.get("group_id")
+        stream_assignment = client.get("stream_assignment")
         
+        # Status: Waiting for group assignment
         if assignment_status == "waiting_for_assignment":
             return jsonify({
                 "status": "waiting_for_group_assignment",
-                "message": "Waiting for admin to assign client to a group",
-                "instructions": "Admin needs to assign client to a group using the web interface"
-            }), 200
-        
-        group_id = client.get("group_id")
-        if not group_id:
-            return jsonify({
-                "status": "assignment_error",
-                "message": "Client has assignment status but no group_id"
-            }), 500
-        
-        # Verify group still exists
-        group = get_group_from_docker(group_id)
-        if not group:
-            # Clear invalid group assignment
-            client.update({
-                "group_id": None,
-                "stream_assignment": None,
-                "stream_url": None,
-                "screen_number": None,
-                "assignment_status": "waiting_for_assignment"
-            })
-            state.add_client(client_id, client)
-            
-            return jsonify({
-                "status": "group_not_found",
-                "group_id": group_id,
-                "message": "Assigned group no longer exists. Client unassigned.",
-                "action": "wait_for_reassignment"
-            }), 404
-        
-        if not group.get("docker_running", False):
-            return jsonify({
-                "status": "group_not_running",
-                "group_id": group_id,
-                "group_name": group.get("name"),
-                "message": "Group's Docker container is not running. Contact admin to start container."
-            }), 503
-        
-        # Check specific assignment types
-        if assignment_status == "group_assigned":
-            return jsonify({
-                "status": "waiting_for_stream_assignment",
-                "group_id": group_id,
-                "group_name": group.get("name"),
-                "message": "Assigned to group but waiting for specific stream/screen assignment"
-            }), 200
-        
-        # Check if streaming is active
-        group_name = group.get("name", group_id)
-        streaming_active = check_group_streaming_status(group_id, group_name)
-        
-        if not streaming_active:
-            return jsonify({
-                "status": "waiting_for_streaming",
-                "group_id": group_id,
-                "group_name": group_name,
+                "message": "Waiting for admin to assign you to a group",
                 "assignment_status": assignment_status,
-                "message": "Waiting for streaming to start. Admin needs to start streaming."
+                "client_id": client_id
             }), 200
         
-        # Stream is ready!
-        stream_url = client.get("stream_url")
-        if stream_url:
+        # Status: Group assigned, waiting for stream assignment
+        elif assignment_status == "group_assigned":
             return jsonify({
-                "status": "ready_to_play",
-                "group_id": group_id,
-                "group_name": group_name,
+                "status": "waiting_for_stream_assignment", 
+                "message": "Waiting for admin to assign you to a specific stream or screen",
                 "assignment_status": assignment_status,
-                "stream_assignment": client.get("stream_assignment"),
-                "screen_number": client.get("screen_number"),
-                "stream_url": stream_url,
-                "message": "Stream ready to play!"
+                "group_id": group_id,
+                "client_id": client_id
             }), 200
+        
+        # Status: Stream/screen assigned, check if streaming is active
+        elif assignment_status in ["stream_assigned", "screen_assigned"]:
+            # Check if group is running and has active streams
+            if group_id:
+                group = get_group_from_docker(group_id)
+                if not group:
+                    return jsonify({
+                        "status": "group_not_found",
+                        "message": f"Assigned group '{group_id}' not found",
+                        "assignment_status": assignment_status,
+                        "group_id": group_id,
+                        "client_id": client_id
+                    }), 200
+                
+                # Check if group is streaming
+                group_name = group.get("name", group_id)
+                is_streaming = check_group_streaming_status(group_id, group_name)
+
+                if is_streaming:
+                    # Build stream URL for this client
+                    stream_url = client.get("stream_url")
+                    
+                    if stream_url:
+                        return jsonify({
+                            "status": "ready_to_play",
+                            "message": "Stream is ready for playback",
+                            "assignment_status": assignment_status,
+                            "group_id": group_id,
+                            "group_name": group_name,
+                            "stream_assignment": stream_assignment,
+                            "stream_url": stream_url,
+                            "screen_number": client.get("screen_number"),
+                            "stream_version": int(time.time()),
+                            "client_id": client_id
+                        }), 200
+                    else:
+                        return jsonify({
+                            "status": "waiting_for_streaming",
+                            "message": "Group is streaming but no stream URL assigned to this client",
+                            "assignment_status": assignment_status,
+                            "group_id": group_id,
+                            "client_id": client_id
+                        }), 200
+                else:
+                    return jsonify({
+                        "status": "waiting_for_streaming",
+                        "message": f"Waiting for streaming to start in group '{group_id}'",
+                        "assignment_status": assignment_status,
+                        "group_id": group_id,
+                        "stream_assignment": stream_assignment,
+                        "client_id": client_id
+                    }), 200
+            else:
+                return jsonify({
+                    "status": "group_not_found",
+                    "message": "No group assigned",
+                    "assignment_status": assignment_status,
+                    "client_id": client_id
+                }), 200
+        
+        # Unknown status
         else:
             return jsonify({
-                "status": "stream_url_missing",
-                "message": "Assignment exists but stream URL not generated. Contact admin."
-            }), 500
-        
+                "status": "unknown",
+                "message": f"Unknown assignment status: {assignment_status}",
+                "assignment_status": assignment_status,
+                "client_id": client_id
+            }), 200
+            
     except Exception as e:
-        logger.error(f"Error in wait_for_assignment: {e}")
+        logger.error(f"Wait for assignment failed: {e}")
         traceback.print_exc()
         return jsonify({
             "status": "error",
-            "error": str(e)
+            "error": f"Internal server error: {str(e)}"
         }), 500
 
 # Legacy endpoints for backwards compatibility

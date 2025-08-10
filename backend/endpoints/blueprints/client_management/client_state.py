@@ -1,5 +1,5 @@
 """
-Client State Management
+Client State Management - FIXED VERSION
 Centralized state management for registered clients
 """
 
@@ -40,12 +40,18 @@ class ClientState:
         """Add or update client"""
         with self.clients_lock:
             self.clients[client_id] = client_data
+            logger.debug(f"Added/updated client: {client_id}")
+    
+    def add_or_update_client(self, client_id: str, client_data: Dict[str, Any]):
+        """Add or update client (alias for add_client for compatibility)"""
+        return self.add_client(client_id, client_data)
     
     def remove_client(self, client_id: str) -> bool:
         """Remove client"""
         with self.clients_lock:
             if client_id in self.clients:
                 del self.clients[client_id]
+                logger.debug(f"Removed client: {client_id}")
                 return True
             return False
     
@@ -80,6 +86,16 @@ class ClientState:
             if client_id in self.clients:
                 self.clients[client_id]["last_seen"] = current_time
                 self.clients[client_id]["status"] = "active"
+    
+    def update_client(self, client_id: str, **kwargs):
+        """Update specific fields of a client"""
+        with self.clients_lock:
+            if client_id in self.clients:
+                for key, value in kwargs.items():
+                    self.clients[client_id][key] = value
+                logger.debug(f"Updated client {client_id}: {kwargs}")
+            else:
+                logger.warning(f"Attempted to update non-existent client: {client_id}")
 
 # Global client state instance
 client_state = ClientState()

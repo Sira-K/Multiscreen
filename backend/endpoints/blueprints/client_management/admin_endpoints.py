@@ -318,16 +318,18 @@ def assign_client_to_screen():
         # Build stream URL for the specific screen
         screen_count = group.get("screen_count", 4)
         persistent_streams = get_persistent_streams_for_group(group_id, group_name, screen_count)
-        screen_stream_key = f"test{screen_number}"
-        
-        if screen_stream_key not in persistent_streams:
+
+        # Use the main combined stream for all screen assignments
+        main_stream_key = "test"  # ✅ CORRECT
+
+        if main_stream_key not in persistent_streams:
             return jsonify({
                 "success": False,
-                "error": f"Screen {screen_number} stream not available. Start multi-video streaming first.",
+                "error": f"Main stream not available. Start streaming first.",
                 "available_streams": list(persistent_streams.keys())
             }), 400
-        
-        stream_id = persistent_streams[screen_stream_key]
+
+        stream_id = persistent_streams[main_stream_key]
         stream_url = build_stream_url(group, stream_id, group_name, srt_ip)
         
         # Update client assignment
