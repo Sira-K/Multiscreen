@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Multi-Screen Client Runner
-Connects to server, waits for group assignment, and displays streams
-Refactored from the original MultiScreenClient code
+Unified Multi-Screen Client with Time Synchronization
+Complete client implementation with integrated time sync, registration, and video playback
 """
 
 import argparse
@@ -15,39 +14,250 @@ import os
 import json
 import signal
 import atexit
-from typing import Optional
-from urllib.parse import urlparse
 import threading
+import socket
+import struct
+from typing import Optional, Dict, Any, Tuple
+from urllib.parse import urlparse
 from pathlib import Path
-import shutil
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-class MultiScreenClient:
+class ClientTimeService:
+    """Time synchronization service for the client"""
+    
+    def __init__(self, port=8080):
+        self.port = port
+        self.server = None
+        self.server_thread = None
+        self.running = False
+    
+    def start(self):
+        """Start the time service"""
+        if self.running:
+            return
+        
+        try:
+            self.server = HTTPServer(('0.0.0.0', self.port), TimeServiceHandler)
+            self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+            self.server_thread.start()
+            self.running = True
+            logging.info(f"🕒 Client time service started on port {self.port}")
+        except Exception as e:
+            logging.warning(f"Could not start time service on port {self.port}: {e}")
+            self.running = False
+    
+    def stop(self):
+        """Stop the time service"""
+        if self.running and self.server:
+            try:
+                self.server.shutdown()
+                self.server.server_close()
+                self.running = False
+                logging.info("🕒 Client time service stopped")
+            except Exception as e:
+                logging.error(f"Error stopping time service: {e}")
+    
+    def is_running(self):
+        return self.running
+
+class TimeServiceHandler(BaseHTTPRequestHandler):
+    """HTTP handler for client time service"""
+    
+    def do_GET(self):
+        """Handle GET requests for time information"""
+        try:
+            if self.path == '/api/time':
+                self.handle_time_request()
+            elif self.path == '/api/sync-status':
+                self.handle_sync_status_request()
+            elif self.path == '/api/health':
+                self.handle_health_request()
+            else:
+                self.send_error(404, "Endpoint not found")
+        except Exception as e:
+            logging.error(f"Error handling time request: {e}")
+            self.send_error(500, f"Internal server error: {str(e)}")
+    
+    def handle_time_request(self):
+        """Return current system time with detailed logging"""
+        request_received_time = time.time()
+        current_time = time.time()
+        
+        # Print detailed timing information
+        print(f"\n🟦 CLIENT TIME REQUEST RECEIVED")
+        print(f"📊 Request Time: {time.strftime('%Y-%m-%d %H:%M:%S.%f', time.gmtime(request_received_time))[:-3]} UTC")
+        print(f"📊 Response Time: {time.strftime('%Y-%m-%d %H:%M:%S.%f', time.gmtime(current_time))[:-3]} UTC")
+        print(f"📊 Processing Delay: {(current_time - request_received_time) * 1000:.3f} ms")
+        print(f"📊 Timestamp: {current_time:.6f}")
+        
+        response_data = {
+            "timestamp": current_time,
+            "timestamp_ms": current_time * 1000,
+            "iso_time": time.strftime("%Y-%m-%dT%H:%M:%S.%fZ", time.gmtime(current_time)),
+            "local_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(current_time)),
+            "timezone": time.tzname[0],
+            "source": "system_clock",
+            "request_received": request_received_time,
+            "processing_time_ms": (current_time - request_received_time) * 1000
+        }
+        
+        print(f"✅ Sending time response to server")
+        print(f"-" * 50)
+        
+        self.send_json_response(response_data)
+    
+    def handle_sync_status_request(self):
+        """Return NTP/chrony synchronization status"""
+        try:
+            sync_status = self.get_chrony_status()
+            self.send_json_response(sync_status)
+        except Exception as e:
+            error_response = {
+                "error": f"Failed to get sync status: {str(e)}",
+                "synchronized": False,
+                "method": "error"
+            }
+            self.send_json_response(error_response, status_code=500)
+    
+    def handle_health_request(self):
+        """Return client health status"""
+        health_data = {
+            "status": "healthy",
+            "timestamp": time.time(),
+            "uptime": self.get_system_uptime(),
+            "load_average": self.get_load_average()
+        }
+        self.send_json_response(health_data)
+    
+    def get_chrony_status(self):
+        """Get chrony synchronization status"""
+        try:
+            result = subprocess.run(['chronyc', 'tracking'], capture_output=True, text=True, timeout=5)
+            
+            if result.returncode == 0:
+                tracking_info = self.parse_chrony_tracking(result.stdout)
+                return {
+                    "synchronized": True,
+                    "method": "chrony",
+                    "tracking": tracking_info,
+                    "timestamp": time.time()
+                }
+            else:
+                return {
+                    "synchronized": False,
+                    "error": "chronyc command failed",
+                    "method": "chrony",
+                    "timestamp": time.time()
+                }
+        except subprocess.TimeoutExpired:
+            return {"synchronized": False, "error": "chronyc timeout", "method": "chrony"}
+        except FileNotFoundError:
+            return {"synchronized": False, "error": "chrony not installed", "method": "chrony"}
+        except Exception as e:
+            return {"synchronized": False, "error": str(e), "method": "chrony"}
+    
+    def parse_chrony_tracking(self, output):
+        """Parse chronyc tracking output"""
+        tracking = {}
+        for line in output.split('\n'):
+            line = line.strip()
+            if ':' in line:
+                key, value = line.split(':', 1)
+                key = key.strip().lower().replace(' ', '_')
+                value = value.strip()
+                
+                if 'offset' in key and 'ms' in value:
+                    try:
+                        tracking[key] = float(value.replace('ms', '').strip())
+                        tracking[f"{key}_unit"] = "ms"
+                    except ValueError:
+                        tracking[key] = value
+                elif 'stratum' in key:
+                    try:
+                        tracking[key] = int(value)
+                    except ValueError:
+                        tracking[key] = value
+                else:
+                    tracking[key] = value
+        return tracking
+    
+    def get_system_uptime(self):
+        """Get system uptime in seconds"""
+        try:
+            with open('/proc/uptime', 'r') as f:
+                uptime_seconds = float(f.readline().split()[0])
+            return uptime_seconds
+        except Exception:
+            return None
+    
+    def get_load_average(self):
+        """Get system load average"""
+        try:
+            with open('/proc/loadavg', 'r') as f:
+                load_data = f.readline().split()
+            return {
+                "1min": float(load_data[0]),
+                "5min": float(load_data[1]),
+                "15min": float(load_data[2])
+            }
+        except Exception:
+            return None
+    
+    def send_json_response(self, data, status_code=200):
+        """Send JSON response"""
+        response_json = json.dumps(data, indent=2)
+        
+        self.send_response(status_code)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(response_json)))
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        
+        self.wfile.write(response_json.encode('utf-8'))
+    
+    def log_message(self, format, *args):
+        """Override to use our logger"""
+        logging.debug(f"{self.client_address[0]} - {format % args}")
+
+class UnifiedMultiScreenClient:
+    """
+    Unified Multi-Screen Client with Time Synchronization
+    Complete client implementation with time sync, registration, and video playback
+    """
+    
     def __init__(self, server_url: str, hostname: str = None, display_name: str = None, 
-                 force_ffplay: bool = False):
+                 force_ffplay: bool = False, enforce_time_sync: bool = True):
         """
-        Client that waits for admin to assign it to a stream
-        Uses C++ player or ffplay fallback
+        Initialize the unified client
         
         Args:
-            server_url: Server URL (e.g., "http://128.205.39.64:5001")
+            server_url: Server URL (e.g., "http://192.168.1.100:5000")
             hostname: Unique client identifier
             display_name: Friendly display name
             force_ffplay: Force use of ffplay instead of C++ player
+            enforce_time_sync: Enable time synchronization validation
         """
         self.server_url = server_url.rstrip('/')
-        self.hostname = hostname or f"client-{int(time.time())}"
-        self.display_name = display_name or self.hostname
+        self.hostname = hostname or socket.gethostname()
+        self.display_name = display_name or f"Display-{self.hostname}"
         self.force_ffplay = force_ffplay
+        self.enforce_time_sync = enforce_time_sync
         
+        # Stream management
         self.current_stream_url = None
         self.current_stream_version = None
         self.player_process = None
         self.running = True
-        self.retry_interval = 5  # seconds
-        self.max_retries = 60    # 5 minutes total wait time
+        self.retry_interval = 5
+        self.max_retries = 60
         self._shutdown_event = threading.Event()
         
-        # Extract server IP from server URL for stream URL fixing
+        # Time synchronization
+        self.time_service = ClientTimeService(port=8080)
+        self.registered = False
+        self.assignment_status = "waiting_for_assignment"
+        
+        # Extract server IP for stream URL fixing
         parsed_url = urlparse(self.server_url)
         self.server_ip = parsed_url.hostname or "127.0.0.1"
         
@@ -59,15 +269,13 @@ class MultiScreenClient:
         )
         self.logger = logging.getLogger(__name__)
         
-        # Setup signal handlers for graceful shutdown
+        # Setup signal handlers and cleanup
         self._setup_signal_handlers()
-        
-        # Register cleanup function
         atexit.register(self._emergency_cleanup)
         
-        # Find the player executable
+        # Find player executable
         self.player_executable = self._find_player_executable()
-
+    
     def _setup_signal_handlers(self):
         """Setup signal handlers for graceful shutdown"""
         def signal_handler(signum, frame):
@@ -75,21 +283,18 @@ class MultiScreenClient:
             self.logger.info(f"Received {signal_name} signal, initiating graceful shutdown...")
             self.shutdown()
         
-        # Handle SIGINT (Ctrl+C) and SIGTERM
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
         
-        # On Unix systems, also handle SIGHUP
         if hasattr(signal, 'SIGHUP'):
             signal.signal(signal.SIGHUP, signal_handler)
-
+    
     def _find_player_executable(self) -> Optional[str]:
         """Find the C++ player executable"""
         if self.force_ffplay:
             self.logger.info("Forcing ffplay usage (--force-ffplay specified)")
             return None
         
-        # Look for built C++ player
         search_paths = [
             Path(__file__).parent / "multi-screen" / "cmake-build-debug" / "player" / "player",
             Path(__file__).parent / "cmake-build-debug" / "player" / "player", 
@@ -107,289 +312,295 @@ class MultiScreenClient:
                 return str(player_path.absolute())
         
         self.logger.warning("C++ player not found, will use ffplay fallback")
-        self.logger.info("To build the C++ player, run: python build_player.py")
         return None
-
-    def shutdown(self):
-        """Initiate graceful shutdown"""
-        if not self.running:
-            return  # Already shutting down
-        
-        self.logger.info("Starting graceful shutdown...")
-        self.running = False
-        self._shutdown_event.set()
-        
-        # Stop the player immediately
-        self.stop_stream()
-        
-        # Give monitoring threads a moment to notice shutdown
-        time.sleep(0.5)
-
-    def fix_stream_url(self, stream_url: str) -> str:
-        """
-        Fix stream URL to use server IP instead of localhost
-        
-        Args:
-            stream_url: Original stream URL from server
-            
-        Returns:
-            Fixed stream URL with correct server IP
-        """
-        if not stream_url:
-            return stream_url
-            
-        # Replace 127.0.0.1 or localhost with actual server IP
-        if "127.0.0.1" in stream_url:
-            fixed_url = stream_url.replace("127.0.0.1", self.server_ip)
-            self.logger.info(f"Fixed stream URL:")
-            self.logger.info(f"   Original: {stream_url}")
-            self.logger.info(f"   Fixed:    {fixed_url}")
-            return fixed_url
-        elif "localhost" in stream_url:
-            fixed_url = stream_url.replace("localhost", self.server_ip)
-            self.logger.info(f"Fixed stream URL:")
-            self.logger.info(f"   Original: {stream_url}")
-            self.logger.info(f"   Fixed:    {fixed_url}")
-            return fixed_url
-        else:
-            # URL already has correct IP
-            self.logger.debug(f"Stream URL already has correct IP: {stream_url}")
-            return stream_url
-
+    
+    def start_time_service(self):
+        """Start the client time service"""
+        if self.enforce_time_sync:
+            self.time_service.start()
+            # Give the service a moment to start
+            time.sleep(0.5)
+    
+    def stop_time_service(self):
+        """Stop the client time service"""
+        self.time_service.stop()
+    
     def register(self) -> bool:
-        """Register client with server"""
+        """Register client with server including time sync validation"""
         try:
-            self.logger.info(f"Starting Multi-Screen Client: {self.hostname}")
-            self.logger.info(f"Server: {self.server_url}")
-            self.logger.info(f"Server IP: {self.server_ip}")
+            print(f"\n{'='*80}")
+            print(f"🚀 STARTING UNIFIED CLIENT REGISTRATION")
+            print(f"   Client: {self.hostname}")
+            print(f"   Display Name: {self.display_name}")
+            print(f"   Server: {self.server_url}")
+            print(f"   Server IP: {self.server_ip}")
+            print(f"   Time Sync: {'Enabled' if self.enforce_time_sync else 'Disabled'}")
+            
+            # Start time service if time sync is enabled
+            if self.enforce_time_sync:
+                self.start_time_service()
+                if self.time_service.is_running():
+                    print(f"   Time Service: Running on port {self.time_service.port}")
+                else:
+                    print(f"   Time Service: Failed to start (will use fallback)")
+            
+            registration_start = time.time()
+            registration_start_formatted = time.strftime("%Y-%m-%d %H:%M:%S.%f", time.gmtime(registration_start))[:-3]
+            print(f"   Start Time: {registration_start_formatted} UTC")
+            print(f"{'='*80}")
             
             player_type = "cpp_player" if self.player_executable else "ffplay_fallback"
             
-            response = requests.post(
-                f"{self.server_url}/register_client",
-                json={
-                    "hostname": self.hostname,
-                    "display_name": self.display_name,
-                    "platform": f"python_client_with_{player_type}"
-                },
-                timeout=10
-            )
+            registration_data = {
+                "hostname": self.hostname,
+                "display_name": self.display_name,
+                "platform": f"unified_client_with_{player_type}",
+                "enforce_time_sync": self.enforce_time_sync
+            }
+            
+            print(f"\n📡 Sending registration request...")
+            request_sent_time = time.time()
+            
+            # Try new registration endpoint first, fallback to legacy
+            try:
+                response = requests.post(
+                    f"{self.server_url}/api/clients/register",
+                    json=registration_data,
+                    timeout=10
+                )
+                endpoint_used = "new (/api/clients/register)"
+            except requests.exceptions.RequestException:
+                # Fallback to legacy endpoint
+                self.logger.info("New endpoint failed, trying legacy endpoint...")
+                response = requests.post(
+                    f"{self.server_url}/register_client",
+                    json=registration_data,
+                    timeout=10
+                )
+                endpoint_used = "legacy (/register_client)"
+            
+            response_received_time = time.time()
+            network_delay_ms = (response_received_time - request_sent_time) * 1000
+            
+            print(f"📡 Response received in {network_delay_ms:.1f}ms using {endpoint_used}")
+            
             if response.status_code == 200:
-                self.logger.info(f"Registered as {self.hostname} (using {player_type})")
-                self.logger.info("Waiting for admin to assign this client to a group and stream...")
-                return True
-            self.logger.error(f"Registration failed: {response.text}")
-            return False
+                result = response.json()
+                if result.get("success", True):  # Legacy endpoint doesn't have 'success' field
+                    registration_end = time.time()
+                    total_time_ms = (registration_end - registration_start) * 1000
+                    
+                    print(f"\n✅ REGISTRATION SUCCESSFUL!")
+                    print(f"   Client ID: {result.get('client_id', self.hostname)}")
+                    print(f"   Status: {result.get('status', 'registered')}")
+                    print(f"   Time Sync Validated: {result.get('time_sync_validated', False)}")
+                    if 'server_time' in result:
+                        print(f"   Server Time: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(result['server_time']))}")
+                    print(f"   Total Registration Time: {total_time_ms:.1f}ms")
+                    
+                    # Display time sync information if available
+                    if 'sync_info' in result:
+                        sync_info = result['sync_info']
+                        offset = sync_info.get('offset_ms', 0)
+                        print(f"\n🕒 TIME SYNCHRONIZATION DETAILS:")
+                        print(f"   Synchronized: {sync_info.get('synchronized', False)}")
+                        print(f"   Clock Offset: {offset:.1f}ms")
+                        print(f"   Method: {sync_info.get('method', 'unknown')}")
+                        if abs(offset) < 10:
+                            print(f"   Quality: ✅ Excellent (< 10ms)")
+                        elif abs(offset) < 50:
+                            print(f"   Quality: ✅ Good (< 50ms)")
+                        else:
+                            print(f"   Quality: ⚠️  Needs improvement (> 50ms)")
+                    
+                    self.registered = True
+                    self.assignment_status = result.get('status', 'waiting_for_assignment')
+                    
+                    # Show next steps
+                    next_steps = result.get('next_steps', [
+                        "Wait for admin to assign you to a group",
+                        "Admin will use the web interface to make assignments"
+                    ])
+                    print(f"\n📋 Next Steps:")
+                    for step in next_steps:
+                        print(f"   • {step}")
+                    
+                    print(f"{'='*80}")
+                    return True
+                else:
+                    print(f"❌ Registration failed: {result.get('error', 'Unknown error')}")
+                    return False
+                    
+            elif response.status_code == 400:
+                error_data = response.json()
+                error_code = error_data.get('error_code')
+                
+                if error_code == 466:  # CLIENT_SYNC_LOST - time sync error
+                    print(f"\n❌ TIME SYNCHRONIZATION REQUIRED")
+                    print(f"   Error: {error_data['error']}")
+                    print(f"   Tolerance: {error_data.get('tolerance_ms', 50)}ms")
+                    
+                    if 'sync_info' in error_data:
+                        sync_info = error_data['sync_info']
+                        print(f"   Server Time: {sync_info.get('server_time_formatted', 'N/A')}")
+                        print(f"   Client Time: {sync_info.get('client_time_formatted', 'N/A')}")
+                        print(f"   Actual Offset: {sync_info.get('offset_ms', 0):.1f}ms")
+                    
+                    if 'server_ntp_config' in error_data:
+                        print(f"\n📋 NTP Configuration needed:")
+                        print(error_data['server_ntp_config'])
+                        
+                    if 'setup_instructions' in error_data:
+                        print(f"\n🔧 Setup Instructions:")
+                        for instruction in error_data['setup_instructions']:
+                            print(f"   {instruction}")
+                    
+                    print(f"\n💡 Quick Fix Suggestions:")
+                    print(f"   1. Check if chrony is running: sudo systemctl status chrony")
+                    print(f"   2. Check time sync: chronyc tracking")
+                    print(f"   3. Restart chrony: sudo systemctl restart chrony")
+                    print(f"   4. Use --no-time-sync flag to bypass (not recommended)")
+                    print(f"{'='*80}")
+                    return False
+                else:
+                    print(f"❌ Registration failed: {error_data.get('error', 'Unknown error')}")
+                    return False
+            else:
+                print(f"❌ Registration failed with HTTP status {response.status_code}")
+                print(f"   Response: {response.text}")
+                return False
+                
         except Exception as e:
+            print(f"❌ Registration error: {e}")
             self.logger.error(f"Registration error: {e}")
             return False
-
+    
     def wait_for_assignment(self) -> bool:
         """Wait for admin to assign this client to a group and stream"""
         retry_count = 0
         
+        print(f"\n⏳ Waiting for assignment from admin...")
+        print(f"   Admin needs to:")
+        print(f"   1. Assign this client to a group")
+        print(f"   2. Assign this client to a specific stream/screen")
+        print(f"   3. Start streaming for the group")
+        print(f"   (Check the web interface at {self.server_url})")
+        
         while self.running and not self._shutdown_event.is_set() and retry_count < self.max_retries:
             try:
-                # Poll server for assignment status
-                response = requests.post(
-                    f"{self.server_url}/wait_for_stream",
-                    json={"client_id": self.hostname},
-                    timeout=10
-                )
+                # Use new endpoint if available, fallback to legacy
+                try:
+                    response = requests.post(
+                        f"{self.server_url}/api/clients/wait_for_assignment",
+                        json={"client_id": self.hostname},
+                        timeout=10
+                    )
+                except requests.exceptions.RequestException:
+                    # Fallback to legacy endpoint
+                    response = requests.post(
+                        f"{self.server_url}/wait_for_stream",
+                        json={"client_id": self.hostname},
+                        timeout=10
+                    )
                 
                 if response.status_code != 200:
-                    raise Exception(response.text)
+                    raise Exception(f"HTTP {response.status_code}: {response.text}")
                 
                 data = response.json()
                 status = data.get('status')
                 message = data.get('message', '')
                 
-                # Add debug logging to see what the server is sending
-                self.logger.debug(f" Server response: status={status}, data={json.dumps(data, indent=2)}")
+                self.logger.debug(f"Server response: status={status}")
                 
                 if status == "ready_to_play":
-                    #  Everything is ready!
+                    # Stream is ready!
                     original_stream_url = data.get('stream_url')
                     self.current_stream_url = self.fix_stream_url(original_stream_url)
                     
-                    # Handle stream version - only use server version if provided
+                    # Handle stream version
                     server_version = data.get('stream_version')
                     if server_version is not None:
                         self.current_stream_version = server_version
                     else:
-                        # Server doesn't provide versions, use timestamp for this session only
                         if self.current_stream_version is None:
                             self.current_stream_version = int(time.time())
-                        # Keep existing version if server doesn't provide one
                     
                     group_name = data.get('group_name', 'unknown')
                     stream_assignment = data.get('stream_assignment', 'unknown')
-                    streaming_mode = data.get('mode', 'unknown')
                     
-                    self.logger.info(f" Ready to play!")
-                    self.logger.info(f"   Group: {group_name}")
-                    self.logger.info(f"   Stream: {stream_assignment}")
-                    self.logger.info(f"   Mode: {streaming_mode}")
-                    self.logger.info(f"   Version: {self.current_stream_version}")
-                    self.logger.info(f"   Stream URL: {self.current_stream_url}")
-                    
-                    # Log which specific screen stream we're getting
-                    if 'screen' in stream_assignment.lower():
-                        self.logger.info(f"    Playing individual screen stream")
-                    elif 'combined' in self.current_stream_url:
-                        self.logger.info(f"    Playing combined stream (all screens)")
-                    
+                    print(f"\n🎉 ASSIGNMENT COMPLETE!")
+                    print(f"   Group: {group_name}")
+                    print(f"   Stream: {stream_assignment}")
+                    print(f"   Assignment Type: {data.get('assignment_status', 'unknown')}")
+                    if data.get('screen_number') is not None:
+                        print(f"   Screen Number: {data.get('screen_number')}")
+                    print(f"   Stream URL: {self.current_stream_url}")
+                    print(f"   Stream Version: {self.current_stream_version}")
                     return True
                 
-                elif status == "waiting_for_group_assignment":
-                    # Admin hasn't assigned client to a group yet
-                    self.logger.info(f" {message}")
-                    self.logger.info(f"     Admin: Use /assign_client_to_group to assign '{self.hostname}' to a group")
-                    retry_count = 0  # Don't count this as a failure
-                
-                elif status == "waiting_for_stream_assignment":
-                    # Client is in a group but no stream assigned yet
-                    group_id = data.get('group_id', 'unknown')
-                    self.logger.info(f" {message}")
-                    self.logger.info(f"     Admin: Assign '{self.hostname}' to a stream in group '{group_id}'")
-                    self.logger.info(f"     Use /assign_client_stream or /auto_assign_group_clients")
-                    retry_count = 0  # Don't count this as a failure
+                elif status in ["waiting_for_group_assignment", "waiting_for_stream_assignment"]:
+                    print(f"⏳ {message}")
+                    retry_count = 0  # Don't count as failure
                 
                 elif status == "waiting_for_streaming":
-                    # Client assigned but streaming not started yet
                     group_name = data.get('group_name', 'unknown')
                     stream_assignment = data.get('stream_assignment', 'unknown')
-                    self.logger.info(f" {message}")
-                    self.logger.info(f"     Assigned to group '{group_name}', stream '{stream_assignment}'")
-                    self.logger.info(f"     Admin: Start streaming with /start_multi_video_srt or /start_group_srt")
-                    retry_count = 0  # Don't count this as a failure
+                    print(f"⏳ {message}")
+                    print(f"   Assigned to: {group_name}/{stream_assignment}")
+                    print(f"   Waiting for admin to start streaming...")
+                    retry_count = 0
                 
-                elif status == "group_not_running":
-                    # Docker container not running
-                    group_name = data.get('group_name', 'unknown')
-                    self.logger.warning(f" {message}")
-                    self.logger.info(f"     Admin: Start Docker container for group '{group_name}'")
-                    retry_count = 0  # Don't count this as a failure
+                elif status in ["group_not_running", "group_not_found"]:
+                    print(f"❌ {message}")
+                    retry_count = 0
                 
                 elif status == "not_registered":
-                    # Client somehow got unregistered
-                    self.logger.error(f" {message}")
+                    print(f"❌ {message}")
+                    print(f"   Client may have been removed from server")
                     return False
                 
                 else:
-                    self.logger.warning(f" Unexpected status: {status} - {message}")
+                    print(f"⚠️  Unexpected status: {status} - {message}")
                     retry_count += 1
                 
-                # Use shutdown event for interruptible sleep
+                # Interruptible sleep
                 if self._shutdown_event.wait(timeout=self.retry_interval):
-                    self.logger.info(" Shutdown requested during wait")
+                    print(f"   Shutdown requested during wait")
                     return False
                 
-            except requests.exceptions.RequestException as e:
-                self.logger.warning(f" Network error ({retry_count + 1}/{self.max_retries}): {e}")
+            except Exception as e:
+                print(f"⚠️  Network error ({retry_count + 1}/{self.max_retries}): {e}")
                 retry_count += 1
                 if self._shutdown_event.wait(timeout=self.retry_interval * 2):
-                    self.logger.info(" Shutdown requested during error wait")
-                    return False
-            except Exception as e:
-                self.logger.error(f" Unexpected error: {e}")
-                retry_count += 1
-                if self._shutdown_event.wait(timeout=self.retry_interval):
-                    self.logger.info(" Shutdown requested during error wait")
+                    print(f"   Shutdown requested during error wait")
                     return False
         
         if retry_count >= self.max_retries:
-            self.logger.error(" Max retries reached, giving up")
+            print(f"❌ Max retries reached, giving up")
             return False
         
-        return False  # This should only happen if self.running becomes False
-
-    def _check_for_stream_change(self) -> bool:
-        """
-        Check if the stream URL or version has changed on the server
-        Only returns True for actual content changes or stream stoppage
-        
-        Returns:
-            True if stream has meaningfully changed, False otherwise
-        """
-        try:
-            response = requests.post(
-                f"{self.server_url}/wait_for_stream",
-                json={"client_id": self.hostname},
-                timeout=5
-            )
+        return False
+    
+    def fix_stream_url(self, stream_url: str) -> str:
+        """Fix stream URL to use server IP instead of localhost"""
+        if not stream_url:
+            return stream_url
             
-            if response.status_code == 200:
-                data = response.json()
-                status = data.get('status')
-                
-                # Log the response for debugging
-                self.logger.debug(f" Stream check - Status: {status}")
-                
-                if status == "ready_to_play":
-                    new_stream_url = self.fix_stream_url(data.get('stream_url'))
-                    new_stream_version = data.get('stream_version')
-                    
-                    # Only check for meaningful changes
-                    
-                    # 1. Check if stream URL actually changed (different content)
-                    url_changed = (new_stream_url and 
-                                 self.current_stream_url and 
-                                 new_stream_url != self.current_stream_url)
-                    
-                    # 2. Check if version changed (only if server provides versions)
-                    version_changed = False
-                    if (new_stream_version is not None and 
-                        self.current_stream_version is not None):
-                        version_changed = new_stream_version != self.current_stream_version
-                    
-                    # 3. Log what we found
-                    if url_changed or version_changed:
-                        self.logger.info(f" Meaningful stream change detected:")
-                        if url_changed:
-                            self.logger.info(f"   URL changed: {self.current_stream_url}  {new_stream_url}")
-                        if version_changed:
-                            self.logger.info(f"   Version changed: {self.current_stream_version}  {new_stream_version}")
-                        
-                        # Update our tracking
-                        self.current_stream_url = new_stream_url
-                        if new_stream_version is not None:
-                            self.current_stream_version = new_stream_version
-                        return True
-                    else:
-                        # No meaningful changes - stream is stable
-                        self.logger.debug(f" Stream stable - no changes needed")
-                        return False
-                        
-                elif status in ["waiting_for_streaming", "group_not_running", "not_registered"]:
-                    # These indicate the stream/group has stopped
-                    self.logger.info(f" Stream stopped on server side: {status}")
-                    return True
-                    
-                elif status in ["waiting_for_group_assignment", "waiting_for_stream_assignment"]:
-                    # These are assignment states - don't restart if we're already playing
-                    self.logger.debug(f" Server in assignment state: {status} - keeping current stream")
-                    return False
-                    
-                else:
-                    # Unknown status - log but don't restart
-                    self.logger.warning(f" Unknown server status: {status} - keeping current stream")
-                    return False
-                    
-            else:
-                # Server error - don't restart, just log
-                self.logger.debug(f" Server returned {response.status_code} - keeping current stream")
-                return False
-            
-        except Exception as e:
-            # Network/other errors - don't restart
-            self.logger.debug(f" Stream check failed (keeping current stream): {e}")
-            return False
-
+        if "127.0.0.1" in stream_url:
+            fixed_url = stream_url.replace("127.0.0.1", self.server_ip)
+            self.logger.info(f"Fixed stream URL: 127.0.0.1 → {self.server_ip}")
+            return fixed_url
+        elif "localhost" in stream_url:
+            fixed_url = stream_url.replace("localhost", self.server_ip)
+            self.logger.info(f"Fixed stream URL: localhost → {self.server_ip}")
+            return fixed_url
+        else:
+            return stream_url
+    
     def play_stream(self) -> bool:
-        """Start playing the assigned stream with C++ player or ffplay fallback"""
+        """Start playing the assigned stream"""
         if not self.current_stream_url:
-            self.logger.error(" No stream URL available")
+            self.logger.error("No stream URL available")
             return False
             
         try:
@@ -398,58 +609,48 @@ class MultiScreenClient:
             if self.player_executable and os.path.exists(self.player_executable):
                 return self._play_with_cpp_player()
             else:
-                self.logger.warning(" C++ player not available, falling back to ffplay")
+                self.logger.warning("C++ player not available, falling back to ffplay")
                 return self._play_with_ffplay()
                 
         except Exception as e:
-            self.logger.error(f" Player error: {e}")
+            self.logger.error(f"Player error: {e}")
             return False
-
+    
     def _play_with_cpp_player(self) -> bool:
         """Start playing with the built C++ player"""
         try:
-            self.logger.info(f" Starting C++ video player...")
-            self.logger.info(f" Connecting to: {self.current_stream_url}")
-            self.logger.info(f" Stream version: {self.current_stream_version}")
+            print(f"\n🎬 STARTING C++ VIDEO PLAYER")
+            print(f"   Stream URL: {self.current_stream_url}")
+            print(f"   Stream Version: {self.current_stream_version}")
             
-            # Set environment variables if needed
             env = os.environ.copy()
-            
             cmd = [self.player_executable, self.current_stream_url]
             
-            # Capture both stdout and stderr for debugging
             self.player_process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,  # Merge stderr into stdout
+                stderr=subprocess.STDOUT,
                 env=env,
                 cwd=os.path.dirname(self.player_executable),
                 universal_newlines=True,
-                bufsize=1  # Line buffered
+                bufsize=1
             )
             
-            # Start a thread to monitor C++ player output
+            # Monitor C++ player output
             def monitor_cpp_output():
                 try:
                     for line in iter(self.player_process.stdout.readline, ''):
                         if line.strip():
-                            # Log each frame and telemetry data from C++ player
                             if "TELEMETRY:" in line:
-                                self.logger.info(f" {line.strip()}")
-                            elif "FRAME_#" in line:
-                                self.logger.debug(f" {line.strip()}")
-                            elif "STATS_REPORT:" in line:
-                                self.logger.info(f" {line.strip()}")
-                            elif "FREEZE_DETECTED:" in line:
-                                self.logger.error(f" {line.strip()}")
-                            elif "ERROR" in line.upper() or "error" in line:
-                                self.logger.error(f" C++ Player: {line.strip()}")
-                            elif "WARNING" in line.upper() or "warning" in line or "warn" in line:
-                                self.logger.warning(f" C++ Player: {line.strip()}")
+                                self.logger.info(f"🎬 {line.strip()}")
+                            elif "ERROR" in line.upper():
+                                self.logger.error(f"🎬 {line.strip()}")
+                            elif "WARNING" in line.upper():
+                                self.logger.warning(f"🎬 {line.strip()}")
                             else:
-                                self.logger.debug(f" C++ Player: {line.strip()}")
+                                self.logger.debug(f"🎬 {line.strip()}")
                 except Exception as e:
-                    self.logger.error(f" Error monitoring C++ output: {e}")
+                    self.logger.error(f"Error monitoring C++ output: {e}")
                 finally:
                     if self.player_process and self.player_process.stdout:
                         self.player_process.stdout.close()
@@ -457,20 +658,21 @@ class MultiScreenClient:
             output_thread = threading.Thread(target=monitor_cpp_output, daemon=True)
             output_thread.start()
             
-            self.logger.info(f" C++ Player started (PID: {self.player_process.pid})")
-            self.logger.info(" Video should be playing now!")
+            print(f"   Player PID: {self.player_process.pid}")
+            print(f"   Status: Playing")
+            self.logger.info(f"C++ Player started successfully")
             return True
             
         except Exception as e:
-            self.logger.error(f" C++ Player error: {e}")
+            self.logger.error(f"C++ Player error: {e}")
             return False
-
+    
     def _play_with_ffplay(self) -> bool:
         """Fallback to ffplay if C++ player not available"""
         try:
-            self.logger.info(f" Starting ffplay fallback...")
-            self.logger.info(f" Connecting to: {self.current_stream_url}")
-            self.logger.info(f" Stream version: {self.current_stream_version}")
+            print(f"\n🎬 STARTING FFPLAY FALLBACK")
+            print(f"   Stream URL: {self.current_stream_url}")
+            print(f"   Stream Version: {self.current_stream_version}")
             
             cmd = [
                 "ffplay",
@@ -478,257 +680,318 @@ class MultiScreenClient:
                 "-flags", "low_delay",
                 "-framedrop",
                 "-strict", "experimental",
-                "-autoexit",  # Exit when stream ends
+                "-autoexit",
                 self.current_stream_url
             ]
             
             self.player_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            self.logger.info(f" ffplay started (PID: {self.player_process.pid})")
-            self.logger.info(" Video should be playing now!")
+            
+            print(f"   Player PID: {self.player_process.pid}")
+            print(f"   Status: Playing")
+            self.logger.info(f"ffplay started successfully")
             return True
             
         except Exception as e:
-            self.logger.error(f" ffplay error: {e}")
+            self.logger.error(f"ffplay error: {e}")
             return False
-
+    
     def monitor_player(self) -> str:
-        """
-        Monitor the player process and check for stream changes
-        
-        Returns:
-            String indicating why player stopped: 'stream_ended', 'connection_lost', 'user_exit', 'error', 'stream_changed'
-        """
+        """Monitor the player process and check for stream changes"""
         if not self.player_process:
             return 'error'
         
-        self.logger.info(" Monitoring video player...")
+        print(f"\n📺 MONITORING VIDEO PLAYER")
+        print(f"   PID: {self.player_process.pid}")
+        print(f"   Stream: {self.current_stream_url}")
         
-        # Check for stream changes every 10 seconds
         last_stream_check = time.time()
-        stream_check_interval = 10  # seconds
+        stream_check_interval = 10
         last_health_report = time.time()
-        health_report_interval = 30  # seconds
+        health_report_interval = 30
         
         while self.running and not self._shutdown_event.is_set() and self.player_process.poll() is None:
             current_time = time.time()
             
-            # Periodically check if stream URL has changed
+            # Check for stream changes
             if current_time - last_stream_check >= stream_check_interval:
                 if self._check_for_stream_change():
-                    self.logger.info(" Stream change detected, restarting player...")
+                    print(f"🔄 Stream change detected, restarting player...")
                     self.stop_stream()
                     return 'stream_changed'
                 last_stream_check = current_time
             
             # Periodic health report
             if current_time - last_health_report >= health_report_interval:
-                self.logger.info(f" Player health check: PID={self.player_process.pid}, Running for {int(current_time - last_health_report)}s")
+                print(f"💓 Player health: PID={self.player_process.pid}, Running {int(current_time - last_health_report)}s")
                 last_health_report = current_time
             
-            # Check for shutdown with shorter sleep to be more responsive
+            # Check for shutdown
             if self._shutdown_event.wait(timeout=1):
-                self.logger.info(" Shutdown requested during player monitoring")
+                print(f"🛑 Shutdown requested during monitoring")
                 self.stop_stream()
                 return 'user_exit'
         
-        # Player has stopped, determine why
+        # Player has stopped
         if self._shutdown_event.is_set() or not self.running:
             return 'user_exit'
         
         exit_code = self.player_process.returncode if self.player_process else -1
         
         if exit_code == 0:
-            self.logger.info(" Stream ended normally")
+            print(f"✅ Stream ended normally")
             return 'stream_ended'
         elif exit_code == 1:
-            self.logger.warning(" Connection lost or stream unavailable")
+            print(f"⚠️  Connection lost or stream unavailable")
             return 'connection_lost'
         else:
-            self.logger.error(f" Player exited with error code: {exit_code}")
+            print(f"❌ Player exited with error code: {exit_code}")
             return 'error'
-
+    
+    def _check_for_stream_change(self) -> bool:
+        """Check if the stream URL or version has changed on the server"""
+        try:
+            # Use new endpoint if available, fallback to legacy
+            try:
+                response = requests.post(
+                    f"{self.server_url}/api/clients/wait_for_assignment",
+                    json={"client_id": self.hostname},
+                    timeout=5
+                )
+            except requests.exceptions.RequestException:
+                response = requests.post(
+                    f"{self.server_url}/wait_for_stream",
+                    json={"client_id": self.hostname},
+                    timeout=5
+                )
+            
+            if response.status_code == 200:
+                data = response.json()
+                status = data.get('status')
+                
+                if status == "ready_to_play":
+                    new_stream_url = self.fix_stream_url(data.get('stream_url'))
+                    new_stream_version = data.get('stream_version')
+                    
+                    # Check for meaningful changes
+                    url_changed = (new_stream_url and 
+                                 self.current_stream_url and 
+                                 new_stream_url != self.current_stream_url)
+                    
+                    version_changed = False
+                    if (new_stream_version is not None and 
+                        self.current_stream_version is not None):
+                        version_changed = new_stream_version != self.current_stream_version
+                    
+                    if url_changed or version_changed:
+                        self.logger.info(f"Stream change detected:")
+                        if url_changed:
+                            self.logger.info(f"  URL: {self.current_stream_url} → {new_stream_url}")
+                        if version_changed:
+                            self.logger.info(f"  Version: {self.current_stream_version} → {new_stream_version}")
+                        
+                        self.current_stream_url = new_stream_url
+                        if new_stream_version is not None:
+                            self.current_stream_version = new_stream_version
+                        return True
+                    
+                elif status in ["waiting_for_streaming", "group_not_running", "not_registered"]:
+                    self.logger.info(f"Stream stopped on server: {status}")
+                    return True
+                    
+            return False
+            
+        except Exception as e:
+            self.logger.debug(f"Stream check failed: {e}")
+            return False
+    
     def stop_stream(self):
-        """Stop the player if running with comprehensive cleanup"""
+        """Stop the player with comprehensive cleanup"""
         if self.player_process:
             try:
                 pid = self.player_process.pid
-                self.logger.info(f" Stopping player (PID: {pid})")
+                print(f"🛑 Stopping player (PID: {pid})")
                 
-                # Step 1: Send SIGTERM for graceful shutdown
+                # Graceful termination
                 self.player_process.terminate()
                 
                 try:
-                    # Wait up to 3 seconds for graceful termination
                     self.player_process.wait(timeout=3)
-                    self.logger.info(" Player stopped gracefully")
+                    print(f"✅ Player stopped gracefully")
                 except subprocess.TimeoutExpired:
-                    # Step 2: Force kill if still running
-                    self.logger.warning(" Player didn't stop gracefully, sending SIGKILL")
+                    print(f"⚠️  Force killing player")
                     self.player_process.kill()
                     
                     try:
-                        # Wait up to 2 more seconds after SIGKILL
                         self.player_process.wait(timeout=2)
-                        self.logger.info(" Player force-killed successfully")
+                        print(f"✅ Player force-killed")
                     except subprocess.TimeoutExpired:
-                        self.logger.error(f" Player process {pid} is unresponsive, may be zombie")
-                        
-                        # Step 3: Try system-level kill as last resort
+                        print(f"❌ Player unresponsive")
                         try:
                             os.kill(pid, signal.SIGKILL)
-                            time.sleep(0.5)
-                            self.logger.warning(f" Used system kill on PID {pid}")
                         except (OSError, ProcessLookupError):
-                            # Process might already be dead
                             pass
                 
             except (OSError, ProcessLookupError):
-                # Process already terminated
-                self.logger.debug(" Player process already terminated")
+                print(f"🔍 Player process already terminated")
             except Exception as e:
-                self.logger.error(f" Error stopping player: {e}")
+                self.logger.error(f"Error stopping player: {e}")
             finally:
                 self.player_process = None
-                
-                # Additional cleanup: Kill any orphaned ffmpeg/player processes
-                self._kill_orphaned_processes()
     
-    def _kill_orphaned_processes(self):
-        """Kill any orphaned video processes that might still be running"""
-        try:
-            import psutil
-            current_pid = os.getpid()
-            
-            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-                try:
-                    # Look for our player processes
-                    if (proc.info['name'] in ['player', 'ffplay', 'ffmpeg'] and 
-                        proc.info['pid'] != current_pid):
-                        
-                        # Check if it's our stream URL in the command line
-                        cmdline = ' '.join(proc.info['cmdline'] or [])
-                        if (self.current_stream_url and 
-                            (self.server_ip in cmdline or 'srt://' in cmdline)):
-                            self.logger.warning(f" Killing orphaned process: {proc.info['name']} (PID: {proc.info['pid']})")
-                            proc.kill()
-                            
-                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                    pass
-        except ImportError:
-            # psutil not available, use basic approach
-            try:
-                # Try to kill any processes with our stream URL
-                if self.current_stream_url and self.server_ip:
-                    import subprocess
-                    result = subprocess.run(['pgrep', '-f', self.server_ip], 
-                                          capture_output=True, text=True)
-                    if result.returncode == 0:
-                        pids = result.stdout.strip().split('\n')
-                        for pid in pids:
-                            if pid.strip() and pid.strip() != str(os.getpid()):
-                                try:
-                                    os.kill(int(pid.strip()), signal.SIGKILL)
-                                    self.logger.warning(f" Killed process PID: {pid}")
-                                except (OSError, ValueError):
-                                    pass
-            except Exception as e:
-                self.logger.debug(f" Orphan cleanup failed: {e}")
-
-    def _emergency_cleanup(self):
-        """Emergency cleanup function for atexit"""
-        if self.running:
-            self.stop_stream()
-
-    def run(self):
-        """Main execution flow with stream restart capability and graceful shutdown"""
-        if not self.register():
+    def shutdown(self):
+        """Initiate graceful shutdown"""
+        if not self.running:
             return
-            
+        
+        print(f"\n🛑 INITIATING GRACEFUL SHUTDOWN")
+        self.running = False
+        self._shutdown_event.set()
+        
+        # Stop components
+        self.stop_stream()
+        self.stop_time_service()
+        
+        print(f"✅ Shutdown complete")
+    
+    def _emergency_cleanup(self):
+        """Emergency cleanup for atexit"""
+        if self.running:
+            self.shutdown()
+    
+    def run(self):
+        """Main execution flow"""
         try:
+            print(f"\n{'='*80}")
+            print(f"🎯 UNIFIED MULTI-SCREEN CLIENT STARTING")
+            print(f"   Hostname: {self.hostname}")
+            print(f"   Display Name: {self.display_name}")
+            print(f"   Server: {self.server_url}")
+            print(f"   Time Sync: {'Enabled' if self.enforce_time_sync else 'Disabled'}")
+            print(f"   Player: {'C++' if self.player_executable else 'ffplay'}")
+            print(f"{'='*80}")
+            
+            # Step 1: Register with server
+            if not self.register():
+                print(f"❌ Registration failed - exiting")
+                return
+            
+            # Step 2: Main loop - wait for assignment and play streams
             while self.running and not self._shutdown_event.is_set():
-                self.logger.info(" Waiting for admin assignment...")
-                self.logger.info(" Admin needs to:")
-                self.logger.info("   1. Assign this client to a group")
-                self.logger.info("   2. Assign this client to a specific stream")
-                self.logger.info("   3. Start streaming for the group")
-                
                 # Wait for stream assignment
                 if self.wait_for_assignment():
                     if self._shutdown_event.is_set():
                         break
                         
+                    # Play the assigned stream
                     if self.play_stream():
-                        # Monitor the player and handle when it stops
+                        # Monitor the player
                         stop_reason = self.monitor_player()
                         
                         if stop_reason == 'user_exit':
-                            self.logger.info(" User requested exit")
+                            print(f"👋 User requested exit")
                             break
                         elif stop_reason == 'stream_changed':
-                            self.logger.info(" Stream changed, restarting with new content...")
-                            # Continue the loop to restart with new stream
+                            print(f"🔄 Stream changed, restarting...")
                             continue
                         elif stop_reason in ['stream_ended', 'connection_lost', 'error']:
-                            self.logger.info(" Stream stopped, waiting for new assignment...")
-                            self.current_stream_url = None  # Clear current stream
+                            print(f"📺 Stream stopped ({stop_reason}), waiting for new assignment...")
+                            self.current_stream_url = None
                             self.current_stream_version = None
-                            # Continue the loop to wait for new assignment
+                            continue
                         else:
-                            self.logger.warning(f" Unexpected stop reason: {stop_reason}")
+                            print(f"⚠️  Unexpected stop reason: {stop_reason}")
                             break
                     else:
-                        self.logger.error(" Failed to start video player")
-                        self.logger.info(" Retrying in 10 seconds...")
-                        
-                        # Interruptible sleep
+                        print(f"❌ Failed to start player, retrying in 10 seconds...")
                         if self._shutdown_event.wait(timeout=10):
                             break
-                        # Continue the loop to retry
                 else:
-                    self.logger.info(" Assignment failed, retrying in 10 seconds...")
-                    
-                    # Interruptible sleep
+                    print(f"⏳ Assignment failed, retrying in 10 seconds...")
                     if self._shutdown_event.wait(timeout=10):
                         break
-                    # Continue the loop to retry
-                    
+                        
         except Exception as e:
-            self.logger.error(f" Unexpected error in main loop: {e}")
+            print(f"❌ Fatal error: {e}")
+            self.logger.error(f"Fatal error in main loop: {e}")
         finally:
-            self.logger.info(" Performing final cleanup...")
-            self.running = False
-            self.stop_stream()
-            self.logger.info(" Client stopped cleanly")
+            print(f"\n🏁 UNIFIED CLIENT SHUTDOWN")
+            self.shutdown()
 
 def main():
-    parser = argparse.ArgumentParser(description='Multi-Screen Display Client - Server Assignment Mode')
-    parser.add_argument('--server', required=True, help='Server URL (e.g., http://128.205.39.64:5001)')
-    parser.add_argument('--hostname', help='Custom client ID (default: auto-generated)')
-    parser.add_argument('--name', help='Display name for admin interface')
-    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
-    parser.add_argument('--force-ffplay', action='store_true', help='Force use of ffplay instead of C++ player')
+    """Main entry point with comprehensive argument parsing"""
+    parser = argparse.ArgumentParser(
+        description='Unified Multi-Screen Client with Time Synchronization',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Basic usage with time sync
+  python3 unified_client.py --server http://192.168.1.100:5000
+  
+  # Disable time synchronization
+  python3 unified_client.py --server http://192.168.1.100:5000 --no-time-sync
+  
+  # Force ffplay instead of C++ player
+  python3 unified_client.py --server http://192.168.1.100:5000 --force-ffplay
+  
+  # Custom hostname and display name
+  python3 unified_client.py --server http://192.168.1.100:5000 --hostname display-001 --name "Main Display"
+  
+  # Debug mode
+  python3 unified_client.py --server http://192.168.1.100:5000 --debug
+        """
+    )
+    
+    # Required arguments
+    parser.add_argument('--server', required=True, 
+                       help='Server URL (e.g., http://192.168.1.100:5000)')
+    
+    # Optional arguments
+    parser.add_argument('--hostname', 
+                       help='Custom client hostname (default: system hostname)')
+    parser.add_argument('--name', dest='display_name',
+                       help='Display name for admin interface (default: Display-{hostname})')
+    parser.add_argument('--no-time-sync', action='store_true',
+                       help='Disable time synchronization validation')
+    parser.add_argument('--force-ffplay', action='store_true',
+                       help='Force use of ffplay instead of C++ player')
+    parser.add_argument('--debug', action='store_true',
+                       help='Enable debug logging')
+    parser.add_argument('--version', action='version', version='Unified Multi-Screen Client v2.0')
     
     args = parser.parse_args()
     
+    # Configure logging level
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
+        print(f"🐛 Debug logging enabled")
     
-    client = MultiScreenClient(
-        server_url=args.server,
-        hostname=args.hostname,
-        display_name=args.name,
-        force_ffplay=args.force_ffplay
-    )
+    # Validate server URL
+    if not args.server.startswith(('http://', 'https://')):
+        print(f"❌ Error: Server URL must start with http:// or https://")
+        print(f"   Example: --server http://192.168.1.100:5000")
+        sys.exit(1)
     
+    # Create and run client
     try:
+        client = UnifiedMultiScreenClient(
+            server_url=args.server,
+            hostname=args.hostname,
+            display_name=args.display_name,
+            force_ffplay=args.force_ffplay,
+            enforce_time_sync=not args.no_time_sync
+        )
+        
+        print(f"🎬 Starting Unified Multi-Screen Client...")
+        print(f"   Press Ctrl+C to stop gracefully")
+        
         client.run()
+        
     except KeyboardInterrupt:
-        # This should be handled by signal handlers now, but keep as backup
-        print("\n Keyboard interrupt received...")
-        client.shutdown()
+        print(f"\n⌨️  Keyboard interrupt received")
     except Exception as e:
-        print(f"\n Fatal error: {e}")
-        client.shutdown()
+        print(f"\n💥 Fatal error: {e}")
+        logging.error(f"Fatal error: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
