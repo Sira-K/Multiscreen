@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Unified Multi-Screen Client with Time Synchronization
-Complete client implementation with integrated time sync, registration, and video playback
+Unified Multi-Screen Client with Smart Player Selection
+Complete client implementation with integrated time sync, registration, video playback,
+and automatic SEI detection for optimal player selection
 """
 
 import argparse
@@ -221,8 +222,9 @@ class TimeServiceHandler(BaseHTTPRequestHandler):
 
 class UnifiedMultiScreenClient:
     """
-    Unified Multi-Screen Client with Time Synchronization
-    Complete client implementation with time sync, registration, and video playback
+    Unified Multi-Screen Client with Smart Player Selection
+    Complete client implementation with time sync, registration, video playback,
+    and automatic SEI detection for optimal player selection
     """
     
     def __init__(self, server_url: str, hostname: str = None, display_name: str = None, 
@@ -234,7 +236,7 @@ class UnifiedMultiScreenClient:
             server_url: Server URL (e.g., "http://192.168.1.100:5000")
             hostname: Unique client identifier
             display_name: Friendly display name
-            force_ffplay: Force use of ffplay instead of C++ player
+            force_ffplay: Force use of ffplay instead of smart selection
             enforce_time_sync: Enable time synchronization validation
         """
         self.server_url = server_url.rstrip('/')
@@ -246,6 +248,7 @@ class UnifiedMultiScreenClient:
         # Stream management
         self.current_stream_url = None
         self.current_stream_version = None
+        self.current_player_type = None
         self.player_process = None
         self.running = True
         self.retry_interval = 5
@@ -314,6 +317,113 @@ class UnifiedMultiScreenClient:
         self.logger.warning("C++ player not found, will use ffplay fallback")
         return None
     
+    def detect_sei_in_stream(self, stream_url: str, timeout: int = 10) -> bool:
+        """
+        Detect if the stream contains SEI metadata by analyzing the first few seconds
+        
+        Args:
+            stream_url: SRT stream URL to analyze
+            timeout: Maximum time to spend analyzing (seconds)
+            
+        Returns:
+            bool: True if SEI metadata detected, False otherwise
+        """
+        try:
+            print(f"🔍 Analyzing stream for SEI metadata...")
+            print(f"   Stream URL: {stream_url}")
+            
+            # Use ffprobe to analyze the stream for a short duration
+            cmd = [
+                "ffprobe",
+                "-v", "quiet",
+                "-select_streams", "v:0",
+                "-show_entries", "frame=pkt_data",
+                "-of", "csv=p=0",
+                "-read_intervals", f"%+#10",  # Read first 10 frames
+                "-timeout", str(timeout * 1000000),  # Convert to microseconds
+                stream_url
+            ]
+            
+            self.logger.debug(f"SEI detection command: {' '.join(cmd)}")
+            
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+                
+                # Check if we got any frame data
+                if stdout and len(stdout.strip()) > 0:
+                    # Look for patterns that might indicate SEI data
+                    # SEI user data typically contains recognizable patterns
+                    sei_patterns = [
+                        "681d5c8f-80cd-4847-930a-99b9484b4a32",  # OpenVideoWalls UUID
+                        "00000000000000000000000000000000",      # Static SEI pattern
+                    ]
+                    
+                    for pattern in sei_patterns:
+                        if pattern.lower() in stdout.lower():
+                            print(f"✅ SEI metadata detected (pattern: {pattern[:16]}...)")
+                            return True
+                    
+                    # Alternative: Check stderr for SEI-related messages
+                    if stderr:
+                        sei_indicators = ["sei", "user_data", "h264_metadata"]
+                        for indicator in sei_indicators:
+                            if indicator.lower() in stderr.lower():
+                                print(f"✅ SEI indicators found in stream analysis")
+                                return True
+                    
+                    print(f"📺 No SEI metadata detected - standard stream")
+                    return False
+                else:
+                    print(f"⚠️  Could not analyze stream data")
+                    return False
+                    
+            except subprocess.TimeoutExpired:
+                print(f"⏱️  Stream analysis timeout - assuming no SEI")
+                process.kill()
+                return False
+                
+        except FileNotFoundError:
+            self.logger.warning("ffprobe not found - cannot detect SEI, assuming no SEI")
+            return False
+        except Exception as e:
+            self.logger.warning(f"SEI detection failed: {e} - assuming no SEI")
+            return False
+    
+    def choose_optimal_player(self, stream_url: str) -> Tuple[str, str]:
+        """
+        Choose the optimal player based on stream characteristics
+        
+        Args:
+            stream_url: SRT stream URL to play
+            
+        Returns:
+            Tuple[str, str]: (player_type, reason)
+                player_type: "cpp_player" or "ffplay"
+                reason: Human-readable explanation
+        """
+        # If forced to use ffplay, don't bother detecting
+        if self.force_ffplay:
+            return "ffplay", "Forced ffplay mode (--force-ffplay)"
+        
+        # If C++ player not available, use ffplay
+        if not self.player_executable or not os.path.exists(self.player_executable):
+            return "ffplay", "C++ player not available"
+        
+        # Detect SEI metadata in the stream
+        has_sei = self.detect_sei_in_stream(stream_url)
+        
+        if has_sei:
+            return "cpp_player", "SEI metadata detected - using C++ player for synchronization"
+        else:
+            return "ffplay", "No SEI metadata - using ffplay for standard playback"
+    
     def start_time_service(self):
         """Start the client time service"""
         if self.enforce_time_sync:
@@ -335,6 +445,7 @@ class UnifiedMultiScreenClient:
             print(f"   Server: {self.server_url}")
             print(f"   Server IP: {self.server_ip}")
             print(f"   Time Sync: {'Enabled' if self.enforce_time_sync else 'Disabled'}")
+            print(f"   Smart Player: {'Enabled' if not self.force_ffplay else 'Disabled (force ffplay)'}")
             
             # Start time service if time sync is enabled
             if self.enforce_time_sync:
@@ -349,12 +460,18 @@ class UnifiedMultiScreenClient:
             print(f"   Start Time: {registration_start_formatted} UTC")
             print(f"{'='*80}")
             
-            player_type = "cpp_player" if self.player_executable else "ffplay_fallback"
+            # Create short platform string (max 32 chars)
+            if self.force_ffplay:
+                player_type = "ffplay_only"
+            elif not self.player_executable:
+                player_type = "ffplay_fb"  # fallback
+            else:
+                player_type = "smart_sel"  # smart selection
             
             registration_data = {
                 "hostname": self.hostname,
                 "display_name": self.display_name,
-                "platform": f"unified_client_with_{player_type}",
+                "platform": f"unified_{player_type}",  # Max 18 chars
                 "enforce_time_sync": self.enforce_time_sync
             }
             
@@ -598,7 +715,7 @@ class UnifiedMultiScreenClient:
             return stream_url
     
     def play_stream(self) -> bool:
-        """Start playing the assigned stream"""
+        """Start playing the assigned stream with optimal player selection"""
         if not self.current_stream_url:
             self.logger.error("No stream URL available")
             return False
@@ -606,22 +723,31 @@ class UnifiedMultiScreenClient:
         try:
             self.stop_stream()  # Clean up any existing player
             
-            if self.player_executable and os.path.exists(self.player_executable):
+            # Choose the optimal player for this stream
+            player_type, reason = self.choose_optimal_player(self.current_stream_url)
+            self.current_player_type = player_type
+            
+            print(f"\n🎬 SMART PLAYER SELECTION")
+            print(f"   Selected: {player_type.upper()}")
+            print(f"   Reason: {reason}")
+            print(f"   Stream URL: {self.current_stream_url}")
+            
+            if player_type == "cpp_player":
                 return self._play_with_cpp_player()
             else:
-                self.logger.warning("C++ player not available, falling back to ffplay")
                 return self._play_with_ffplay()
-                
+                    
         except Exception as e:
             self.logger.error(f"Player error: {e}")
             return False
     
     def _play_with_cpp_player(self) -> bool:
-        """Start playing with the built C++ player"""
+        """Start playing with the built C++ player (for SEI streams)"""
         try:
-            print(f"\n🎬 STARTING C++ VIDEO PLAYER")
+            print(f"\n🎯 STARTING C++ PLAYER (SEI MODE)")
             print(f"   Stream URL: {self.current_stream_url}")
             print(f"   Stream Version: {self.current_stream_version}")
+            print(f"   Capability: SEI timestamp processing")
             
             env = os.environ.copy()
             cmd = [self.player_executable, self.current_stream_url]
@@ -636,19 +762,22 @@ class UnifiedMultiScreenClient:
                 bufsize=1
             )
             
-            # Monitor C++ player output
+            # Monitor C++ player output with SEI-specific logging
             def monitor_cpp_output():
                 try:
                     for line in iter(self.player_process.stdout.readline, ''):
                         if line.strip():
-                            if "TELEMETRY:" in line:
-                                self.logger.info(f"🎬 {line.strip()}")
-                            elif "ERROR" in line.upper():
-                                self.logger.error(f"🎬 {line.strip()}")
-                            elif "WARNING" in line.upper():
-                                self.logger.warning(f"🎬 {line.strip()}")
+                            line_clean = line.strip()
+                            if "SEI" in line_clean or "timestamp" in line_clean.lower():
+                                self.logger.info(f"🎯 SEI: {line_clean}")
+                            elif "TELEMETRY:" in line_clean:
+                                self.logger.info(f"📊 {line_clean}")
+                            elif "ERROR" in line_clean.upper():
+                                self.logger.error(f"❌ {line_clean}")
+                            elif "WARNING" in line_clean.upper():
+                                self.logger.warning(f"⚠️ {line_clean}")
                             else:
-                                self.logger.debug(f"🎬 {line.strip()}")
+                                self.logger.debug(f"🎯 {line_clean}")
                 except Exception as e:
                     self.logger.error(f"Error monitoring C++ output: {e}")
                 finally:
@@ -659,8 +788,8 @@ class UnifiedMultiScreenClient:
             output_thread.start()
             
             print(f"   Player PID: {self.player_process.pid}")
-            print(f"   Status: Playing")
-            self.logger.info(f"C++ Player started successfully")
+            print(f"   Status: Playing with SEI processing")
+            self.logger.info(f"C++ Player started for SEI stream")
             return True
             
         except Exception as e:
@@ -668,27 +797,52 @@ class UnifiedMultiScreenClient:
             return False
     
     def _play_with_ffplay(self) -> bool:
-        """Fallback to ffplay if C++ player not available"""
+        """Start playing with ffplay (for standard streams without SEI)"""
         try:
-            print(f"\n🎬 STARTING FFPLAY FALLBACK")
+            print(f"\n📺 STARTING FFPLAY (STANDARD MODE)")
             print(f"   Stream URL: {self.current_stream_url}")
             print(f"   Stream Version: {self.current_stream_version}")
+            print(f"   Capability: Standard video playback")
             
             cmd = [
                 "ffplay",
                 "-fflags", "nobuffer",
-                "-flags", "low_delay",
+                "-flags", "low_delay", 
                 "-framedrop",
                 "-strict", "experimental",
                 "-autoexit",
+                "-loglevel", "warning",  # Reduce ffplay verbosity
                 self.current_stream_url
             ]
             
-            self.player_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.player_process = subprocess.Popen(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            
+            # Monitor ffplay output (less verbose than C++ player)
+            def monitor_ffplay_output():
+                try:
+                    for line in iter(self.player_process.stderr.readline, ''):
+                        if line.strip():
+                            line_clean = line.strip()
+                            if "error" in line_clean.lower():
+                                self.logger.error(f"📺 {line_clean}")
+                            elif "warning" in line_clean.lower():
+                                self.logger.warning(f"📺 {line_clean}")
+                            else:
+                                self.logger.debug(f"📺 {line_clean}")
+                except Exception as e:
+                    self.logger.debug(f"Error monitoring ffplay output: {e}")
+            
+            output_thread = threading.Thread(target=monitor_ffplay_output, daemon=True)
+            output_thread.start()
             
             print(f"   Player PID: {self.player_process.pid}")
-            print(f"   Status: Playing")
-            self.logger.info(f"ffplay started successfully")
+            print(f"   Status: Playing standard stream")
+            self.logger.info(f"ffplay started for standard stream")
             return True
             
         except Exception as e:
@@ -700,9 +854,13 @@ class UnifiedMultiScreenClient:
         if not self.player_process:
             return 'error'
         
-        print(f"\n📺 MONITORING VIDEO PLAYER")
+        # Determine current player type for display
+        player_display_name = "C++ Player" if self.current_player_type == "cpp_player" else "ffplay"
+        
+        print(f"\n📺 MONITORING {player_display_name.upper()}")
         print(f"   PID: {self.player_process.pid}")
         print(f"   Stream: {self.current_stream_url}")
+        print(f"   Player Type: {self.current_player_type}")
         
         last_stream_check = time.time()
         stream_check_interval = 10
@@ -715,14 +873,14 @@ class UnifiedMultiScreenClient:
             # Check for stream changes
             if current_time - last_stream_check >= stream_check_interval:
                 if self._check_for_stream_change():
-                    print(f"🔄 Stream change detected, restarting player...")
+                    print(f"🔄 Stream change detected, will restart with optimal player...")
                     self.stop_stream()
                     return 'stream_changed'
                 last_stream_check = current_time
             
             # Periodic health report
             if current_time - last_health_report >= health_report_interval:
-                print(f"💓 Player health: PID={self.player_process.pid}, Running {int(current_time - last_health_report)}s")
+                print(f"💓 {player_display_name} health: PID={self.player_process.pid}, Running {int(current_time - last_health_report)}s")
                 last_health_report = current_time
             
             # Check for shutdown
@@ -738,13 +896,13 @@ class UnifiedMultiScreenClient:
         exit_code = self.player_process.returncode if self.player_process else -1
         
         if exit_code == 0:
-            print(f"✅ Stream ended normally")
+            print(f"✅ {player_display_name} ended normally")
             return 'stream_ended'
         elif exit_code == 1:
-            print(f"⚠️  Connection lost or stream unavailable")
+            print(f"⚠️  {player_display_name} connection lost or stream unavailable")
             return 'connection_lost'
         else:
-            print(f"❌ Player exited with error code: {exit_code}")
+            print(f"❌ {player_display_name} exited with error code: {exit_code}")
             return 'error'
     
     def _check_for_stream_change(self) -> bool:
@@ -809,23 +967,24 @@ class UnifiedMultiScreenClient:
         if self.player_process:
             try:
                 pid = self.player_process.pid
-                print(f"🛑 Stopping player (PID: {pid})")
+                player_name = "C++ Player" if self.current_player_type == "cpp_player" else "ffplay"
+                print(f"🛑 Stopping {player_name} (PID: {pid})")
                 
                 # Graceful termination
                 self.player_process.terminate()
                 
                 try:
                     self.player_process.wait(timeout=3)
-                    print(f"✅ Player stopped gracefully")
+                    print(f"✅ {player_name} stopped gracefully")
                 except subprocess.TimeoutExpired:
-                    print(f"⚠️  Force killing player")
+                    print(f"⚠️  Force killing {player_name}")
                     self.player_process.kill()
                     
                     try:
                         self.player_process.wait(timeout=2)
-                        print(f"✅ Player force-killed")
+                        print(f"✅ {player_name} force-killed")
                     except subprocess.TimeoutExpired:
-                        print(f"❌ Player unresponsive")
+                        print(f"❌ {player_name} unresponsive")
                         try:
                             os.kill(pid, signal.SIGKILL)
                         except (OSError, ProcessLookupError):
@@ -837,6 +996,7 @@ class UnifiedMultiScreenClient:
                 self.logger.error(f"Error stopping player: {e}")
             finally:
                 self.player_process = None
+                self.current_player_type = None
     
     def shutdown(self):
         """Initiate graceful shutdown"""
@@ -867,7 +1027,8 @@ class UnifiedMultiScreenClient:
             print(f"   Display Name: {self.display_name}")
             print(f"   Server: {self.server_url}")
             print(f"   Time Sync: {'Enabled' if self.enforce_time_sync else 'Disabled'}")
-            print(f"   Player: {'C++' if self.player_executable else 'ffplay'}")
+            print(f"   Smart Player: {'Enabled' if not self.force_ffplay else 'Disabled (force ffplay)'}")
+            print(f"   C++ Player: {'Available' if self.player_executable else 'Not found'}")
             print(f"{'='*80}")
             
             # Step 1: Register with server
@@ -897,6 +1058,7 @@ class UnifiedMultiScreenClient:
                             print(f"📺 Stream stopped ({stop_reason}), waiting for new assignment...")
                             self.current_stream_url = None
                             self.current_stream_version = None
+                            self.current_player_type = None
                             continue
                         else:
                             print(f"⚠️  Unexpected stop reason: {stop_reason}")
@@ -920,23 +1082,23 @@ class UnifiedMultiScreenClient:
 def main():
     """Main entry point with comprehensive argument parsing"""
     parser = argparse.ArgumentParser(
-        description='Unified Multi-Screen Client with Time Synchronization',
+        description='Unified Multi-Screen Client with Smart Player Selection',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic usage with time sync
+  # Smart player selection (automatic SEI detection)
   python3 unified_client.py --server http://192.168.1.100:5000
+  
+  # Force ffplay for all streams
+  python3 unified_client.py --server http://192.168.1.100:5000 --force-ffplay
   
   # Disable time synchronization
   python3 unified_client.py --server http://192.168.1.100:5000 --no-time-sync
   
-  # Force ffplay instead of C++ player
-  python3 unified_client.py --server http://192.168.1.100:5000 --force-ffplay
-  
   # Custom hostname and display name
   python3 unified_client.py --server http://192.168.1.100:5000 --hostname display-001 --name "Main Display"
   
-  # Debug mode
+  # Debug mode with detailed SEI detection logging
   python3 unified_client.py --server http://192.168.1.100:5000 --debug
         """
     )
@@ -953,17 +1115,17 @@ Examples:
     parser.add_argument('--no-time-sync', action='store_true',
                        help='Disable time synchronization validation')
     parser.add_argument('--force-ffplay', action='store_true',
-                       help='Force use of ffplay instead of C++ player')
+                       help='Force use of ffplay for all streams (disable smart selection)')
     parser.add_argument('--debug', action='store_true',
-                       help='Enable debug logging')
-    parser.add_argument('--version', action='version', version='Unified Multi-Screen Client v2.0')
+                       help='Enable debug logging including SEI detection details')
+    parser.add_argument('--version', action='version', version='Unified Multi-Screen Client v2.1')
     
     args = parser.parse_args()
     
     # Configure logging level
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
-        print(f"🐛 Debug logging enabled")
+        print(f"🐛 Debug logging enabled (includes SEI detection)")
     
     # Validate server URL
     if not args.server.startswith(('http://', 'https://')):
@@ -981,7 +1143,7 @@ Examples:
             enforce_time_sync=not args.no_time_sync
         )
         
-        print(f"🎬 Starting Unified Multi-Screen Client...")
+        print(f"🎬 Starting Unified Multi-Screen Client with Smart Player Selection...")
         print(f"   Press Ctrl+C to stop gracefully")
         
         client.run()
