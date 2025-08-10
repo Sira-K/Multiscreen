@@ -1,3 +1,0 @@
-Session_ID,Filename,File_Size_Bytes,File_Size_MB,Validation_Time,Filename_Processing_Time,Save_Time,Size_Check_Time,Total_Time,Status,Error_Message
-upload_20250808_165353,valid.mp4,52428,0.05,6.4373016357421875e-06,3.3855438232421875e-05,5.078315734863281e-05,3.0994415283203125e-06,0.00013709068298339844,Success,
-upload_20250808_165353,invalid.txt,0,0,5.7220458984375e-06,0,0,0,0,Failed,Validation failed: System configuration error
