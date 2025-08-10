@@ -8,56 +8,32 @@ from typing import Dict, Any, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
-def validate_client_registration(data: Dict[str, Any]) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
-    """
-    Validate client registration data
-    
-    Args:
-        data: Registration data from request
-        
-    Returns:
-        Tuple of (is_valid, error_message, cleaned_data)
-    """
+def validate_client_registration(data):
+    """Validate client registration data - SIMPLIFIED"""
     if not data:
-        return False, "No JSON data provided", None
+        return False, "No data provided", None
     
-    # Extract and validate required fields
-    hostname = data.get("hostname")
+    # Required fields
+    hostname = data.get("hostname", "").strip()
     if not hostname:
         return False, "hostname is required", None
     
-    if not isinstance(hostname, str) or len(hostname.strip()) == 0:
-        return False, "hostname must be a non-empty string", None
+    # Optional fields
+    ip_address = data.get("ip_address", "").strip() or None
+    display_name = data.get("display_name", "").strip() or hostname
+    platform = data.get("platform", "").strip() or "unknown"
     
-    # Clean and validate hostname
-    hostname = hostname.strip()
-    if len(hostname) > 64:
-        return False, "hostname too long (max 64 characters)", None
     
-    # Validate optional fields
-    display_name = data.get("display_name", hostname)
-    if display_name and len(display_name) > 128:
-        return False, "display_name too long (max 128 characters)", None
-    
-    platform = data.get("platform", "unknown")
-    if platform and len(platform) > 32:
-        return False, "platform too long (max 32 characters)", None
-    
-    # Validate IP address if provided
-    ip_address = data.get("ip_address")
-    if ip_address and not _is_valid_ip(ip_address):
-        return False, "invalid IP address format", None
-    
-    # Return cleaned data
     cleaned_data = {
         "hostname": hostname,
-        "display_name": display_name or hostname,
-        "platform": platform,
         "ip_address": ip_address,
-        "enforce_time_sync": data.get("enforce_time_sync", True)
+        "display_name": display_name,
+        "platform": platform
+
     }
     
     return True, None, cleaned_data
+    
 
 def validate_group_assignment(data: Dict[str, Any]) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
     """

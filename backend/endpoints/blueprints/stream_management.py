@@ -119,6 +119,93 @@ def start_multi_video_srt():
             startup_max_lines=30
         )
         
+                # ==================== ADD ENHANCED LOGGING HERE ====================
+        
+        # Log the complete FFmpeg command
+        logger.info("🎬 Starting FFmpeg process...")
+        logger.info(f"📋 FFmpeg command: {' '.join(ffmpeg_cmd)}")
+        logger.info(f"📂 Working directory: {os.getcwd()}")
+
+        # Log each input file verification  
+        resolved_video_files = [os.path.join("uploads", vf) for vf in video_files]
+        logger.info("📁 Input files verification:")
+        for i, video_file in enumerate(resolved_video_files):
+            file_exists = os.path.exists(video_file)
+            file_size = os.path.getsize(video_file) if file_exists else 0
+            logger.info(f"  Input {i+1}: {video_file}")
+            logger.info(f"    Exists: {file_exists}")
+            logger.info(f"    Size: {file_size} bytes ({file_size/(1024*1024):.1f} MB)")
+
+        # Start the FFmpeg process with enhanced error capture
+        logger.info("🚀 Launching FFmpeg process...")
+        process = subprocess.Popen(
+            ffmpeg_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            bufsize=1
+        )
+        logger.info(f"✅ FFmpeg process started with PID: {process.pid}")
+        
+        # Read initial output to catch early errors
+        initial_lines = []
+        import time
+        
+        for i in range(30):  # Read first 30 lines or until timeout
+            try:
+                # Check if process is still running
+                if process.poll() is not None:
+                    logger.error(f"❌ FFmpeg process died early with exit code: {process.returncode}")
+                    break
+                
+                # Try to read a line with timeout
+                import select
+                import sys
+                
+                # Simple readline with small timeout
+                line = process.stdout.readline()
+                if line:
+                    line_clean = line.strip()
+                    initial_lines.append(line_clean)
+                    logger.info(f"FFmpeg[{i+1}]: {line_clean}")
+                    
+                    # Look for success indicators
+                    if any(indicator in line_clean.lower() for indicator in [
+                        "frame=", "fps=", "bitrate=", "time=", "speed="
+                    ]):
+                        logger.info("✅ FFmpeg streaming started successfully!")
+                        break
+                        
+                    # Look for error indicators  
+                    if any(error in line_clean.lower() for error in [
+                        "error", "failed", "invalid", "not found", "permission denied",
+                        "no such file", "connection refused", "timeout", "unable to"
+                    ]):
+                        logger.error(f"❌ Error detected: {line_clean}")
+                
+                time.sleep(0.2)  # Small delay
+                
+            except Exception as e:
+                logger.error(f"Error reading FFmpeg output: {e}")
+                break
+        
+        # Final check
+        final_poll = process.poll()
+        if final_poll is not None:
+            logger.error(f"❌ FFmpeg process ended with exit code: {final_poll}")
+            
+            # Try to get any remaining output
+            try:
+                remaining, _ = process.communicate(timeout=3)
+                if remaining:
+                    logger.error(f"FFmpeg final output:\n{remaining}")
+            except:
+                pass
+                
+            return jsonify({"error": f"FFmpeg failed to start (exit code: {final_poll})"}), 500
+        
+        # ==================== END OF ADDED LOGGING ====================
+
         if not startup_success:
             process.terminate()
             return jsonify({"error": "Failed to start streaming"}), 500
@@ -128,6 +215,7 @@ def start_multi_video_srt():
             group_id, group_name, base_stream_id, 
             srt_ip, srt_port, "MULTI-VIDEO MODE", screen_count
         )
+        
         
         # Generate client URLs
         client_urls = {}
@@ -327,27 +415,27 @@ def build_multi_video_ffmpeg_command(
     stream_ids: Dict[str, str] = None
 ) -> List[str]:
     """
-    ENHANCED: Multi-video mode with OpenVideoWalls SEI timestamp support
-    Takes multiple video files and creates a combined canvas
-    This is a pure function that builds commands - NOT a Flask route
+    Multi-video FFmpeg command following the exact reference structure
     """
     
     ffmpeg_path = find_ffmpeg_executable()
+    has_openvideowall = _has_openvideowall_support(ffmpeg_path)
     
-    # Enhanced SEI handling for OpenVideoWalls
-    if _has_openvideowall_support(ffmpeg_path):
-        # Use OpenVideoWalls UUID + automatic timestamp replacement
+    # Configure SEI
+    if has_openvideowall:
         sei_metadata = "681d5c8f-80cd-4847-930a-99b9484b4a32+000000"
-        logger.info("✅ Multi-video mode using OpenVideoWalls dynamic SEI timestamps")
+        logger.info("🎯 Multi-video: OpenVideoWalls mode (dynamic SEI timestamps)")
     else:
-        # Use provided SEI (static timestamps)
-        sei_metadata = sei
-        logger.warning("⚠️  Multi-video mode using static SEI timestamps")
+        sei_metadata = sei if sei else "681d5c8f-80cd-4847-930a-99b9484b4a32+000000"
+        logger.info("📺 Multi-video: Standard mode (static SEI timestamps)")
     
-    # Build input arguments
-    input_args = []
-    for i, video_file in enumerate(video_files):
-        input_args.extend(["-stream_loop", "-1", "-re", "-i", video_file])
+    # Validate and resolve video files
+    resolved_video_files = []
+    for video_file in video_files:
+        full_path = os.path.join("uploads", video_file)
+        if not os.path.exists(full_path):
+            raise FileNotFoundError(f"Video file not found: {full_path}")
+        resolved_video_files.append(full_path)
     
     # Calculate canvas dimensions
     if orientation.lower() == "horizontal":
@@ -368,18 +456,33 @@ def build_multi_video_ffmpeg_command(
         canvas_height = output_height * grid_rows
         section_width = output_width
         section_height = output_height
+    else:
+        canvas_width = output_width * screen_count
+        canvas_height = output_height
+        section_width = output_width
+        section_height = output_height
     
-    # Build filter complex
+    # Build input arguments
+    input_args = []
+    for video_file in resolved_video_files:
+        input_args.extend(["-stream_loop", "-1", "-re", "-i", video_file])
+    
+    # Build filter complex following the EXACT reference pattern:
+    # color=c=black:s=3840x1080[main];
+    # [main][0:v]overlay=x=0:y=0[main];
+    # [main]split=3[mon][mon1][mon2];
+    # [mon1]crop=w=1920:h=1080:x=0:y=0[mon1];
+    # [mon2]crop=w=1920:h=1080:x=1920:y=0[mon2]
+    
     filter_parts = []
-    filter_parts.append(f"color=c=black:s={canvas_width}x{canvas_height}:r={framerate}[canvas]")
     
-    # Scale each input
-    for i in range(screen_count):
-        filter_parts.append(f"[{i}:v]scale={section_width}:{section_height}[scaled{i}]")
+    # Step 1: Create black canvas
+    filter_parts.append(f"color=c=black:s={canvas_width}x{canvas_height}[main]")
     
-    # Overlay videos onto canvas
-    current_stream = "[canvas]"
-    for i in range(screen_count):
+    # Step 2: Overlay videos onto the main canvas (following reference pattern)
+    current_canvas = "[main]"
+    for i, video_file in enumerate(resolved_video_files):
+        # Calculate position based on orientation
         if orientation.lower() == "horizontal":
             x_pos = i * section_width
             y_pos = 0
@@ -391,18 +494,29 @@ def build_multi_video_ffmpeg_command(
             col = i % grid_cols
             x_pos = col * section_width
             y_pos = row * section_height
+        else:
+            x_pos = i * section_width
+            y_pos = 0
         
-        next_stream = f"[overlay{i}]" if i < screen_count - 1 else "[combined]"
-        filter_parts.append(f"{current_stream}[scaled{i}]overlay=x={x_pos}:y={y_pos}{next_stream}")
-        current_stream = f"[overlay{i}]"
+        # Scale the input video to fit the section
+        filter_parts.append(f"[{i}:v]scale={section_width}:{section_height}[scaled{i}]")
+        
+        # Overlay onto main canvas (reusing [main] label like the reference)
+        filter_parts.append(f"{current_canvas}[scaled{i}]overlay=x={x_pos}:y={y_pos}[main]")
+        current_canvas = "[main]"
     
-    # Split for outputs
-    split_outputs = f"[combined]split={screen_count + 1}[full]"
+    # Step 3: Split the main canvas (following reference pattern)
+    # [main]split=3[mon][mon1][mon2]
+    split_outputs = ["[mon]"]  # Combined output
     for i in range(screen_count):
-        split_outputs += f"[copy{i}]"
-    filter_parts.append(split_outputs)
+        split_outputs.append(f"[mon{i+1}]")
     
-    # Create crop filters
+    split_filter = f"[main]split={screen_count + 1}" + "".join(split_outputs)
+    filter_parts.append(split_filter)
+    
+    # Step 4: Create crops for individual screens (following reference pattern)
+    # [mon1]crop=w=1920:h=1080:x=0:y=0[mon1];
+    # [mon2]crop=w=1920:h=1080:x=1920:y=0[mon2]
     for i in range(screen_count):
         if orientation.lower() == "horizontal":
             x_pos = i * section_width
@@ -419,52 +533,81 @@ def build_multi_video_ffmpeg_command(
             x_pos = i * section_width
             y_pos = 0
         
-        filter_parts.append(f"[copy{i}]crop={section_width}:{section_height}:{x_pos}:{y_pos}[screen{i}]")
+        filter_parts.append(f"[mon{i+1}]crop=w={section_width}:h={section_height}:x={x_pos}:y={y_pos}[mon{i+1}]")
     
+    # Join all filter parts
     complete_filter = ";".join(filter_parts)
     
     # Build FFmpeg command structure
     ffmpeg_cmd = [ffmpeg_path, "-y", "-v", "error", "-stats"]
-    ffmpeg_cmd.extend(input_args + ["-filter_complex", complete_filter])
+    ffmpeg_cmd.extend(input_args)
+    ffmpeg_cmd.extend(["-filter_complex", complete_filter])
     
-    # Encoding parameters with OpenVideoWalls optimizations
-    if _has_openvideowall_support(ffmpeg_path):
-        # OpenVideoWalls optimized encoding
-        encoding_params = [
-            "-an", "-c:v", "libx264",
-            "-preset", "veryfast", "-tune", "zerolatency",
-            "-maxrate", bitrate, "-bufsize", str(int(bitrate.rstrip('k')) * 2) + "k",
-            "-bsf:v", f"h264_metadata=sei_user_data={sei_metadata}",
-            "-pes_payload_size", "0", "-bf", "0", "-g", "1",
-            "-r", str(framerate), "-f", "mpegts"
-        ]
-        srt_params = "latency=5000000&connect_timeout=5000&rcvbuf=67108864&sndbuf=67108864"
-    else:
-        # Original encoding parameters
-        encoding_params = [
-            "-an", "-c:v", "libx264", "-maxrate", bitrate,
-            "-bufsize", str(int(bitrate.rstrip('k')) * 2) + "k",
-            "-bsf:v", f"h264_metadata=sei_user_data={sei_metadata}",
-            "-pes_payload_size", "0", "-r", str(framerate), "-f", "mpegts"
-        ]
-        srt_params = "latency=1000000"
-    
-    # Add outputs
-    combined_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r=live/{group_name}/{base_stream_id},m=publish&{srt_params}"
-    ffmpeg_cmd.extend(["-map", "[full]"] + encoding_params + [combined_url])
-    
+    # Generate stream IDs
     if stream_ids is None:
         stream_ids = generate_stream_ids(base_stream_id, group_name, screen_count)
-
+    
+    # Build outputs following the EXACT reference pattern:
+    # -map "[mon]" -an -c:v libx264 -bsf:v h264_metadata=sei_user_data=$SEI -pes_payload_size 0 -bf 0 -g 1 -f mpegts "srt://..."
+    
+    # Combined output (maps to [mon])
+    combined_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r=live/{group_name}/{base_stream_id},m=publish"
+    
+    if has_openvideowall:
+        # OpenVideoWalls encoding (following reference)
+        ffmpeg_cmd.extend([
+            "-map", "[mon]",
+            "-an", "-c:v", "libx264",
+            "-bsf:v", f"h264_metadata=sei_user_data={sei_metadata}",
+            "-pes_payload_size", "0", "-bf", "0", "-g", "1",
+            "-preset", "veryfast", "-tune", "zerolatency",
+            "-maxrate", bitrate, "-bufsize", str(int(bitrate.rstrip('k')) * 2) + "k",
+            "-r", str(framerate), "-f", "mpegts",
+            combined_url
+        ])
+    else:
+        # Standard encoding (simplified)
+        ffmpeg_cmd.extend([
+            "-map", "[mon]",
+            "-an", "-c:v", "libx264",
+            "-preset", "faster",
+            "-maxrate", bitrate, "-bufsize", str(int(bitrate.rstrip('k')) * 2) + "k",
+            "-r", str(framerate), "-f", "mpegts",
+            combined_url
+        ])
+    
+    # Individual screen outputs (maps to [mon1], [mon2], etc.)
     for i in range(screen_count):
         screen_key = f"test{i}"
         individual_stream_id = stream_ids.get(screen_key, f"screen{i}_{base_stream_id}")
         stream_path = f"live/{group_name}/{individual_stream_id}"
-        stream_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=publish&{srt_params}"
-        ffmpeg_cmd.extend(["-map", f"[screen{i}]"] + encoding_params + [stream_url])
+        stream_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=publish"
+        
+        if has_openvideowall:
+            ffmpeg_cmd.extend([
+                "-map", f"[mon{i+1}]",
+                "-an", "-c:v", "libx264",
+                "-bsf:v", f"h264_metadata=sei_user_data={sei_metadata}",
+                "-pes_payload_size", "0", "-bf", "0", "-g", "1",
+                "-preset", "veryfast", "-tune", "zerolatency",
+                "-maxrate", bitrate, "-bufsize", str(int(bitrate.rstrip('k')) * 2) + "k",
+                "-r", str(framerate), "-f", "mpegts",
+                stream_url
+            ])
+        else:
+            ffmpeg_cmd.extend([
+                "-map", f"[mon{i+1}]",
+                "-an", "-c:v", "libx264",
+                "-preset", "faster",
+                "-maxrate", bitrate, "-bufsize", str(int(bitrate.rstrip('k')) * 2) + "k",
+                "-r", str(framerate), "-f", "mpegts",
+                stream_url
+            ])
+    
+    logger.info(f"📊 Canvas: {canvas_width}x{canvas_height}, Sections: {section_width}x{section_height}")
+    logger.info(f"🎬 Inputs: {len(resolved_video_files)} videos, Outputs: {screen_count + 1} streams")
     
     return ffmpeg_cmd
-
 
 def build_split_screen_ffmpeg_command(
     video_file: str,
@@ -1047,41 +1190,52 @@ def monitor_ffmpeg(process, stream_type="FFmpeg", startup_timeout=5, startup_max
 # (I'll continue with the rest of the helper functions)
 
 def find_ffmpeg_executable() -> str:
-    """Find FFmpeg executable path - ENHANCED with OpenVideoWalls detection"""
+    """Find FFmpeg executable path with smart detection"""
     
-    # Priority order: OpenVideoWalls custom FFmpeg first, then existing paths
+    # Priority order: Custom OpenVideoWalls FFmpeg first, then system FFmpeg
     custom_paths = [
         # OpenVideoWalls custom FFmpeg with SEI timestamp support
         "./cmake-build-debug/external/Install/bin/ffmpeg",
         "../cmake-build-debug/external/Install/bin/ffmpeg", 
         "../../cmake-build-debug/external/Install/bin/ffmpeg",
         "./multi-screen/cmake-build-debug/external/Install/bin/ffmpeg",
-        
-        # Original paths (preserved for compatibility)
         "./build/external/Install/bin/ffmpeg",
-        "ffmpeg"
+        "../build/external/Install/bin/ffmpeg",
+        "../../build/external/Install/bin/ffmpeg",
     ]
     
+    # First, try to find custom OpenVideoWalls FFmpeg
     for path in custom_paths:
         abs_path = os.path.abspath(path)
         if os.path.exists(abs_path) and os.access(abs_path, os.X_OK):
-            # Verify if it's the OpenVideoWalls custom FFmpeg
+            logger.info(f"Found custom FFmpeg binary: {abs_path}")
             if _verify_openvideowall_support(abs_path):
                 logger.info(f"✅ Using OpenVideoWalls custom FFmpeg: {abs_path}")
                 return abs_path
-            elif path == "ffmpeg":
-                # System FFmpeg fallback (warn about limited functionality)
-                logger.warning("⚠️  Using system FFmpeg - SEI timestamps will be static!")
-                return path
             else:
-                logger.debug(f"Found FFmpeg at {abs_path} but lacks OpenVideoWalls support")
-                continue
-        elif path == "ffmpeg":
-            # Fallback to system ffmpeg
-            logger.warning("⚠️  Using system FFmpeg - dynamic timestamps unavailable")
-            return path
+                logger.debug(f"Custom FFmpeg at {abs_path} lacks OpenVideoWalls support")
     
-    raise FileNotFoundError("FFmpeg executable not found")
+    # Fallback to system ffmpeg
+    try:
+        # Test if system ffmpeg exists and works
+        result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            logger.info("✅ Using system FFmpeg (standard mode)")
+            return "ffmpeg"
+    except Exception as e:
+        logger.debug(f"System FFmpeg test failed: {e}")
+    
+    # Try with 'which' command to find system ffmpeg
+    try:
+        result = subprocess.run(["which", "ffmpeg"], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            system_path = result.stdout.strip()
+            logger.info(f"✅ Using system FFmpeg: {system_path}")
+            return "ffmpeg"
+    except Exception as e:
+        logger.debug(f"'which ffmpeg' failed: {e}")
+    
+    raise FileNotFoundError("No FFmpeg executable found (custom or system)")
 
 
 def discover_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
@@ -1238,26 +1392,82 @@ def find_running_ffmpeg_for_group_strict(group_id: str, group_name: str, contain
 
 
 def wait_for_srt_server(srt_ip: str, srt_port: int, timeout: int = 30) -> bool:
-    """Wait for SRT server to be ready"""
+    """
+    Wait for SRT server UDP port to be ready
+    
+    Args:
+        srt_ip: SRT server IP address
+        srt_port: SRT server port (typically 10080)
+        timeout: Maximum time to wait in seconds
+        
+    Returns:
+        bool: True if SRT server UDP port is reachable, False otherwise
+    """
     start_time = time.time()
+    logger.info(f"Waiting for SRT server UDP port at {srt_ip}:{srt_port} (timeout: {timeout}s)")
+    
+    check_interval = 2  # Check every 2 seconds
     
     while time.time() - start_time < timeout:
+        elapsed = int(time.time() - start_time)
+        logger.debug(f"SRT UDP port check attempt ({elapsed}/{timeout}s)")
+        
+        if _check_udp_port(srt_ip, srt_port):
+            logger.info(f"SRT server UDP port {srt_port} is reachable - server ready")
+            return True
+        else:
+            logger.debug(f"SRT server UDP port {srt_port} not reachable yet")
+        
+        time.sleep(check_interval)
+    
+    logger.error(f"SRT server UDP port at {srt_ip}:{srt_port} not ready after {timeout}s timeout")
+    return False
+
+
+def _check_udp_port(ip: str, port: int, timeout: float = 1.0) -> bool:
+    """
+    Check if UDP port is reachable using socket
+    
+    Note: UDP is connectionless, so we send a small packet and check if we get 
+    a response or if the port is at least not actively rejecting connections
+    """
+    try:
+        # Create UDP socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(timeout)
+        
         try:
-            # Try to connect to the SRT port
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(1)
-            result = sock.connect_ex((srt_ip, srt_port))
-            sock.close()
+            # Send a small test packet (SRT servers typically respond to this)
+            test_data = b'\x80\x00\x00\x00'  # Basic SRT packet header pattern
+            sock.sendto(test_data, (ip, port))
             
-            if result == 0:
+            # Try to receive a response (SRT server might send back an error or response)
+            try:
+                sock.recvfrom(1024)
+                return True  # Got a response, server is listening
+            except socket.timeout:
+                # No response, but no connection refused error either
+                # This often means the port is open but server is busy
+                return True
+            except socket.error:
+                # Some error occurred, but might still be reachable
                 return True
                 
-        except Exception:
+        except socket.error as e:
+            # Check if it's a "connection refused" type error
+            if "refused" in str(e).lower():
+                return False
+            # For other errors, the port might still be reachable
+            return True
+            
+    except Exception as e:
+        logger.debug(f"UDP port check failed: {e}")
+        return False
+    finally:
+        try:
+            sock.close()
+        except:
             pass
-        
-        time.sleep(2)
-    
-    return False
 
 
 def generate_stream_ids(group_id: str, group_name: str, screen_count: int) -> Dict[str, str]:
@@ -1327,20 +1537,57 @@ def debug_log_stream_info(group_id, group_name, stream_id, srt_ip, srt_port, mod
 
 
 def _verify_openvideowall_support(ffmpeg_path: str) -> bool:
-    """Check if FFmpeg has OpenVideoWalls SEI timestamp support"""
+    """Verify if FFmpeg has OpenVideoWalls SEI timestamp support"""
     try:
-        # Quick test for h264_metadata filter with SEI
+        logger.debug(f"Testing OpenVideoWalls support for: {ffmpeg_path}")
+        
+        # Test 1: Basic SEI metadata support test
         test_cmd = [
             ffmpeg_path, "-f", "lavfi", "-i", "testsrc=duration=0.1:size=32x32:rate=1",
             "-frames:v", "1", "-c:v", "libx264", "-preset", "ultrafast",
             "-bsf:v", "h264_metadata=sei_user_data=681d5c8f-80cd-4847-930a-99b9484b4a32+000000",
-            "-f", "null", "-"
+            "-f", "null", "-", "-v", "quiet"
         ]
         
-        result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=5)
-        return result.returncode == 0
+        result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=10)
         
-    except Exception:
+        if result.returncode != 0:
+            logger.debug(f"SEI test failed for {ffmpeg_path}: {result.stderr}")
+            return False
+        
+        # Test 2: Check if this is likely the custom build
+        # Custom builds should be in cmake-build directories or have specific characteristics
+        is_custom_path = any(indicator in ffmpeg_path.lower() for indicator in [
+            "cmake-build", "build/external", "install/bin"
+        ])
+        
+        if is_custom_path:
+            logger.debug(f"Custom build path detected: {ffmpeg_path}")
+            
+            # Test 3: Advanced encoding parameters test (specific to OpenVideoWalls)
+            advanced_test_cmd = [
+                ffmpeg_path, "-f", "lavfi", "-i", "testsrc=duration=0.1:size=32x32:rate=1",
+                "-frames:v", "1", "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+                "-bf", "0", "-g", "1", "-pes_payload_size", "0",
+                "-bsf:v", "h264_metadata=sei_user_data=681d5c8f-80cd-4847-930a-99b9484b4a32+000000",
+                "-f", "null", "-", "-v", "quiet"
+            ]
+            
+            advanced_result = subprocess.run(advanced_test_cmd, capture_output=True, text=True, timeout=10)
+            
+            if advanced_result.returncode == 0:
+                logger.debug(f"Advanced encoding test passed for {ffmpeg_path}")
+                return True
+            else:
+                logger.debug(f"Advanced encoding test failed for {ffmpeg_path}")
+                return False
+        
+        # For system FFmpeg, basic SEI support is enough but don't claim full OpenVideoWalls support
+        logger.debug(f"System FFmpeg with basic SEI support: {ffmpeg_path}")
+        return False
+        
+    except Exception as e:
+        logger.debug(f"OpenVideoWalls verification failed for {ffmpeg_path}: {e}")
         return False
 
 
@@ -1350,7 +1597,13 @@ def _has_openvideowall_support(ffmpeg_path: str) -> bool:
         _has_openvideowall_support.cache = {}
     
     if ffmpeg_path not in _has_openvideowall_support.cache:
-        _has_openvideowall_support.cache[ffmpeg_path] = _verify_openvideowall_support(ffmpeg_path)
+        has_support = _verify_openvideowall_support(ffmpeg_path)
+        _has_openvideowall_support.cache[ffmpeg_path] = has_support
+        
+        if has_support:
+            logger.info(f"🎯 OpenVideoWalls support confirmed: {ffmpeg_path}")
+        else:
+            logger.info(f"📺 Standard FFmpeg mode: {ffmpeg_path}")
     
     return _has_openvideowall_support.cache[ffmpeg_path]
 
