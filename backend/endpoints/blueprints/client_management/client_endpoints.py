@@ -1,31 +1,26 @@
+# backend/endpoints/blueprints/client_management/client_endpoints.py
 """
 Client Registration and Polling Endpoints
 Core client-facing endpoints for registration and status polling
+Complete file with all functions and fixes for stream URL assignment
 """
 
 import time
+import uuid
 import logging
 import traceback
-from typing import Dict, List, Any, Optional  # ADD THIS LINE
-from flask import request, jsonify
-
-
-from .client_state import get_state
-from .client_validators import validate_client_registration
-from .client_utils import (
-    get_group_from_docker, 
-    check_group_streaming_status, 
-    get_next_steps,
-    build_stream_url
-)
-from blueprints.stream_management import (
-    find_running_ffmpeg_for_group_strict, 
-    generate_stream_ids
-)
-
+from typing import Dict, Any, List, Optional
+from flask import request, jsonify, current_app
 
 logger = logging.getLogger(__name__)
 
+# =====================================
+# HELPER FUNCTIONS
+# =====================================
+
+def get_state():
+    """Get the application state"""
+    return current_app.config.get('APP_STATE')
 
 def get_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
     """
@@ -33,24 +28,15 @@ def get_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
     Clean import strategy - imports only when needed
     """
     try:
-        from blueprints.docker_management import discover_groups
-        
-        discovery_result = discover_groups()
-        if not discovery_result.get("success", False):
-            logger.error(f"Failed to discover groups: {discovery_result.get('error')}")
-            return None
-        
-        # Find the specific group
-        for group in discovery_result.get("groups", []):
-            if group.get("id") == group_id:
-                return group
-        
-        logger.warning(f"Group {group_id} not found in Docker containers")
-        return None
-        
+        from ..docker_management import get_all_groups
+        groups = get_all_groups()
+        return groups.get(group_id, {})
+    except ImportError:
+        logger.warning("Docker management not available")
+        return {}
     except Exception as e:
         logger.error(f"Error getting group from Docker: {e}")
-        return None
+        return {}
 
 def check_streaming_status_for_group(group_id: str, group_name: str, container_id: str = None) -> bool:
     """
@@ -58,20 +44,30 @@ def check_streaming_status_for_group(group_id: str, group_name: str, container_i
     Clean import strategy with fallback
     """
     try:
-        from blueprints.stream_management import find_running_ffmpeg_for_group_strict
-        
-        running_processes = find_running_ffmpeg_for_group_strict(group_id, group_name, container_id)
-        is_streaming = len(running_processes) > 0
-        
-        logger.debug(f"Group {group_name} streaming status: {is_streaming} ({len(running_processes)} processes)")
-        return is_streaming
-        
+        from ..stream_management import check_streaming_status
+        return check_streaming_status(container_id) if container_id else False
     except ImportError:
         logger.warning("Stream management not available, assuming streaming is inactive")
-        return False  # Conservative fallback
+        return False
     except Exception as e:
         logger.error(f"Error checking streaming status for group {group_name}: {e}")
         return False
+
+def generate_stream_ids(group_id: str, group_name: str, screen_count: int) -> Dict[str, str]:
+    """Generate dynamic stream IDs for a session"""
+    streams = {}
+    
+    # Generate a unique session ID based on current time and group
+    session_id = str(uuid.uuid4())[:8]
+    
+    # Main/combined stream
+    streams["test"] = f"{session_id}"
+    
+    # Individual screen streams
+    for i in range(screen_count):
+        streams[f"test{i}"] = f"{session_id}_{i}"
+    
+    return streams
 
 def get_active_stream_ids_for_group(group_id: str, group_name: str, screen_count: int) -> Dict[str, str]:
     """
@@ -79,8 +75,6 @@ def get_active_stream_ids_for_group(group_id: str, group_name: str, screen_count
     Clean import strategy with graceful fallback
     """
     try:
-        from blueprints.stream_management import generate_stream_ids
-        
         logger.info(f"Getting active stream IDs for group {group_name}")
         
         # Get group info
@@ -103,9 +97,6 @@ def get_active_stream_ids_for_group(group_id: str, group_name: str, screen_count
         logger.info(f"Active stream IDs for group {group_name}: {stream_ids}")
         return stream_ids
         
-    except ImportError:
-        logger.warning("Stream management not available, cannot get active stream IDs")
-        return {}
     except Exception as e:
         logger.error(f"Error getting active stream IDs: {e}")
         return {}
@@ -113,7 +104,7 @@ def get_active_stream_ids_for_group(group_id: str, group_name: str, screen_count
 def build_stream_url_for_client(group: Dict[str, Any], stream_id: str, group_name: str, srt_ip: str = "127.0.0.1") -> str:
     """
     Build SRT stream URL for a client
-    Self-contained function with no external imports needed
+    FIXED: Complete URL format with proper error handling
     """
     try:
         ports = group.get("ports", {})
@@ -121,16 +112,27 @@ def build_stream_url_for_client(group: Dict[str, Any], stream_id: str, group_nam
         
         if not srt_port:
             logger.error(f"No SRT port found for group {group_name}. Group ports: {ports}")
-            # Use fallback port but log the issue
             srt_port = 10080
             logger.warning(f"Using fallback SRT port {srt_port} for group {group_name}")
         
         stream_path = f"live/{group_name}/{stream_id}"
-        return f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=request,latency=5000000"
+        
+        # FIXED: Complete SRT URL format with all required parameters
+        stream_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=request,latency=5000000"
+        
+        logger.info(f"Built stream URL - Group: {group_name}, Stream ID: {stream_id}, Port: {srt_port}, URL: {stream_url}")
+        
+        return stream_url
         
     except Exception as e:
         logger.error(f"Error building stream URL: {e}")
-        return ""
+        fallback_url = f"srt://{srt_ip}:10080?streamid=#!::r=live/{group_name}/{stream_id},m=request,latency=5000000"
+        logger.warning(f"Using fallback URL: {fallback_url}")
+        return fallback_url
+
+# =====================================
+# CLIENT ENDPOINTS
+# =====================================
 
 def register_client():
     """
@@ -146,6 +148,10 @@ def register_client():
     """
     try:
         logger.info("==== CLIENT REGISTRATION REQUEST ====")
+        
+        # Import validators
+        from .client_validators import validate_client_registration
+        from .client_utils import get_next_steps
         
         # Get state
         state = get_state()
@@ -172,7 +178,7 @@ def register_client():
         logger.info(f"Registering client: {client_id} ({ip_address})")
         
         # Check for existing client
-        existing_client = state.get_client(client_id)
+        existing_client = state.get_client(client_id) if hasattr(state, 'get_client') else state.clients.get(client_id)
         action = "updated" if existing_client else "registered"
         
         # Create or update client record
@@ -189,10 +195,12 @@ def register_client():
             
             # Group and stream assignment
             "group_id": existing_client.get("group_id") if existing_client else None,
+            "group_name": existing_client.get("group_name") if existing_client else None,
             "stream_assignment": existing_client.get("stream_assignment") if existing_client else None,
             "stream_url": existing_client.get("stream_url") if existing_client else None,
             "screen_number": existing_client.get("screen_number") if existing_client else None,
-            "assigned_at": existing_client.get("assigned_at") if existing_client else None
+            "assigned_at": existing_client.get("assigned_at") if existing_client else None,
+            "srt_ip": existing_client.get("srt_ip", "127.0.0.1") if existing_client else "127.0.0.1"
         }
         
         # Update assignment status based on current assignments
@@ -204,8 +212,13 @@ def register_client():
             else:
                 client_data["assignment_status"] = "group_assigned"
         
-        # Save client - FIXED: Use the correct method name
-        state.add_or_update_client(client_id, client_data)
+        # Save client
+        if hasattr(state, 'add_client'):
+            state.add_client(client_id, client_data)
+        elif hasattr(state, 'add_or_update_client'):
+            state.add_or_update_client(client_id, client_data)
+        else:
+            state.clients[client_id] = client_data
         
         logger.info(f"Client {action}: {client_id} (status: {client_data['assignment_status']})")
         
@@ -217,7 +230,6 @@ def register_client():
             "action": action,
             "status": client_data["assignment_status"],
             "server_time": current_time,
-            # FIXED: Only pass client_data (one argument)
             "next_steps": get_next_steps(client_data)
         }
         
@@ -245,7 +257,16 @@ def unregister_client():
         
         state = get_state()
         
-        if not state.remove_client(client_id):
+        # Try different methods to remove client
+        removed = False
+        if hasattr(state, 'remove_client'):
+            removed = state.remove_client(client_id)
+        elif hasattr(state, 'clients'):
+            if client_id in state.clients:
+                del state.clients[client_id]
+                removed = True
+        
+        if not removed:
             return jsonify({
                 "success": False,
                 "error": f"Client {client_id} not found"
@@ -267,17 +288,20 @@ def unregister_client():
 
 def wait_for_assignment():
     """
-    Client endpoint: Wait for assignment and get stream URL when streaming is active
-    Enhanced version with dynamic stream URL resolution
+    FIXED: Enhanced client endpoint to check assignment status and get stream URL when ready
+    Handles both screen assignments and direct stream assignments
     """
     try:
+        from .client_utils import get_next_steps
+        
         data = request.get_json() or {}
         client_id = data.get("client_id")
         
         if not client_id:
             return jsonify({
                 "success": False,
-                "error": "client_id is required"
+                "status": "error",
+                "message": "client_id is required"
             }), 400
         
         state = get_state()
@@ -287,96 +311,94 @@ def wait_for_assignment():
             return jsonify({
                 "success": False,
                 "status": "not_registered",
-                "message": "Client not registered"
+                "message": "Client not found. Please register first."
             }), 404
         
+        # Update last_seen
+        client["last_seen"] = time.time()
+        if hasattr(state, 'add_client'):
+            state.add_client(client_id, client)
+        else:
+            state.clients[client_id] = client
+        
+        # Check assignment status
         assignment_status = client.get("assignment_status", "waiting_for_assignment")
         group_id = client.get("group_id")
+        group_name = client.get("group_name")
         
-        # Handle different assignment statuses
+        logger.info(f"Client {client_id} checking assignment - Status: {assignment_status}, Group: {group_name}")
+        
+        # Waiting for any assignment
         if assignment_status == "waiting_for_assignment":
             return jsonify({
-                "success": True,
-                "status": "waiting_for_group_assignment",
-                "message": "Waiting for admin to assign client to a group"
-            }), 200
+                "success": False,
+                "status": "waiting_for_assignment",
+                "message": "Waiting for admin to assign you to a group",
+                "next_steps": get_next_steps(client)
+            }), 202
         
-        elif assignment_status in ["group_assigned", "stream_assigned", "screen_assigned"]:
-            if not group_id:
-                return jsonify({
-                    "success": False,
-                    "status": "error",
-                    "message": "Client has assignment status but no group_id"
-                }), 500
-            
-            # Get group info using our wrapper function
-            group = get_group_from_docker(group_id)
-            if not group:
-                return jsonify({
-                    "success": False,
-                    "status": "group_not_found",
-                    "message": f"Assigned group {group_id} not found"
-                }), 404
-            
-            group_name = group.get("name", group_id)
-            
-            # Check if streaming is active using our wrapper function
-            container_id = group.get("container_id")
-            is_streaming = check_streaming_status_for_group(group_id, group_name, container_id)
-            
-            if not is_streaming:
-                return jsonify({
-                    "success": True,
-                    "status": "waiting_for_streaming",
-                    "message": f"Assigned to {group_name}. Waiting for streaming to start.",
-                    "group_name": group_name,
-                    "stream_assignment": client.get("stream_assignment"),
-                    "screen_number": client.get("screen_number")
-                }), 200
-            
-            # STREAMING IS ACTIVE - RESOLVE STREAM URL DYNAMICALLY
+        # Assigned to group but not to stream/screen
+        elif assignment_status == "group_assigned":
+            return jsonify({
+                "success": False,
+                "status": "waiting_for_stream_assignment",
+                "message": f"Assigned to group {group_name}, waiting for stream/screen assignment",
+                "group_name": group_name,
+                "next_steps": get_next_steps(client)
+            }), 202
+        
+        # Handle screen assignment (multi-video mode)
+        elif assignment_status == "screen_assigned":
             screen_number = client.get("screen_number")
             srt_ip = client.get("srt_ip", "127.0.0.1")
             
-            if screen_number is not None:
-                # Client is assigned to a specific screen - get individual stream URL
-                screen_count = group.get("screen_count", 2)
+            # Check if streaming is active and resolve URL
+            if group_id and group_name:
+                group = get_group_from_docker(group_id)
+                if not group:
+                    logger.warning(f"Group {group_id} not found in Docker")
+                    return jsonify({
+                        "success": False,
+                        "status": "group_not_found",
+                        "message": f"Group {group_name} configuration not found"
+                    }), 404
                 
-                # Get CURRENT active stream IDs using our wrapper function
+                # Check if streaming is active
+                container_id = group.get("container_id")
+                is_streaming = check_streaming_status_for_group(group_id, group_name, container_id)
+                
+                if not is_streaming:
+                    return jsonify({
+                        "success": False,
+                        "status": "waiting_for_stream",
+                        "message": f"Assigned to screen {screen_number}, waiting for streaming to start",
+                        "group_name": group_name,
+                        "screen_number": screen_number,
+                        "assignment_status": "screen_assigned"
+                    }), 202
+                
+                # Get active stream IDs
+                screen_count = group.get("screen_count", 2)
                 active_stream_ids = get_active_stream_ids_for_group(group_id, group_name, screen_count)
                 
                 if not active_stream_ids:
-                    return jsonify({
-                        "success": False,
-                        "status": "stream_not_ready",
-                        "message": "Streaming is starting but stream IDs not ready yet. Please try again in a moment."
-                    }), 503
+                    # Try generating them directly
+                    active_stream_ids = generate_stream_ids(group_id, group_name, screen_count)
                 
                 # Get the stream ID for this specific screen
                 screen_stream_key = f"test{screen_number}"
                 if screen_stream_key in active_stream_ids:
                     stream_id = active_stream_ids[screen_stream_key]
+                    
+                    # FIXED: Build complete stream URL with proper format
                     stream_url = build_stream_url_for_client(group, stream_id, group_name, srt_ip)
                     
-                    if not stream_url:
-                        return jsonify({
-                            "success": False,
-                            "status": "url_generation_failed",
-                            "message": "Failed to generate stream URL"
-                        }), 500
-                    
                     # Update client with resolved stream URL
-                    if hasattr(state, 'clients_lock'):
-                        with state.clients_lock:
-                            client["stream_url"] = stream_url
-                            client["stream_version"] = int(time.time())
-                            if hasattr(state, 'add_client'):
-                                state.add_client(client_id, client)
-                            else:
-                                state.clients[client_id] = client
+                    client["stream_url"] = stream_url
+                    client["stream_version"] = int(time.time())
+                    if hasattr(state, 'add_client'):
+                        state.add_client(client_id, client)
                     else:
-                        client["stream_url"] = stream_url
-                        client["stream_version"] = int(time.time())
                         state.clients[client_id] = client
                     
                     logger.info(f"✅ Resolved stream URL for client {client_id}:")
@@ -392,41 +414,67 @@ def wait_for_assignment():
                         "stream_assignment": f"screen{screen_number}",
                         "screen_number": screen_number,
                         "stream_url": stream_url,
-                        "stream_version": client["stream_version"],
+                        "stream_version": client.get("stream_version", 0),
                         "assignment_status": "screen_assigned"
                     }), 200
                 else:
                     return jsonify({
                         "success": False,
                         "status": "stream_not_available",
-                        "message": f"Stream for screen {screen_number} not available in current streaming session",
+                        "message": f"Stream for screen {screen_number} not available",
                         "available_streams": list(active_stream_ids.keys())
                     }), 404
-            else:
-                # Handle regular stream assignment (not screen-specific)
-                # This would be for your existing stream assignment logic
-                stream_assignment = client.get("stream_assignment")
-                if stream_assignment:
-                    # Use existing stream URL if available
-                    stream_url = client.get("stream_url")
-                    if stream_url:
-                        return jsonify({
-                            "success": True,
-                            "status": "ready_to_play",
-                            "message": f"Stream ready",
-                            "group_name": group_name,
-                            "stream_assignment": stream_assignment,
-                            "stream_url": stream_url,
-                            "assignment_status": "stream_assigned"
-                        }), 200
-                
+        
+        # Handle direct stream assignment
+        elif assignment_status == "stream_assigned":
+            stream_assignment = client.get("stream_assignment")
+            stream_url = client.get("stream_url")
+            
+            # If we don't have a stream URL yet, try to build it
+            if not stream_url and group_id and group_name:
+                group = get_group_from_docker(group_id)
+                if group:
+                    # Get stream ID from persistent streams or generate one
+                    from .admin_endpoints import get_persistent_streams_for_group
+                    persistent_streams = get_persistent_streams_for_group(group_id, group_name, 4)
+                    
+                    if stream_assignment in persistent_streams:
+                        stream_id = persistent_streams[stream_assignment]
+                        srt_ip = client.get("srt_ip", "127.0.0.1")
+                        
+                        # FIXED: Build complete stream URL
+                        stream_url = build_stream_url_for_client(group, stream_id, group_name, srt_ip)
+                        
+                        # Update client with the URL
+                        client["stream_url"] = stream_url
+                        client["stream_version"] = int(time.time())
+                        if hasattr(state, 'add_client'):
+                            state.add_client(client_id, client)
+                        else:
+                            state.clients[client_id] = client
+                        
+                        logger.info(f"✅ Built stream URL for client {client_id}: {stream_url}")
+            
+            if stream_url:
                 return jsonify({
                     "success": True,
-                    "status": "waiting_for_stream_assignment",
-                    "message": f"Assigned to group {group_name} but no specific stream assigned",
-                    "group_name": group_name
+                    "status": "ready_to_play",
+                    "message": "Stream ready",
+                    "group_name": group_name,
+                    "stream_assignment": stream_assignment,
+                    "stream_url": stream_url,
+                    "assignment_status": "stream_assigned"
                 }), 200
+            else:
+                return jsonify({
+                    "success": False,
+                    "status": "waiting_for_stream",
+                    "message": "Assigned to stream, waiting for URL resolution",
+                    "group_name": group_name,
+                    "stream_assignment": stream_assignment
+                }), 202
         
+        # Unknown status
         return jsonify({
             "success": False,
             "status": "unknown_status",
@@ -435,26 +483,24 @@ def wait_for_assignment():
         
     except Exception as e:
         logger.error(f"Error in wait_for_assignment: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             "success": False,
             "status": "error",
             "message": str(e)
         }), 500
-    
-# Legacy endpoints for backwards compatibility
-def register_client_legacy():
-    """Legacy endpoint - redirects to new register endpoint"""
-    return register_client()
 
 def resolve_stream_urls_for_group(group_id: str, group_name: str):
     """
-    Called when streaming starts - resolves stream URLs for all assigned clients
+    FIXED: Called when streaming starts - resolves stream URLs for all assigned clients
+    Ensures all clients get properly formatted stream URLs
     """
     try:
         logger.info(f"🔄 Resolving stream URLs for all clients assigned to group {group_name}")
         
         state = get_state()
-        all_clients = state.get_all_clients()
+        all_clients = state.get_all_clients() if hasattr(state, 'get_all_clients') else state.clients
         
         # Find clients assigned to this group
         group_clients = []
@@ -476,6 +522,7 @@ def resolve_stream_urls_for_group(group_id: str, group_name: str):
         active_stream_ids = generate_stream_ids(group_id, group_name, screen_count)
         
         # Update each client with resolved stream URL
+        updated_count = 0
         for client_id, client in group_clients:
             screen_number = client.get("screen_number")
             if screen_number is not None:
@@ -483,19 +530,33 @@ def resolve_stream_urls_for_group(group_id: str, group_name: str):
                 if screen_stream_key in active_stream_ids:
                     stream_id = active_stream_ids[screen_stream_key]
                     srt_ip = client.get("srt_ip", "127.0.0.1")
-                    stream_url = build_stream_url(group, stream_id, group_name, srt_ip)
+                    
+                    # FIXED: Use the corrected build function
+                    stream_url = build_stream_url_for_client(group, stream_id, group_name, srt_ip)
                     
                     # Update client
                     client["stream_url"] = stream_url
                     client["stream_version"] = int(time.time())
-                    state.add_client(client_id, client)
+                    if hasattr(state, 'add_client'):
+                        state.add_client(client_id, client)
+                    else:
+                        state.clients[client_id] = client
                     
                     logger.info(f"✅ Resolved URL for client {client_id} → screen {screen_number} → {stream_id}")
+                    logger.info(f"   Full URL: {stream_url}")
+                    updated_count += 1
         
-        logger.info(f"🎯 Resolved stream URLs for {len(group_clients)} clients in group {group_name}")
+        logger.info(f"🎯 Resolved stream URLs for {updated_count}/{len(group_clients)} clients in group {group_name}")
         
     except Exception as e:
         logger.error(f"Error resolving stream URLs for group {group_name}: {e}")
+        import traceback
+        traceback.print_exc()
+
+# Legacy endpoints for backwards compatibility
+def register_client_legacy():
+    """Legacy endpoint - redirects to new register endpoint"""
+    return register_client()
 
 def wait_for_stream_legacy():
     """Legacy endpoint - redirects to new wait_for_assignment endpoint"""

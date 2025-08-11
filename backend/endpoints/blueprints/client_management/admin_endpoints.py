@@ -1,27 +1,13 @@
-"""
-Admin Assignment Endpoints
-Administrative functions for assigning clients to groups and streams
-"""
+
+# backend/endpoints/blueprints/client_management/admin_endpoints.py
+# Key fixed functions for proper stream URL assignment
 
 import time
 import logging
 import traceback
+from typing import Dict, Any
 from flask import request, jsonify
-
-from .client_state import get_state
-from .client_validators import (
-    validate_group_assignment,
-    validate_stream_assignment,
-    validate_screen_assignment,
-    validate_auto_assignment,
-    validate_unassignment
-)
-from .client_utils import (
-    get_group_from_docker,
-    get_persistent_streams_for_group,
-    build_stream_url,
-)
-
+from .client_validators import validate_group_assignment
 logger = logging.getLogger(__name__)
 
 def assign_client_to_group():
@@ -115,15 +101,8 @@ def assign_client_to_group():
 
 def assign_client_to_stream():
     """
-    Admin function: Assign a client to a specific stream
-    
-    Expected payload:
-    {
-        "client_id": "display-001",
-        "group_id": "group-123",  # Optional if client already in group
-        "stream_name": "test0",   # Optional, will auto-assign if not provided
-        "srt_ip": "192.168.1.100" # Optional, defaults to 127.0.0.1
-    }
+    FIXED: Admin function to assign a client to a specific stream
+    Ensures proper URL format and port configuration
     """
     try:
         logger.info("==== ASSIGN CLIENT TO STREAM REQUEST ====")
@@ -131,8 +110,11 @@ def assign_client_to_stream():
         state = get_state()
         data = request.get_json() or {}
         
+        # Import validation function
+        from .client_utils import validate_assignment, build_stream_url
+        
         # Validate input
-        is_valid, error_msg, cleaned_data = validate_stream_assignment(data)
+        is_valid, error_msg, cleaned_data = validate_assignment(data)
         if not is_valid:
             return jsonify({
                 "success": False,
@@ -141,28 +123,18 @@ def assign_client_to_stream():
         
         client_id = cleaned_data["client_id"]
         group_id = cleaned_data["group_id"]
-        stream_name = cleaned_data["stream_name"]
-        srt_ip = cleaned_data["srt_ip"]
+        stream_name = cleaned_data.get("stream_name")
+        srt_ip = cleaned_data.get("srt_ip", "127.0.0.1")
         
         # Get client
         client = state.get_client(client_id)
         if not client:
             return jsonify({
                 "success": False,
-                "error": f"Client {client_id} not registered"
+                "error": f"Client {client_id} not found"
             }), 404
         
-        # Get group_id from client if not provided
-        if not group_id:
-            group_id = client.get("group_id")
-        
-        if not group_id:
-            return jsonify({
-                "success": False,
-                "error": "Client not assigned to any group and no group_id provided"
-            }), 400
-        
-        # Verify group exists
+        # Get group
         group = get_group_from_docker(group_id)
         if not group:
             return jsonify({
@@ -172,59 +144,64 @@ def assign_client_to_stream():
         
         group_name = group.get("name", group_id)
         
-        # Auto-assign stream if not specified
+        # FIXED: Ensure group has proper port configuration
+        if "ports" not in group or "srt_port" not in group.get("ports", {}):
+            logger.warning(f"Group {group_name} missing SRT port configuration, using default 10080")
+            if "ports" not in group:
+                group["ports"] = {}
+            group["ports"]["srt_port"] = 10080
+        
+        # Get available streams
+        persistent_streams = get_persistent_streams_for_group(group_id, group_name, 4)
+        available_streams = list(persistent_streams.keys())
+        
+        if not available_streams:
+            return jsonify({
+                "success": False,
+                "error": "No streams available for this group"
+            }), 400
+        
+        # Select stream
         if not stream_name:
-            persistent_streams = get_persistent_streams_for_group(group_id, group_name, 4)
-            
-            # Find unassigned streams
+            # Auto-select based on round-robin
+            assigned_streams = []
             all_clients = state.get_all_clients()
-            assigned_streams = set()
             for other_client in all_clients.values():
                 if (other_client.get("group_id") == group_id and 
-                    other_client.get("stream_assignment") and
-                    other_client["client_id"] != client_id):
-                    assigned_streams.add(other_client["stream_assignment"])
+                    other_client.get("stream_assignment")):
+                    assigned_streams.append(other_client["stream_assignment"])
             
-            # Prefer split streams over full stream
-            available_streams = [name for name in persistent_streams.keys() 
-                               if name.startswith("test") and len(name) > 4]
-            if not available_streams:
-                available_streams = ["test"]
-            
-            # Find first unassigned stream
-            for stream in available_streams:
-                if stream not in assigned_streams:
-                    stream_name = stream
-                    break
-            
-            if not stream_name:
-                # All streams assigned, use round-robin
-                stream_name = available_streams[len(assigned_streams) % len(available_streams)]
+            # If all streams assigned, use round-robin
+            stream_name = available_streams[len(assigned_streams) % len(available_streams)]
         
-        # Build stream URL
-        persistent_streams = get_persistent_streams_for_group(group_id, group_name, 4)
+        # Validate stream exists
         if stream_name not in persistent_streams:
             return jsonify({
                 "success": False,
                 "error": f"Stream {stream_name} not available in group",
-                "available_streams": list(persistent_streams.keys())
+                "available_streams": available_streams
             }), 400
         
         stream_id = persistent_streams[stream_name]
+        
+        # FIXED: Build complete stream URL with proper format
         stream_url = build_stream_url(group, stream_id, group_name, srt_ip)
         
         # Update client assignment
         client.update({
             "group_id": group_id,
+            "group_name": group_name,  # Store group name for easier access
             "stream_assignment": stream_name,
             "stream_url": stream_url,
+            "srt_ip": srt_ip,  # Store for potential URL rebuilding
             "assigned_at": time.time(),
             "assignment_status": "stream_assigned",
             "screen_number": None  # Clear screen assignment if using streams
         })
         state.add_client(client_id, client)
         
-        logger.info(f"Assigned client {client_id} to stream {stream_name} in group {group_id}")
+        logger.info(f"✅ Assigned client {client_id} to stream {stream_name} in group {group_id}")
+        logger.info(f"   Stream URL: {stream_url}")
         
         return jsonify({
             "success": True,
@@ -247,7 +224,7 @@ def assign_client_to_stream():
 
 def assign_client_to_screen():
     """
-    Assign a client to a specific screen (stores assignment without requiring active streaming)
+    FIXED: Assign a client to a specific screen with proper configuration
     Client will get actual stream URL when streaming starts via wait_for_assignment
     """
     try:
@@ -256,26 +233,37 @@ def assign_client_to_screen():
         state = get_state()
         data = request.get_json() or {}
         
-        client_id = data.get("client_id")
-        group_id = data.get("group_id")
-        screen_number = data.get("screen_number")
-        srt_ip = data.get("srt_ip", "127.0.0.1")
+        # Import validation function
+        from .client_utils import validate_assignment, check_screen_availability
         
-        if not all([client_id, group_id, screen_number is not None]):
+        # Validate input
+        is_valid, error_msg, cleaned_data = validate_assignment(data)
+        if not is_valid:
             return jsonify({
                 "success": False,
-                "error": "client_id, group_id, and screen_number are required"
+                "error": error_msg
             }), 400
         
-        # Validate client exists using state method
+        client_id = cleaned_data["client_id"]
+        group_id = cleaned_data["group_id"]
+        screen_number = cleaned_data.get("screen_number")
+        srt_ip = cleaned_data.get("srt_ip", "127.0.0.1")
+        
+        if screen_number is None:
+            return jsonify({
+                "success": False,
+                "error": "screen_number is required for screen assignment"
+            }), 400
+        
+        # Get client
         client = state.get_client(client_id)
         if not client:
             return jsonify({
                 "success": False,
-                "error": f"Client {client_id} not registered"
+                "error": f"Client {client_id} not found"
             }), 404
         
-        # Verify group exists using our wrapper function
+        # Get group
         group = get_group_from_docker(group_id)
         if not group:
             return jsonify({
@@ -284,31 +272,35 @@ def assign_client_to_screen():
             }), 404
         
         group_name = group.get("name", group_id)
-        screen_count = group.get("screen_count", 4)
+        screen_count = group.get("screen_count", 2)
+        
+        # FIXED: Ensure group has proper port configuration
+        if "ports" not in group or "srt_port" not in group.get("ports", {}):
+            logger.warning(f"Group {group_name} missing SRT port configuration, using default 10080")
+            if "ports" not in group:
+                group["ports"] = {}
+            group["ports"]["srt_port"] = 10080
         
         # Validate screen number
         if screen_number >= screen_count:
             return jsonify({
                 "success": False,
-                "error": f"Screen number {screen_number} exceeds group screen count {screen_count}"
+                "error": f"Screen number {screen_number} exceeds group screen count ({screen_count})"
             }), 400
         
-        # Check if another client is already assigned to this screen
+        # Check if screen is already taken
         all_clients = state.get_all_clients()
-        for other_client_id, other_client in all_clients.items():
-            if (other_client_id != client_id and 
-                other_client.get("group_id") == group_id and 
-                other_client.get("screen_number") == screen_number):
-                return jsonify({
-                    "success": False,
-                    "error": f"Screen {screen_number} is already assigned to client {other_client_id}",
-                    "current_assignment": {
-                        "client_id": other_client_id,
-                        "hostname": other_client.get("hostname", "unknown")
-                    }
-                }), 409
+        is_available, conflict = check_screen_availability(
+            client_id, group_id, screen_number, all_clients
+        )
         
-        # STORE SCREEN ASSIGNMENT WITHOUT STREAM URL (KEY CHANGE!)
+        if not is_available:
+            return jsonify({
+                "success": False,
+                "error": f"Screen {screen_number} is already assigned to client {conflict['client_id']}",
+                "conflict": conflict
+            }), 409
+        
         # The stream URL will be resolved when client calls wait_for_assignment
         client_data = {
             "group_id": group_id,
@@ -335,152 +327,11 @@ def assign_client_to_screen():
             "group_id": group_id,
             "group_name": group_name,
             "screen_number": screen_number,
-            "stream_assignment": f"screen{screen_number}",
-            "assignment_status": "screen_assigned",
-            "stream_url": None,  # No URL yet
-            "note": "Stream URL will be available when streaming starts"
+            "assignment_status": "screen_assigned"
         }), 200
         
     except Exception as e:
         logger.error(f"Error assigning client to screen: {e}")
-        traceback.print_exc()
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
-    
-def auto_assign_group_clients():
-    """
-    Admin function: Auto-assign all clients in a group to different streams
-    
-    Expected payload:
-    {
-        "group_id": "group-123",
-        "assignment_type": "streams",  # or "screens"
-        "srt_ip": "192.168.1.100"
-    }
-    """
-    try:
-        logger.info("==== AUTO ASSIGN GROUP CLIENTS REQUEST ====")
-        
-        state = get_state()
-        data = request.get_json() or {}
-        
-        # Validate input
-        is_valid, error_msg, cleaned_data = validate_auto_assignment(data)
-        if not is_valid:
-            return jsonify({
-                "success": False,
-                "error": error_msg
-            }), 400
-        
-        group_id = cleaned_data["group_id"]
-        assignment_type = cleaned_data["assignment_type"]
-        srt_ip = cleaned_data["srt_ip"]
-        
-        # Verify group exists
-        group = get_group_from_docker(group_id)
-        if not group:
-            return jsonify({
-                "success": False,
-                "error": f"Group {group_id} not found"
-            }), 404
-        
-        group_name = group.get("name", group_id)
-        screen_count = group.get("screen_count", 4)
-        
-        # Get clients in this group
-        group_clients = state.get_active_clients(group_id)
-        
-        if not group_clients:
-            return jsonify({
-                "success": True,
-                "message": f"No active clients assigned to group {group_id}",
-                "assignments": []
-            }), 200
-        
-        assignments = []
-        
-        if assignment_type == "screens":
-            # Assign 1 client per screen
-            available_screens = list(range(screen_count))
-            
-            for i, client in enumerate(group_clients[:screen_count]):  # Limit to screen count
-                screen_number = available_screens[i]
-                
-                # Build screen stream URL
-                persistent_streams = get_persistent_streams_for_group(group_id, group_name, screen_count)
-                screen_stream_key = f"test{screen_number}"
-                
-                if screen_stream_key in persistent_streams:
-                    stream_id = persistent_streams[screen_stream_key]
-                    stream_url = build_stream_url(group, stream_id, group_name, srt_ip)
-                    
-                    # Update client
-                    client.update({
-                        "screen_number": screen_number,
-                        "stream_assignment": f"screen{screen_number}",
-                        "stream_url": stream_url,
-                        "assigned_at": time.time(),
-                        "assignment_status": "screen_assigned"
-                    })
-                    state.add_client(client["client_id"], client)
-                    
-                    assignments.append({
-                        "client_id": client["client_id"],
-                        "hostname": client.get("hostname", "unknown"),
-                        "display_name": client.get("display_name", "unknown"),
-                        "assignment_type": "screen",
-                        "screen_number": screen_number,
-                        "stream_assignment": f"screen{screen_number}",
-                        "stream_url": stream_url
-                    })
-        else:
-            # Assign to regular streams (multiple clients can share)
-            persistent_streams = get_persistent_streams_for_group(group_id, group_name, len(group_clients))
-            
-            stream_names = [name for name in persistent_streams.keys() 
-                           if name.startswith("test") and len(name) > 4]
-            if not stream_names:
-                stream_names = ["test"]
-            
-            for i, client in enumerate(group_clients):
-                stream_name = stream_names[i % len(stream_names)]  # Round-robin
-                stream_id = persistent_streams[stream_name]
-                stream_url = build_stream_url(group, stream_id, group_name, srt_ip)
-                
-                # Update client
-                client.update({
-                    "stream_assignment": stream_name,
-                    "stream_url": stream_url,
-                    "assigned_at": time.time(),
-                    "assignment_status": "stream_assigned",
-                    "screen_number": None  # Clear screen assignment
-                })
-                state.add_client(client["client_id"], client)
-                
-                assignments.append({
-                    "client_id": client["client_id"],
-                    "hostname": client.get("hostname", "unknown"),
-                    "display_name": client.get("display_name", "unknown"),
-                    "assignment_type": "stream",
-                    "stream_name": stream_name,
-                    "stream_url": stream_url
-                })
-        
-        logger.info(f"Auto-assigned {len(assignments)} clients in group {group_id} using {assignment_type}")
-        
-        return jsonify({
-            "success": True,
-            "message": f"Auto-assigned {len(assignments)} clients in group {group_id}",
-            "group_id": group_id,
-            "group_name": group_name,
-            "assignment_type": assignment_type,
-            "assignments": assignments
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error in auto-assign group clients: {e}")
         traceback.print_exc()
         return jsonify({
             "success": False,
@@ -577,7 +428,7 @@ def unassign_client():
             "success": False,
             "error": str(e)
         }), 500
-
+        
 def remove_client():
     """
     Admin function: Remove a client from the system completely
@@ -638,3 +489,197 @@ def remove_client():
             "success": False,
             "error": str(e)
         }), 500
+
+def auto_assign_group_clients():
+    """
+    FIXED: Auto-assign all unassigned clients in a group to streams or screens
+    Ensures proper URL format and port configuration
+    """
+    try:
+        logger.info("==== AUTO-ASSIGN GROUP CLIENTS REQUEST ====")
+        
+        state = get_state()
+        data = request.get_json() or {}
+        
+        group_id = data.get("group_id", "").strip()
+        assignment_type = data.get("assignment_type", "stream").lower()
+        srt_ip = data.get("srt_ip", "127.0.0.1").strip()
+        
+        if not group_id:
+            return jsonify({
+                "success": False,
+                "error": "group_id is required"
+            }), 400
+        
+        if assignment_type not in ["stream", "screen"]:
+            return jsonify({
+                "success": False,
+                "error": "assignment_type must be 'stream' or 'screen'"
+            }), 400
+        
+        # Get group
+        group = get_group_from_docker(group_id)
+        if not group:
+            return jsonify({
+                "success": False,
+                "error": f"Group {group_id} not found"
+            }), 404
+        
+        group_name = group.get("name", group_id)
+        screen_count = group.get("screen_count", 2)
+        
+        # FIXED: Ensure group has proper port configuration
+        if "ports" not in group or "srt_port" not in group.get("ports", {}):
+            logger.warning(f"Group {group_name} missing SRT port configuration, using default 10080")
+            if "ports" not in group:
+                group["ports"] = {}
+            group["ports"]["srt_port"] = 10080
+        
+        # Find unassigned clients in this group
+        all_clients = state.get_all_clients()
+        unassigned_clients = []
+        
+        for client_id, client in all_clients.items():
+            if (client.get("group_id") == group_id and 
+                not client.get("stream_assignment") and 
+                client.get("screen_number") is None):
+                unassigned_clients.append(client)
+        
+        if not unassigned_clients:
+            return jsonify({
+                "success": True,
+                "message": "No unassigned clients in this group",
+                "group_id": group_id,
+                "group_name": group_name,
+                "assignments": []
+            }), 200
+        
+        assignments = []
+        
+        if assignment_type == "screen":
+            # Assign to screens
+            for i, client in enumerate(unassigned_clients):
+                if i >= screen_count:
+                    logger.warning(f"More clients than screens. Client {client['client_id']} not assigned.")
+                    continue
+                
+                # Update client for screen assignment
+                client.update({
+                    "screen_number": i,
+                    "stream_assignment": f"screen{i}",
+                    "srt_ip": srt_ip,
+                    "stream_url": None,  # Will be resolved when streaming starts
+                    "assigned_at": time.time(),
+                    "assignment_status": "screen_assigned"
+                })
+                state.add_client(client["client_id"], client)
+                
+                assignments.append({
+                    "client_id": client["client_id"],
+                    "hostname": client.get("hostname", "unknown"),
+                    "display_name": client.get("display_name", "unknown"),
+                    "assignment_type": "screen",
+                    "screen_number": i
+                })
+        
+        else:  # stream assignment
+            # Get available streams
+            persistent_streams = get_persistent_streams_for_group(group_id, group_name, 4)
+            stream_names = list(persistent_streams.keys())
+            
+            if not stream_names:
+                return jsonify({
+                    "success": False,
+                    "error": "No streams available for this group"
+                }), 400
+            
+            # Import build function
+            from .client_utils import build_stream_url
+            
+            for i, client in enumerate(unassigned_clients):
+                stream_name = stream_names[i % len(stream_names)]  # Round-robin
+                stream_id = persistent_streams[stream_name]
+                
+                # FIXED: Build complete stream URL
+                stream_url = build_stream_url(group, stream_id, group_name, srt_ip)
+                
+                # Update client
+                client.update({
+                    "stream_assignment": stream_name,
+                    "stream_url": stream_url,
+                    "srt_ip": srt_ip,
+                    "assigned_at": time.time(),
+                    "assignment_status": "stream_assigned",
+                    "screen_number": None  # Clear screen assignment
+                })
+                state.add_client(client["client_id"], client)
+                
+                assignments.append({
+                    "client_id": client["client_id"],
+                    "hostname": client.get("hostname", "unknown"),
+                    "display_name": client.get("display_name", "unknown"),
+                    "assignment_type": "stream",
+                    "stream_name": stream_name,
+                    "stream_url": stream_url
+                })
+        
+        logger.info(f"✅ Auto-assigned {len(assignments)} clients in group {group_id} using {assignment_type}")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Auto-assigned {len(assignments)} clients in group {group_id}",
+            "group_id": group_id,
+            "group_name": group_name,
+            "assignment_type": assignment_type,
+            "assignments": assignments
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in auto-assign group clients: {e}")
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+def get_persistent_streams_for_group(group_id: str, group_name: str, max_streams: int = 4) -> Dict[str, str]:
+    """
+    FIXED: Get or create persistent stream IDs for a group
+    Returns a dictionary mapping stream names to stream IDs
+    """
+    import hashlib
+    
+    streams = {}
+    
+    # Generate deterministic stream IDs based on group
+    base_seed = f"{group_id}_{group_name}"
+    
+    # Main/combined stream
+    main_hash = hashlib.md5(f"{base_seed}_main".encode()).hexdigest()[:8]
+    streams["main"] = main_hash
+    streams["test"] = main_hash  # Alias for compatibility
+    
+    # Individual streams
+    for i in range(max_streams):
+        stream_hash = hashlib.md5(f"{base_seed}_stream_{i}".encode()).hexdigest()[:8]
+        streams[f"stream{i}"] = stream_hash
+        streams[f"test{i}"] = stream_hash  # Alias for compatibility
+    
+    return streams
+
+# Helper functions
+def get_state():
+    """Get the application state"""
+    from flask import current_app
+    return current_app.config.get('APP_STATE')
+
+def get_group_from_docker(group_id: str) -> Dict[str, Any]:
+    """Get group configuration from Docker"""
+    try:
+        from ..docker_management import get_all_groups
+        groups = get_all_groups()
+        return groups.get(group_id, {})
+    except ImportError:
+        logger.warning("Docker management not available")
+        return {}
+    
