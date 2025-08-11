@@ -743,9 +743,17 @@ class UnifiedMultiScreenClient:
                     print(f"   Waiting for admin to start streaming...")
                     retry_count = 0
                 
-                elif status in ["group_not_running", "group_not_found"]:
-                    print(f"❌ {message}")
-                    retry_count = 0
+                elif status == "group_not_found":
+                    # The group might exist but Docker discovery is failing
+                    # Keep waiting instead of giving up
+                    group_id = data.get('group_id')
+                    if retry_count % 6 == 0:
+                        print(f"⚠️  Group validation failed, but continuing (Docker discovery issue)")
+                        print(f"   Group ID: {group_id}")
+                        print(f"   Will retry...")
+                    # Don't print error every time
+                    retry_count += 1
+                    # Continue waiting instead of returning error
                 
                 elif status == "not_registered":
                     print(f"❌ {message}")
