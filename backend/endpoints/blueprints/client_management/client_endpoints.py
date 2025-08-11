@@ -11,6 +11,7 @@ import logging
 import traceback
 from typing import Dict, Any, List, Optional
 from flask import request, jsonify, current_app
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 # =====================================
 
 def get_state():
-    """Get the application state"""
+    """Get the application state from Flask app config"""
     return current_app.config.get('APP_STATE')
 
 def get_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
@@ -292,7 +293,9 @@ def wait_for_assignment():
     Handles both screen assignments and direct stream assignments
     """
     try:
-        from .client_utils import get_next_steps
+        # Import utilities from the same module
+        from .client_utils import get_next_steps, build_stream_url
+        from .client_state import get_state
         
         data = request.get_json() or {}
         client_id = data.get("client_id")
@@ -310,186 +313,122 @@ def wait_for_assignment():
         if not client:
             return jsonify({
                 "success": False,
-                "status": "not_registered",
+                "status": "not_registered", 
                 "message": "Client not found. Please register first."
             }), 404
         
-        # Update last_seen
-        client["last_seen"] = time.time()
-        if hasattr(state, 'add_client'):
-            state.add_client(client_id, client)
-        else:
-            state.clients[client_id] = client
-        
-        # Check assignment status
+        # Get assignment status
         assignment_status = client.get("assignment_status", "waiting_for_assignment")
         group_id = client.get("group_id")
-        group_name = client.get("group_name")
         
-        logger.info(f"Client {client_id} checking assignment - Status: {assignment_status}, Group: {group_name}")
+        logger.info(f"Client {client_id} checking assignment - Status: {assignment_status}, Group: {group_id}")
         
-        # Waiting for any assignment
-        if assignment_status == "waiting_for_assignment":
+        # Case 1: Waiting for group assignment
+        if assignment_status == "waiting_for_assignment" or not group_id:
             return jsonify({
                 "success": False,
                 "status": "waiting_for_assignment",
                 "message": "Waiting for admin to assign you to a group",
                 "next_steps": get_next_steps(client)
+            }), 202  # HTTP 202 Accepted - request is being processed
+        
+        # Get group information using the local helper function
+        group = get_group_from_docker(group_id) if group_id else None
+        if not group:
+            return jsonify({
+                "success": False,
+                "status": "group_not_found",
+                "message": f"Group {group_id} not found or not running",
+                "group_id": group_id
             }), 202
         
-        # Assigned to group but not to stream/screen
-        elif assignment_status == "group_assigned":
+        group_name = group.get("name", group_id)
+        
+        # Case 2: Group assigned but no stream assignment
+        if assignment_status == "group_assigned":
             return jsonify({
                 "success": False,
                 "status": "waiting_for_stream_assignment",
-                "message": f"Assigned to group {group_name}, waiting for stream/screen assignment",
+                "message": "Waiting for admin to assign you to a specific stream or screen",
+                "group_id": group_id,
                 "group_name": group_name,
                 "next_steps": get_next_steps(client)
             }), 202
         
-        # Handle screen assignment (multi-video mode)
-        elif assignment_status == "screen_assigned":
-            screen_number = client.get("screen_number")
-            srt_ip = client.get("srt_ip", "127.0.0.1")
+        # Case 3: Stream or screen assigned - check if streaming
+        if assignment_status in ["stream_assigned", "screen_assigned"]:
+            # Check if group is streaming using local helper
+            container_id = group.get("container_id")
+            is_streaming = check_streaming_status_for_group(group_id, group_name, container_id)
             
-            # Check if streaming is active and resolve URL
-            if group_id and group_name:
-                group = get_group_from_docker(group_id)
-                if not group:
-                    logger.warning(f"Group {group_id} not found in Docker")
-                    return jsonify({
-                        "success": False,
-                        "status": "group_not_found",
-                        "message": f"Group {group_name} configuration not found"
-                    }), 404
-                
-                # Check if streaming is active
-                container_id = group.get("container_id")
-                is_streaming = check_streaming_status_for_group(group_id, group_name, container_id)
-                
-                if not is_streaming:
-                    return jsonify({
-                        "success": False,
-                        "status": "waiting_for_stream",
-                        "message": f"Assigned to screen {screen_number}, waiting for streaming to start",
-                        "group_name": group_name,
-                        "screen_number": screen_number,
-                        "assignment_status": "screen_assigned"
-                    }), 202
-                
-                # Get active stream IDs
-                screen_count = group.get("screen_count", 2)
-                active_stream_ids = get_active_stream_ids_for_group(group_id, group_name, screen_count)
-                
-                if not active_stream_ids:
-                    # Try generating them directly
-                    active_stream_ids = generate_stream_ids(group_id, group_name, screen_count)
-                
-                # Get the stream ID for this specific screen
-                screen_stream_key = f"test{screen_number}"
-                if screen_stream_key in active_stream_ids:
-                    stream_id = active_stream_ids[screen_stream_key]
-                    
-                    # FIXED: Build complete stream URL with proper format
-                    stream_url = build_stream_url_for_client(group, stream_id, group_name, srt_ip)
-                    
-                    # Update client with resolved stream URL
-                    client["stream_url"] = stream_url
-                    client["stream_version"] = int(time.time())
-                    if hasattr(state, 'add_client'):
-                        state.add_client(client_id, client)
-                    else:
-                        state.clients[client_id] = client
-                    
-                    logger.info(f"✅ Resolved stream URL for client {client_id}:")
-                    logger.info(f"   Screen: {screen_number}")
-                    logger.info(f"   Stream ID: {stream_id}")
-                    logger.info(f"   URL: {stream_url}")
-                    
-                    return jsonify({
-                        "success": True,
-                        "status": "ready_to_play",
-                        "message": f"Stream ready for screen {screen_number}",
-                        "group_name": group_name,
-                        "stream_assignment": f"screen{screen_number}",
-                        "screen_number": screen_number,
-                        "stream_url": stream_url,
-                        "stream_version": client.get("stream_version", 0),
-                        "assignment_status": "screen_assigned"
-                    }), 200
-                else:
-                    return jsonify({
-                        "success": False,
-                        "status": "stream_not_available",
-                        "message": f"Stream for screen {screen_number} not available",
-                        "available_streams": list(active_stream_ids.keys())
-                    }), 404
-        
-        # Handle direct stream assignment
-        elif assignment_status == "stream_assigned":
-            stream_assignment = client.get("stream_assignment")
-            stream_url = client.get("stream_url")
-            
-            # If we don't have a stream URL yet, try to build it
-            if not stream_url and group_id and group_name:
-                group = get_group_from_docker(group_id)
-                if group:
-                    # Get stream ID from persistent streams or generate one
-                    from .admin_endpoints import get_persistent_streams_for_group
-                    persistent_streams = get_persistent_streams_for_group(group_id, group_name, 4)
-                    
-                    if stream_assignment in persistent_streams:
-                        stream_id = persistent_streams[stream_assignment]
-                        srt_ip = client.get("srt_ip", "127.0.0.1")
-                        
-                        # FIXED: Build complete stream URL
-                        stream_url = build_stream_url_for_client(group, stream_id, group_name, srt_ip)
-                        
-                        # Update client with the URL
-                        client["stream_url"] = stream_url
-                        client["stream_version"] = int(time.time())
-                        if hasattr(state, 'add_client'):
-                            state.add_client(client_id, client)
-                        else:
-                            state.clients[client_id] = client
-                        
-                        logger.info(f"✅ Built stream URL for client {client_id}: {stream_url}")
-            
-            if stream_url:
-                return jsonify({
-                    "success": True,
-                    "status": "ready_to_play",
-                    "message": "Stream ready",
-                    "group_name": group_name,
-                    "stream_assignment": stream_assignment,
-                    "stream_url": stream_url,
-                    "assignment_status": "stream_assigned"
-                }), 200
-            else:
+            if not is_streaming:
                 return jsonify({
                     "success": False,
-                    "status": "waiting_for_stream",
-                    "message": "Assigned to stream, waiting for URL resolution",
+                    "status": "waiting_for_streaming",
+                    "message": "Waiting for streaming to start",
+                    "group_id": group_id,
                     "group_name": group_name,
-                    "stream_assignment": stream_assignment
+                    "stream_assignment": client.get("stream_assignment"),
+                    "screen_number": client.get("screen_number"),
+                    "assignment_status": assignment_status,
+                    "next_steps": get_next_steps(client)
                 }), 202
+            
+            # Streaming is active - prepare stream URL
+            stream_url = client.get("stream_url")
+            
+            # If no stream URL yet, build it
+            if not stream_url:
+                if assignment_status == "screen_assigned":
+                    # For screen assignment, build URL with screen number
+                    screen_number = client.get("screen_number", 0)
+                    stream_id = f"screen{screen_number}"
+                else:
+                    # For stream assignment, use the assigned stream
+                    stream_id = client.get("stream_assignment", "default")
+                
+                # Get SRT IP from client or use default
+                srt_ip = client.get("srt_ip", "127.0.0.1")
+                
+                # Build the stream URL
+                stream_url = build_stream_url(group, stream_id, group_name, srt_ip)
+                
+                # Update client with stream URL
+                client["stream_url"] = stream_url
+                state.add_client(client_id, client)
+            
+            # Return ready to play status
+            return jsonify({
+                "success": True,
+                "status": "ready_to_play",
+                "message": "Stream is ready",
+                "stream_url": stream_url,
+                "group_id": group_id,
+                "group_name": group_name,
+                "stream_assignment": client.get("stream_assignment"),
+                "screen_number": client.get("screen_number"),
+                "assignment_status": assignment_status,
+                "stream_version": client.get("stream_version", None)
+            }), 200
         
         # Unknown status
         return jsonify({
             "success": False,
-            "status": "unknown_status",
-            "message": f"Unknown assignment status: {assignment_status}"
-        }), 500
+            "status": "unknown",
+            "message": f"Unknown assignment status: {assignment_status}",
+            "assignment_status": assignment_status
+        }), 202
         
     except Exception as e:
         logger.error(f"Error in wait_for_assignment: {e}")
         import traceback
-        traceback.print_exc()
+        logger.error(traceback.format_exc())
         return jsonify({
             "success": False,
             "status": "error",
-            "message": str(e)
+            "message": f"Internal server error: {str(e)}"
         }), 500
+    
 
 def resolve_stream_urls_for_group(group_id: str, group_name: str):
     """
