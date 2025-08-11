@@ -1,91 +1,26 @@
 # backend/endpoints/blueprints/client_management/client_utils.py
-"""
-Client Management Utility Functions
-Helper functions for client operations
-"""
 
-import uuid
+import time
+from typing import Dict, Any, List, Tuple, Optional
 import logging
-from typing import Dict, List, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-def get_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
-    """Get group information from Docker discovery"""
-    try:
-        # Import here to avoid circular imports
-        from blueprints.docker_management import discover_groups
-        
-        discovery_result = discover_groups()
-        if not discovery_result.get("success", False):
-            logger.error(f"Failed to discover groups: {discovery_result.get('error')}")
-            return None
-        
-        for group in discovery_result.get("groups", []):
-            if group.get("id") == group_id:
-                return group
-        
-        logger.warning(f"Group {group_id} not found in Docker containers")
-        return None
-        
-    except Exception as e:
-        logger.error(f"Error getting group from Docker: {e}")
-        return None
-
-def get_persistent_streams_for_group(group_id: str, group_name: str, split_count: int = 4) -> Dict[str, str]:
-    """Generate dynamic stream IDs (not persistent anymore)"""
-    logger.info(f"Generating dynamic stream IDs for group {group_name} (not persistent)")
+def format_time_ago(timestamp: float) -> str:
+    """Format timestamp as human-readable time ago"""
+    if not timestamp:
+        return "Never"
     
-    # Generate dynamic stream IDs based on group
-    streams = {}
-    base_id = group_id[:8] if len(group_id) >= 8 else group_id
+    seconds_ago = time.time() - timestamp
     
-    # Main/combined stream
-    streams["test"] = base_id
-    
-    # Individual screen streams  
-    for i in range(split_count):
-        streams[f"test{i}"] = f"{base_id}_{i}"
-    
-    return streams
-
-def check_group_streaming_status(group_id: str, group_name: str) -> bool:
-    """Check if streaming is active for a group"""
-    try:
-        # Import here to avoid circular imports
-        from blueprints.stream_management import find_running_ffmpeg_for_group_strict
-        from blueprints.stream_management import discover_group_from_docker
-        
-        # Get group info
-        group = discover_group_from_docker(group_id)
-        if not group:
-            logger.warning(f"Group {group_id} not found")
-            return False
-        
-        container_id = group.get("container_id")
-        processes = find_running_ffmpeg_for_group_strict(group_id, group_name, container_id)
-        is_streaming = len(processes) > 0
-        
-        logger.debug(f"Group {group_name} streaming status: {is_streaming} ({len(processes)} processes)")
-        return is_streaming
-        
-    except ImportError as e:
-        logger.warning(f"Stream management functions not available: {e}")
-        return False  # Conservative: assume not streaming if we can't check
-    except Exception as e:
-        logger.error(f"Error checking streaming status for group {group_name}: {e}")
-        return False
-
-def format_time_ago(seconds_ago: int) -> str:
-    """Format time difference as human-readable string"""
     if seconds_ago < 60:
-        return f"{seconds_ago} seconds ago"
+        return f"{int(seconds_ago)} seconds ago"
     elif seconds_ago < 3600:
-        minutes = seconds_ago // 60
-        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+        return f"{int(seconds_ago / 60)} minutes ago"
+    elif seconds_ago < 86400:
+        return f"{int(seconds_ago / 3600)} hours ago"
     else:
-        hours = seconds_ago // 3600
-        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+        return f"{int(seconds_ago / 86400)} days ago"
 
 def get_next_steps(client_data: Dict[str, Any]) -> List[str]:
     """Get next steps for client based on current state"""
@@ -115,29 +50,165 @@ def get_next_steps(client_data: Dict[str, Any]) -> List[str]:
         return ["Contact administrator for assistance"]
 
 def build_stream_url(group: Dict[str, Any], stream_id: str, group_name: str, srt_ip: str = "127.0.0.1") -> str:
-    """Build SRT stream URL for a client"""
+    """
+    Build SRT stream URL for a client
+    FIXED: Complete URL format with all required parameters
+    """
     ports = group.get("ports", {})
-    srt_port = ports.get("srt_port", 10080)
+    srt_port = ports.get("srt_port")
+    
+    # Better error handling for missing port
+    if not srt_port:
+        logger.warning(f"No SRT port found for group {group_name}. Using default port 10080. Group ports: {ports}")
+        srt_port = 10080
+    
+    # Build the complete stream path
     stream_path = f"live/{group_name}/{stream_id}"
-    return f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=request,latency=5000000"
-
-def validate_screen_assignment(screen_number: int, group: Dict[str, Any]) -> tuple:
-    """Validate screen assignment parameters"""
-    screen_count = group.get("screen_count", 4)
     
-    if screen_number >= screen_count:
-        return False, f"Screen number {screen_number} exceeds group screen count {screen_count}"
+    # FIXED: Complete SRT URL format with all parameters
+    # Format: srt://ip:port?streamid=#!::r=path,m=request,latency=5000000
+    stream_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=request,latency=5000000"
     
-    return True, None
+    logger.debug(f"Built stream URL for client - Group: {group_name}, Stream ID: {stream_id}, URL: {stream_url}")
+    
+    return stream_url
 
-def check_screen_availability(client_id: str, group_id: str, screen_number: int, all_clients: Dict[str, Any]) -> tuple:
-    """Check if a screen is available for assignment"""
-    for other_client_id, other_client in all_clients.items():
-        if (other_client_id != client_id and 
-            other_client.get("group_id") == group_id and 
-            other_client.get("screen_number") == screen_number):
-            return False, {
-                "client_id": other_client_id,
-                "hostname": other_client.get("hostname", "unknown")
+def check_screen_availability(
+    requesting_client_id: str,
+    group_id: str,
+    screen_number: int,
+    all_clients: Dict[str, Dict[str, Any]]
+) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    """
+    Check if a screen number is available for assignment
+    Returns (is_available, conflicting_client_info)
+    """
+    for client_id, client in all_clients.items():
+        # Skip the requesting client
+        if client_id == requesting_client_id:
+            continue
+            
+        # Check if another client has this screen in the same group
+        if (client.get("group_id") == group_id and 
+            client.get("screen_number") == screen_number):
+            
+            conflict_info = {
+                "client_id": client_id,
+                "hostname": client.get("hostname", "unknown"),
+                "display_name": client.get("display_name", "unknown"),
+                "assigned_at": client.get("assigned_at")
             }
+            return False, conflict_info
+    
     return True, None
+
+def validate_assignment(data: Dict[str, Any]) -> Tuple[bool, str, Dict[str, Any]]:
+    """
+    Validate client assignment request data
+    Returns (is_valid, error_message, cleaned_data)
+    """
+    cleaned = {}
+    
+    # Validate client_id
+    client_id = data.get("client_id", "").strip()
+    if not client_id:
+        return False, "client_id is required", {}
+    cleaned["client_id"] = client_id
+    
+    # Validate group_id
+    group_id = data.get("group_id", "").strip()
+    if not group_id:
+        return False, "group_id is required", {}
+    cleaned["group_id"] = group_id
+    
+    # Optional fields
+    cleaned["stream_name"] = data.get("stream_name", "").strip() or None
+    cleaned["screen_number"] = data.get("screen_number")
+    cleaned["srt_ip"] = data.get("srt_ip", "127.0.0.1").strip()
+    
+    # Validate screen_number if provided
+    if cleaned["screen_number"] is not None:
+        try:
+            screen_num = int(cleaned["screen_number"])
+            if screen_num < 0:
+                return False, "screen_number must be non-negative", {}
+            cleaned["screen_number"] = screen_num
+        except (ValueError, TypeError):
+            return False, "screen_number must be a valid integer", {}
+    
+    return True, "", cleaned
+
+def validate_unassignment(data: Dict[str, Any]) -> Tuple[bool, str, Dict[str, Any]]:
+    """
+    Validate client unassignment request data
+    Returns (is_valid, error_message, cleaned_data)
+    """
+    cleaned = {}
+    
+    # Validate client_id
+    client_id = data.get("client_id", "").strip()
+    if not client_id:
+        return False, "client_id is required", {}
+    cleaned["client_id"] = client_id
+    
+    # Validate unassign_type
+    unassign_type = data.get("unassign_type", "all").strip().lower()
+    if unassign_type not in ["all", "stream", "screen"]:
+        return False, "unassign_type must be 'all', 'stream', or 'screen'", {}
+    cleaned["unassign_type"] = unassign_type
+    
+    return True, "", cleaned
+
+def get_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
+    """Get group information from Docker discovery"""
+    try:
+        # Import here to avoid circular imports
+        from blueprints.docker_management import discover_groups
+        
+        discovery_result = discover_groups()
+        if not discovery_result.get("success", False):
+            logger.error(f"Failed to discover groups: {discovery_result.get('error')}")
+            return None
+        
+        for group in discovery_result.get("groups", []):
+            if group.get("id") == group_id:
+                return group
+        
+        logger.warning(f"Group {group_id} not found in Docker containers")
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error getting group from Docker: {e}")
+        return None
+
+def get_persistent_streams_for_group(group_id: str, group_name: str, split_count: int = 4) -> Dict[str, str]:
+    """Get pre-generated stream IDs from group metadata (always available)"""
+    try:
+        logger.info(f"Getting stream IDs for group {group_name}")
+        
+        # Get group info with pre-generated stream IDs
+        group = get_group_from_docker(group_id)
+        if not group:
+            logger.error(f"Group {group_id} not found")
+            return {}
+        
+        # Get pre-generated stream IDs from group metadata
+        stream_ids = group.get("stream_ids", {})
+        
+        if stream_ids:
+            logger.info(f"✅ Using pre-generated stream IDs from group creation: {stream_ids}")
+            return stream_ids
+        else:
+            logger.warning(f"No pre-generated stream IDs found for group {group_name}")
+            logger.warning(f"Group may have been created with older version")
+            
+            # Fallback: generate them now (for backwards compatibility)
+            from blueprints.stream_management import generate_stream_ids
+            screen_count = group.get("screen_count", 2)
+            fallback_ids = generate_stream_ids(group_id, group_name, screen_count)
+            logger.info(f"Generated fallback stream IDs: {fallback_ids}")
+            return fallback_ids
+        
+    except Exception as e:
+        logger.error(f"Error getting stream IDs: {e}")
+        return {}

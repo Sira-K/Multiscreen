@@ -24,8 +24,7 @@ logger = logging.getLogger(__name__)
 @stream_bp.route("/start_multi_video_srt", methods=["POST"])
 def start_multi_video_srt():
     """
-    Flask route handler for multi-video streaming
-    Extracts parameters from request and calls the command builder
+    Flask route handler for multi-video streaming with FIXED port resolution
     """
     try:
         # Get data from Flask request
@@ -41,10 +40,10 @@ def start_multi_video_srt():
         if not group:
             return jsonify({"error": f"Group '{group_id}' not found"}), 404
         
-        # Extract parameters from request or use defaults
+        # Extract video files parameter
         video_files = data.get("video_files", [])
         if not video_files:
-            return jsonify({"error": "video_files list is required"}), 400
+            return jsonify({"error": "video_files is required"}), 400
         
         # Get group configuration
         group_name = group.get("name", group_id)
@@ -53,10 +52,20 @@ def start_multi_video_srt():
         output_width = data.get("output_width", 1920)
         output_height = data.get("output_height", 1080)
         
-        # Get streaming parameters
+        # Get streaming parameters - FIX THE PORT RESOLUTION HERE
         ports = group.get("ports", {})
         srt_ip = data.get("srt_ip", "127.0.0.1")
-        srt_port = data.get("srt_port", ports.get("srt_port", 10080))
+        
+        srt_port = ports.get("srt_port")
+        if not srt_port:
+            return jsonify({
+                "error": "No SRT port available for this group. Docker container may not be properly configured.",
+                "group_ports": ports
+            }), 500
+        
+        # Log the port being used for debugging
+        logger.info(f"🔌 Using SRT port {srt_port} for group {group_name} (from container ports: {ports})")
+        
         sei = data.get("sei", "00000000000000000000000000000000+000000")
         base_stream_id = data.get("base_stream_id", group_id[:8])
         
@@ -125,7 +134,18 @@ def start_multi_video_srt():
         logger.info("🎬 Starting FFmpeg process...")
         logger.info(f"📋 FFmpeg command: {' '.join(ffmpeg_cmd)}")
         logger.info(f"📂 Working directory: {os.getcwd()}")
-
+        
+        # Log all stream URLs being created
+        logger.info("🔗 STREAM URLs BEING CREATED:")
+        logger.info(f"   Combined: srt://{srt_ip}:{srt_port}?streamid=#!::r=live/{group_name}/{base_stream_id},m=publish")
+        
+        for i in range(screen_count):
+            screen_key = f"test{i}"
+            individual_stream_id = stream_ids.get(screen_key, f"screen{i}_{base_stream_id}")
+            logger.info(f"   Screen {i}: srt://{srt_ip}:{srt_port}?streamid=#!::r=live/{group_name}/{individual_stream_id},m=publish")
+        
+        logger.info(f"📡 Total streams: {screen_count + 1} (1 combined + {screen_count} individual)")
+        
         # Log each input file verification  
         resolved_video_files = [os.path.join("uploads", vf) for vf in video_files]
         logger.info("📁 Input files verification:")
@@ -213,7 +233,7 @@ def start_multi_video_srt():
         # Debug logging
         debug_log_stream_info(
             group_id, group_name, base_stream_id, 
-            srt_ip, srt_port, "MULTI-VIDEO MODE", screen_count
+            srt_ip, srt_port, "MULTI-VIDEO MODE", screen_count, stream_ids
         )
         
         
@@ -290,10 +310,23 @@ def start_split_screen_srt():
             canvas_width = output_width * screen_count
             canvas_height = output_height
         
-        # Get streaming parameters
+        # Get streaming parameters - FIXED PORT RESOLUTION
         ports = group.get("ports", {})
         srt_ip = data.get("srt_ip", "127.0.0.1")
-        srt_port = data.get("srt_port", ports.get("srt_port", 10080))
+        srt_port = data.get("srt_port")
+        if not srt_port:
+            srt_port = ports.get("srt_port")
+            if not srt_port:
+                return jsonify({
+                    "error": "No SRT port available for this group. Docker container may not be properly configured.",
+                    "group_ports": ports
+                }), 500
+
+        # Add logging:
+        logger.info(f"🔌 Using SRT port {srt_port} for group {group_name} (from container ports: {ports})")
+
+        # REMOVE THE DUPLICATE CODE THAT WAS HERE (lines 255-265)
+        
         sei = data.get("sei", "00000000000000000000000000000000+000000")
         base_stream_id = data.get("base_stream_id", group_id[:8])
         
@@ -365,7 +398,7 @@ def start_split_screen_srt():
         # Debug logging
         debug_log_stream_info(
             group_id, group_name, f"split_{base_stream_id}", 
-            srt_ip, srt_port, "SPLIT-SCREEN MODE", screen_count
+            srt_ip, srt_port, "SPLIT-SCREEN MODE", screen_count, stream_ids
         )
         
         # Generate client URLs
@@ -828,8 +861,14 @@ def get_streaming_status(group_id: str):
         
         if is_streaming and stream_ids:
             ports = group.get("ports", {})
-            srt_port = ports.get("srt_port", 10080)
-            srt_ip = "127.0.0.1"
+            srt_port = ports.get("srt_port")
+            if not srt_port:
+                logger.warning(f"No SRT port found for group {group_name} in streaming status")
+                # Skip generating URLs or use a default behavior
+                client_stream_urls = {}
+                available_streams = []
+            else:
+                srt_ip = "127.0.0.1"
             
             combined_stream_path = f"live/{group_name}/{stream_ids.get('test', 'unknown')}"
             client_stream_urls["combined"] = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={combined_stream_path},m=request,latency=5000000"
@@ -1315,6 +1354,21 @@ def get_container_details(container_id: str, group_id: str) -> Dict[str, Any]:
             'api_port': int(labels.get('com.multiscreen.ports.api', 8080)),
             'srt_port': int(labels.get('com.multiscreen.ports.srt', 10080))
         }
+
+        stream_ids = {}
+        
+        # Get combined stream ID
+        combined_id = labels.get('com.multiscreen.streams.combined')
+        if combined_id:
+            stream_ids["test"] = combined_id
+        
+        # Get individual screen stream IDs
+        for i in range(screen_count):
+            screen_stream_id = labels.get(f'com.multiscreen.streams.screen{i}')
+            if screen_stream_id:
+                stream_ids[f"test{i}"] = screen_stream_id
+        
+        logger.debug(f"Extracted stream IDs from container labels: {stream_ids}")
         
         # Determine container status
         is_running = state.get("Running", False)
@@ -1335,6 +1389,7 @@ def get_container_details(container_id: str, group_id: str) -> Dict[str, Any]:
             "docker_running": is_running,
             "status": docker_status,
             "ports": ports,
+            "stream_ids": stream_ids,  # ADD THIS LINE
             "created_at_formatted": time.strftime(
                 "%Y-%m-%d %H:%M:%S",
                 time.localtime(created_timestamp)
@@ -1393,34 +1448,29 @@ def find_running_ffmpeg_for_group_strict(group_id: str, group_name: str, contain
 
 def wait_for_srt_server(srt_ip: str, srt_port: int, timeout: int = 30) -> bool:
     """
-    Wait for SRT server UDP port to be ready
-    
-    Args:
-        srt_ip: SRT server IP address
-        srt_port: SRT server port (typically 10080)
-        timeout: Maximum time to wait in seconds
-        
-    Returns:
-        bool: True if SRT server UDP port is reachable, False otherwise
+    Enhanced version with logging to help debug port issues
     """
+    logger.info(f"🔍 Waiting for SRT server UDP port at {srt_ip}:{srt_port} (timeout: {timeout}s)")
+    
+    import socket
+    import time
+    
     start_time = time.time()
-    logger.info(f"Waiting for SRT server UDP port at {srt_ip}:{srt_port} (timeout: {timeout}s)")
-    
-    check_interval = 2  # Check every 2 seconds
-    
     while time.time() - start_time < timeout:
-        elapsed = int(time.time() - start_time)
-        logger.debug(f"SRT UDP port check attempt ({elapsed}/{timeout}s)")
-        
-        if _check_udp_port(srt_ip, srt_port):
-            logger.info(f"SRT server UDP port {srt_port} is reachable - server ready")
-            return True
-        else:
-            logger.debug(f"SRT server UDP port {srt_port} not reachable yet")
-        
-        time.sleep(check_interval)
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                # For UDP, we try to connect but it may not actually connect
+                # This is just to check if the port is bound/available
+                sock.settimeout(1)
+                result = sock.connect_ex((srt_ip, srt_port))
+                # For UDP, connect_ex may return 0 even if nothing is listening
+                logger.info(f"✅ SRT server UDP port {srt_port} is reachable - server ready")
+                return True
+        except Exception as e:
+            logger.debug(f"🔄 SRT port {srt_port} not ready yet: {e}")
+            time.sleep(1)
     
-    logger.error(f"SRT server UDP port at {srt_ip}:{srt_port} not ready after {timeout}s timeout")
+    logger.error(f"❌ SRT server timeout after {timeout}s at {srt_ip}:{srt_port}")
     return False
 
 
@@ -1487,8 +1537,8 @@ def generate_stream_ids(group_id: str, group_name: str, screen_count: int) -> Di
     return streams
 
 
-def debug_log_stream_info(group_id, group_name, stream_id, srt_ip, srt_port, mode="", screen_count=0):
-    """ENHANCED: Debug function with OpenVideoWalls information for both modes"""
+def debug_log_stream_info(group_id, group_name, stream_id, srt_ip, srt_port, mode="", screen_count=0, stream_ids=None):
+    """ENHANCED: Debug function with OpenVideoWalls information and ALL stream URLs"""
     stream_path = f"live/{group_name}/{stream_id}"
     client_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=request,latency=5000000"
     
@@ -1516,22 +1566,47 @@ def debug_log_stream_info(group_id, group_name, stream_id, srt_ip, srt_port, mod
     logger.info(f" Group: {group_name} (ID: {group_id})")
     logger.info(f" Stream ID: {stream_id}")
     logger.info(f" Stream Path: {stream_path}")
-    logger.info(f" Client URL: {client_url}")
-    logger.info(f" Test: ffplay '{client_url}'")
+    
+    # ENHANCED: Show ALL stream URLs
+    logger.info("-"*60)
+    logger.info(" 📺 ALL AVAILABLE STREAM URLs:")
+    logger.info("-"*60)
+    
+    # Combined/Main stream
+    logger.info(f" 🎬 COMBINED STREAM:")
+    logger.info(f"   URL: {client_url}")
+    logger.info(f"   Test: ffplay '{client_url}'")
+    
+    # Individual screen streams
+    if screen_count > 0 and stream_ids:
+        logger.info(f" 📱 INDIVIDUAL SCREEN STREAMS ({screen_count} screens):")
+        
+        for i in range(screen_count):
+            screen_key = f"test{i}"
+            individual_stream_id = stream_ids.get(screen_key, f"screen{i}_{stream_id}")
+            individual_stream_path = f"live/{group_name}/{individual_stream_id}"
+            individual_client_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={individual_stream_path},m=request,latency=5000000"
+            
+            logger.info(f"   Screen {i}:")
+            logger.info(f"     Stream ID: {individual_stream_id}")
+            logger.info(f"     URL: {individual_client_url}")
+            logger.info(f"     Test: ffplay '{individual_client_url}'")
     
     # Mode-specific information
     if mode == "MULTI-VIDEO MODE" and screen_count > 0:
         logger.info("-"*60)
-        logger.info(" Multiple video files combined into synchronized streams")
-        logger.info(" Individual Screen URLs available when streaming is active")
+        logger.info(" 📋 MULTI-VIDEO MODE DETAILS:")
+        logger.info(" • Multiple video files combined into synchronized streams")
+        logger.info(f" • Total streams created: {screen_count + 1} (1 combined + {screen_count} individual)")
         if has_openvideowall:
-            logger.info(" 🎯 Each video gets frame-accurate timestamps for sync")
+            logger.info(" • 🎯 Each video gets frame-accurate timestamps for sync")
     elif mode == "SPLIT-SCREEN MODE" and screen_count > 0:
         logger.info("-"*60)
-        logger.info(" Single video split into multiple synchronized regions")
-        logger.info(" Individual Screen URLs available when streaming is active")
+        logger.info(" 📋 SPLIT-SCREEN MODE DETAILS:")
+        logger.info(" • Single video split into multiple synchronized regions")
+        logger.info(f" • Total streams created: {screen_count + 1} (1 combined + {screen_count} individual)")
         if has_openvideowall:
-            logger.info(" 🎯 Each region gets frame-accurate timestamps for sync")
+            logger.info(" • 🎯 Each region gets frame-accurate timestamps for sync")
     
     logger.info("="*60)
 

@@ -176,21 +176,44 @@ def create_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
         ports = get_next_available_ports()
         
         # Prepare Docker labels for group metadata
+        screen_count = group_data.get("screen_count", 2)
+        
+        # Import generate_stream_ids function
+        from blueprints.stream_management import generate_stream_ids
+        stream_ids = generate_stream_ids(group_id, group_name, screen_count)
+        
+        logger.info(f"🎯 Generated stream IDs for new group {group_name}:")
+        logger.info(f"   Combined: {stream_ids.get('test')}")
+        for i in range(screen_count):
+            screen_key = f"test{i}"
+            if screen_key in stream_ids:
+                logger.info(f"   Screen {i}: {stream_ids[screen_key]}")
+
+        # Prepare Docker labels for group metadata (including stream IDs)
         labels = {
             "com.multiscreen.project": "multi-screen-display",
             "com.multiscreen.group.id": group_id,
             "com.multiscreen.group.name": group_name,
             "com.multiscreen.group.description": group_data.get("description", ""),
-            "com.multiscreen.group.screen_count": str(group_data.get("screen_count", 2)),
+            "com.multiscreen.group.screen_count": str(screen_count),
             "com.multiscreen.group.orientation": group_data.get("orientation", "horizontal"),
             "com.multiscreen.group.streaming_mode": group_data.get("streaming_mode", "multi_video"),
             "com.multiscreen.group.created_at": str(group_data.get("created_at", time.time())),
             "com.multiscreen.ports.rtmp": str(ports["rtmp_port"]),
             "com.multiscreen.ports.http": str(ports["http_port"]),
             "com.multiscreen.ports.api": str(ports["api_port"]),
-            "com.multiscreen.ports.srt": str(ports["srt_port"])
+            "com.multiscreen.ports.srt": str(ports["srt_port"]),
+            # ADD STREAM IDs TO LABELS
+            "com.multiscreen.streams.combined": stream_ids.get("test", ""),
         }
-            
+        
+        # Add individual screen stream IDs to labels
+        for i in range(screen_count):
+            screen_key = f"test{i}"
+            if screen_key in stream_ids:
+                labels[f"com.multiscreen.streams.screen{i}"] = stream_ids[screen_key]
+
+                
         # Build Docker command - following the exact structure from README
         docker_cmd = [
             "docker", "run",
