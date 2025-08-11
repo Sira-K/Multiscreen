@@ -8,6 +8,7 @@ import uuid
 import logging
 from typing import Dict, List, Any, Optional
 
+
 logger = logging.getLogger(__name__)
 
 def get_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
@@ -32,22 +33,6 @@ def get_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
         logger.error(f"Error getting group from Docker: {e}")
         return None
 
-def get_persistent_streams_for_group(group_id: str, group_name: str, split_count: int = 4) -> Dict[str, str]:
-    """Generate dynamic stream IDs (not persistent anymore)"""
-    logger.info(f"Generating dynamic stream IDs for group {group_name} (not persistent)")
-    
-    # Generate dynamic stream IDs based on group
-    streams = {}
-    base_id = group_id[:8] if len(group_id) >= 8 else group_id
-    
-    # Main/combined stream
-    streams["test"] = base_id
-    
-    # Individual screen streams  
-    for i in range(split_count):
-        streams[f"test{i}"] = f"{base_id}_{i}"
-    
-    return streams
 
 def check_group_streaming_status(group_id: str, group_name: str) -> bool:
     """Check if streaming is active for a group"""
@@ -141,3 +126,37 @@ def check_screen_availability(client_id: str, group_id: str, screen_number: int,
                 "hostname": other_client.get("hostname", "unknown")
             }
     return True, None
+
+def get_persistent_streams_for_group(group_id: str, group_name: str, split_count: int = 4) -> Dict[str, str]:
+    """Get pre-generated stream IDs from group metadata (always available)"""
+    try:
+        logger.info(f"Getting stream IDs for group {group_name}")
+        
+        # Get group info with pre-generated stream IDs
+        group = get_group_from_docker(group_id)
+        if not group:
+            logger.error(f"Group {group_id} not found")
+            return {}
+        
+        # Get pre-generated stream IDs from group metadata
+        stream_ids = group.get("stream_ids", {})
+        
+        if stream_ids:
+            logger.info(f"✅ Using pre-generated stream IDs from group creation: {stream_ids}")
+            return stream_ids
+        else:
+            logger.warning(f"No pre-generated stream IDs found for group {group_name}")
+            logger.warning(f"Group may have been created with older version")
+            
+            # Fallback: generate them now (for backwards compatibility)
+            from blueprints.stream_management import generate_stream_ids
+            screen_count = group.get("screen_count", 2)
+            fallback_ids = generate_stream_ids(group_id, group_name, screen_count)
+            logger.info(f"Generated fallback stream IDs: {fallback_ids}")
+            return fallback_ids
+        
+    except Exception as e:
+        logger.error(f"Error getting stream IDs: {e}")
+        return {}
+
+    
