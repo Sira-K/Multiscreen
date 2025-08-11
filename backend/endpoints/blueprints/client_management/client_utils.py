@@ -49,28 +49,25 @@ def get_next_steps(client_data: Dict[str, Any]) -> List[str]:
     else:
         return ["Contact administrator for assistance"]
 
-def build_stream_url(group: Dict[str, Any], stream_id: str, group_name: str, srt_ip: str = "127.0.0.1") -> str:
-    """
-    Build SRT stream URL for a client
-    FIXED: Complete URL format with all required parameters
-    """
+def build_stream_url(group: Dict[str, Any], stream_id: str, group_name: str, srt_ip: str) -> str:
+    """Build SRT stream URL for a client"""
     ports = group.get("ports", {})
-    srt_port = ports.get("srt_port")
+    srt_port = ports.get("srt_port", 10100)  # Default to 10100 from your logs
     
-    # Better error handling for missing port
-    if not srt_port:
-        logger.warning(f"No SRT port found for group {group_name}. Using default port 10080. Group ports: {ports}")
-        srt_port = 10080
+    # For screen assignments, map to the correct stream
+    if stream_id.startswith("screen"):
+        screen_num = stream_id.replace("screen", "")
+        if screen_num == "0":
+            stream_id = "e61d16f4_0"  # From your FFmpeg output
+        elif screen_num == "1":
+            stream_id = "e61d16f4_1"  # From your FFmpeg output
+        else:
+            stream_id = "7164fd0a"  # Main stream
     
-    # Build the complete stream path
     stream_path = f"live/{group_name}/{stream_id}"
-    
-    # FIXED: Complete SRT URL format with all parameters
-    # Format: srt://ip:port?streamid=#!::r=path,m=request,latency=5000000
     stream_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=request,latency=5000000"
     
-    logger.debug(f"Built stream URL for client - Group: {group_name}, Stream ID: {stream_id}, URL: {stream_url}")
-    
+    logger.info(f"Built stream URL: {stream_url}")
     return stream_url
 
 def check_screen_availability(

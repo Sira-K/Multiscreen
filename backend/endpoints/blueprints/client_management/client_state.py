@@ -7,6 +7,7 @@ import time
 import threading
 import logging
 from typing import Dict, List, Any, Optional
+from flask import current_app
 
 logger = logging.getLogger(__name__)
 
@@ -97,11 +98,46 @@ class ClientState:
             else:
                 logger.warning(f"Attempted to update non-existent client: {client_id}")
 
+# DON'T create a separate instance - use Flask's app state
 # Global client state instance
-client_state = ClientState()
+# client_state = ClientState()  # REMOVE THIS
 
 def get_state():
-    """Get application state"""
-    if not client_state.initialized:
-        client_state.initialize()
-    return client_state
+    """Get application state from Flask app config"""
+    try:
+        # Get the state from Flask's app config (same as register_client uses)
+        state = current_app.config.get('APP_STATE')
+        
+        # Ensure it has the ClientState methods if it doesn't already
+        # This makes the AppState compatible with ClientState interface
+        if state and not hasattr(state, 'initialized'):
+            # Add the missing methods/attributes if needed
+            if not hasattr(state, 'initialized'):
+                state.initialized = True
+            if not hasattr(state, 'get_client'):
+                state.get_client = lambda client_id: state.clients.get(client_id) if hasattr(state, 'clients') else None
+            if not hasattr(state, 'add_client'):
+                def add_client_method(client_id, client_data):
+                    if hasattr(state, 'clients'):
+                        state.clients[client_id] = client_data
+                state.add_client = add_client_method
+            if not hasattr(state, 'get_all_clients'):
+                state.get_all_clients = lambda: dict(state.clients) if hasattr(state, 'clients') else {}
+            if not hasattr(state, 'remove_client'):
+                def remove_client_method(client_id):
+                    if hasattr(state, 'clients') and client_id in state.clients:
+                        del state.clients[client_id]
+                        return True
+                    return False
+                state.remove_client = remove_client_method
+        
+        return state
+        
+    except RuntimeError:
+        # Outside of Flask request context (e.g., during testing)
+        # Fall back to a local instance for testing only
+        logger.warning("Outside Flask context, using local ClientState instance")
+        if not hasattr(get_state, '_fallback_state'):
+            get_state._fallback_state = ClientState()
+            get_state._fallback_state.initialize()
+        return get_state._fallback_state
