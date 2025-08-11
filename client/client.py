@@ -607,7 +607,7 @@ class UnifiedMultiScreenClient:
             
             print(f"📡 Response received in {network_delay_ms:.1f}ms using {endpoint_used}")
             
-            if response.status_code == 200:
+            if response.status_code in [200, 202]:
                 result = response.json()
                 if result.get("success", True):  # Legacy endpoint doesn't have 'success' field
                     registration_end = time.time()
@@ -696,7 +696,7 @@ class UnifiedMultiScreenClient:
                         timeout=10
                     )
                 
-                if response.status_code != 200:
+                if response.status_code not in [200, 202]:
                     raise Exception(f"HTTP {response.status_code}: {response.text}")
                 
                 data = response.json()
@@ -1025,7 +1025,8 @@ class UnifiedMultiScreenClient:
                     timeout=5
                 )
             
-            if response.status_code == 200:
+            # Accept both 200 and 202 as valid responses
+            if response.status_code in [200, 202]:
                 data = response.json()
                 status = data.get('status')
                 
@@ -1035,10 +1036,13 @@ class UnifiedMultiScreenClient:
                     
                     # Check for meaningful changes
                     url_changed = (new_stream_url and 
-                                 self.current_stream_url and 
-                                 new_stream_url != self.current_stream_url)
+                                self.current_stream_url and 
+                                new_stream_url != self.current_stream_url)
                     
                     version_changed = False
+                    if new_stream_version is not None and self.current_stream_version is not None:
+                        version_changed = (new_stream_version != self.current_stream_version)
+                    
                     if url_changed or version_changed:
                         self.logger.info(f"Stream change detected:")
                         if url_changed:
@@ -1052,9 +1056,29 @@ class UnifiedMultiScreenClient:
                         return True
                     
                 elif status in ["waiting_for_streaming", "group_not_running", "not_registered"]:
+                    # These statuses indicate the stream has stopped
                     self.logger.info(f"Stream stopped on server: {status}")
                     return True
+                
+                # For waiting states (202), no change needed
+                elif response.status_code == 202:
+                    self.logger.debug(f"Stream check: still waiting ({status})")
+                    return False
                     
+            elif response.status_code == 404:
+                # Client not found - may have been unregistered
+                self.logger.warning("Client not found on server during stream check")
+                return True
+                
+            else:
+                # Unexpected status code
+                self.logger.debug(f"Stream check returned unexpected status: {response.status_code}")
+                
+            return False
+            
+        except requests.exceptions.Timeout:
+            # Timeout is not necessarily an error for a quick check
+            self.logger.debug("Stream check timed out - assuming no change")
             return False
             
         except Exception as e:
