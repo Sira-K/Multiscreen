@@ -152,9 +152,12 @@ export const groupApi = {
     try {
       console.log(`🎬 Starting single-stream multi-video for group ${groupId} with ${videoFiles.length} videos`);
       
+      // Extract file paths from the objects
+      const filePathsOnly = videoFiles.map(video => video.file);
+      
       const requestData = {
         group_id: groupId,
-        video_files: videoFiles,
+        video_files: filePathsOnly,  // Now sending simple array of strings
         screen_count: config?.screen_count || videoFiles.length,
         orientation: config?.orientation || 'horizontal',
         output_width: config?.output_width || 1920,
@@ -162,10 +165,13 @@ export const groupApi = {
         grid_rows: config?.grid_rows || 2,
         grid_cols: config?.grid_cols || 2,
         srt_ip: config?.srt_ip || '127.0.0.1',
-        srt_port: config?.srt_port || 10080
+        srt_port: config?.srt_port || 10080,
+        // Optional: Send screen mapping separately if needed
+        screen_mapping: videoFiles  // Keep original structure for reference
       };
 
       console.log('📡 Single-stream multi-video request data:', requestData);
+      console.log('📁 File paths being sent:', filePathsOnly);
 
       const response = await fetch(`${API_BASE_URL}/start_multi_video_srt`, {
         method: 'POST',
@@ -178,7 +184,7 @@ export const groupApi = {
       const result = await handleApiResponse(response, 'POST /start_multi_video_srt');
       console.log('✅ Single-stream multi-video started successfully:', result);
       
-      // ✅ NEW: Process the response to extract useful information
+      // ✅ Process the response to extract useful information
       if (result.stream_info && result.stream_info.crop_information) {
         console.log('📐 Crop information for clients:', result.stream_info.crop_information);
         console.log('📺 Stream URL:', result.stream_info.stream_url);
@@ -260,11 +266,38 @@ export const clientApi = {
 
   async registerClient(clientData: {
     hostname: string;
-    ip_address: string;
+    ip_address?: string;
     display_name?: string;
     platform?: string;
   }) {
     console.log('🔗 Registering client:', clientData);
+    
+    const response = await fetch(`${API_BASE_URL}/api/clients/register`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        hostname: clientData.hostname,
+        ip_address: clientData.ip_address, // Optional - server will use request IP if not provided
+        display_name: clientData.display_name,
+        platform: clientData.platform || 'web'
+      }),
+    });
+
+    const result = await handleApiResponse(response, 'POST /api/clients/register');
+    console.log('✅ Client registered successfully:', result);
+    return result;
+  },
+
+  // Keep legacy method for backward compatibility
+  async registerClientLegacy(clientData: {
+    hostname: string;
+    ip_address: string;
+    display_name?: string;
+    platform?: string;
+  }) {
+    console.log('🔗 Registering client (legacy):', clientData);
     
     const response = await fetch(`${API_BASE_URL}/register_client`, {
       method: 'POST',
@@ -280,12 +313,14 @@ export const clientApi = {
     });
 
     const result = await handleApiResponse(response, 'POST /register_client');
-    console.log('✅ Client registered successfully:', result);
+    console.log('✅ Client registered successfully (legacy):', result);
     return result;
   },
 
-  async waitForStream(clientId: string) {
-    const response = await fetch(`${API_BASE_URL}/wait_for_stream`, {
+  async waitForAssignment(clientId: string) {
+    console.log(`⏳ Waiting for assignment for client: ${clientId}`);
+    
+    const response = await fetch(`${API_BASE_URL}/api/clients/wait_for_assignment`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -296,7 +331,44 @@ export const clientApi = {
       }),
     });
 
-    return await handleApiResponse(response, 'POST /wait_for_stream');
+    return await handleApiResponse(response, 'POST /api/clients/wait_for_assignment');
+  },
+
+  // Keep legacy method for backward compatibility
+  async waitForStream(clientId: string) {
+    // Try new endpoint first, fallback to legacy
+    try {
+      return await this.waitForAssignment(clientId);
+    } catch (error) {
+      console.warn('New endpoint failed, trying legacy:', error);
+      const response = await fetch(`${API_BASE_URL}/wait_for_stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          client_id: clientId,
+          hostname: clientId
+        }),
+      });
+      return await handleApiResponse(response, 'POST /wait_for_stream');
+    }
+  },
+
+  async unregisterClient(clientId: string) {
+    console.log(`🔌 Unregistering client: ${clientId}`);
+    
+    const response = await fetch(`${API_BASE_URL}/api/clients/unregister`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: clientId
+      }),
+    });
+
+    return await handleApiResponse(response, 'POST /api/clients/unregister');
   },
 
   // ===================================
@@ -306,8 +378,16 @@ export const clientApi = {
   async getClients() {
     console.log('📋 Fetching all clients...');
     
-    const response = await fetch(`${API_BASE_URL}/get_clients`);
-    const data = await handleApiResponse(response, 'GET /get_clients');
+    // Try new endpoint first, fallback to legacy
+    let response, data;
+    try {
+      response = await fetch(`${API_BASE_URL}/api/clients/list`);
+      data = await handleApiResponse(response, 'GET /api/clients/list');
+    } catch (error) {
+      console.warn('New endpoint failed, trying legacy:', error);
+      response = await fetch(`${API_BASE_URL}/get_clients`);
+      data = await handleApiResponse(response, 'GET /get_clients');
+    }
     
     console.log('🔍 Raw backend response:', data);
     console.log(`📊 Retrieved ${data.clients?.length || 0} clients`);
@@ -321,7 +401,7 @@ export const clientApi = {
           id: client.client_id,
           client_id: client.client_id,
           hostname: client.hostname,
-          ip_address: client.ip, // ✅ FIXED: Backend sends 'ip', map it to 'ip_address' for frontend consistency
+          ip_address: client.ip_address || client.ip, // Handle both new and old format
           
           // Display info
           display_name: client.display_name || client.hostname,
@@ -329,7 +409,8 @@ export const clientApi = {
           
           // Connection status
           is_active: client.is_active || false,
-          status: client.is_active ? 'active' : 'inactive',
+          status: client.status || (client.is_active ? 'active' : 'inactive'),
+          assignment_status: client.assignment_status || 'unknown', // New field
           last_seen: client.last_seen || 0,
           seconds_ago: client.seconds_ago,
           last_seen_formatted: client.last_seen_formatted || 
@@ -355,59 +436,103 @@ export const clientApi = {
           order: client.order || 0
         };
       }),
-      total_clients: data.total_clients || 0,
-      active_clients: data.active_clients || 0
+      // Handle both new and old response formats
+      total_clients: data.statistics?.total_clients || data.total_clients || 0,
+      active_clients: data.statistics?.active_clients || data.active_clients || 0,
+      assigned_clients: data.statistics?.assigned_clients || 0,
+      screen_assigned_clients: data.statistics?.screen_assigned_clients || 0,
+      statistics: data.statistics || {}
     };
   },
 
   async getClient(clientId: string) {
     console.log(`🔍 Getting client details for: ${clientId}`);
     
-    const response = await fetch(`${API_BASE_URL}/get_client/${encodeURIComponent(clientId)}`);
-    const result = await handleApiResponse(response, `GET /get_client/${clientId}`);
-    
-    console.log(`✅ Retrieved client details:`, result);
-    return result;
+    // Try new endpoint first, fallback to legacy
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/clients/get_client/${encodeURIComponent(clientId)}`);
+      const result = await handleApiResponse(response, `GET /api/clients/get_client/${clientId}`);
+      console.log(`✅ Retrieved client details:`, result);
+      return result;
+    } catch (error) {
+      console.warn('New endpoint failed, trying legacy:', error);
+      const response = await fetch(`${API_BASE_URL}/get_client/${encodeURIComponent(clientId)}`);
+      const result = await handleApiResponse(response, `GET /get_client/${clientId}`);
+      console.log(`✅ Retrieved client details (legacy):`, result);
+      return result;
+    }
   },
 
   // ===================================
   // GROUP ASSIGNMENT
   // ===================================
 
-  async assignClientToGroup(clientId: string, groupId: string) {
+  async assignClientToGroup(clientId: string, groupId: string | null) {
     console.log(`🎯 Assigning client ${clientId} to group ${groupId}`);
     
-    const response = await fetch(`${API_BASE_URL}/assign_client_to_group`, {
+    // Try new endpoint first, fallback to legacy
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/clients/assign_to_group`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          client_id: clientId,
+          group_id: groupId // Can be null to unassign
+        }),
+      });
+
+      const result = await handleApiResponse(response, 'POST /api/clients/assign_to_group');
+      console.log(`✅ Client assigned to group successfully:`, result);
+      return result;
+    } catch (error) {
+      console.warn('New endpoint failed, trying legacy:', error);
+      const response = await fetch(`${API_BASE_URL}/api/clients/assign_to_group`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          client_id: clientId,
+          group_id: groupId
+        }),
+      });
+
+      const result = await handleApiResponse(response, 'POST /api/clients/assign_to_group');
+      console.log(`✅ Client assigned to group successfully (legacy):`, result);
+      return result;
+    }
+  },
+
+  async unassignClientFromGroup(clientId: string) {
+    console.log(`🎯 Unassigning client ${clientId} from group`);
+    
+    return await this.unassignClient(clientId, 'all');
+  },
+
+  // ===================================
+  // STREAM ASSIGNMENT (NEW)
+  // ===================================
+
+  async assignClientToStream(clientId: string, groupId?: string, streamName?: string, srtIp?: string) {
+    console.log(`🎵 Assigning client ${clientId} to stream ${streamName} in group ${groupId}`);
+    
+    const response = await fetch(`${API_BASE_URL}/api/clients/assign_to_stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         client_id: clientId,
-        group_id: groupId
+        group_id: groupId, // Optional if client already in group
+        stream_name: streamName, // Optional - will auto-assign if not provided
+        srt_ip: srtIp || '127.0.0.1'
       }),
     });
 
-    const result = await handleApiResponse(response, 'POST /assign_client_to_group');
-    console.log(`✅ Client assigned to group successfully:`, result);
-    return result;
-  },
-
-  async unassignClientFromGroup(clientId: string) {
-    console.log(`🎯 Unassigning client ${clientId} from group`);
-    
-    const response = await fetch(`${API_BASE_URL}/unassign_client`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        client_id: clientId
-      }),
-    });
-
-    const result = await handleApiResponse(response, 'POST /unassign_client');
-    console.log(`✅ Client unassigned from group:`, result);
+    const result = await handleApiResponse(response, 'POST /api/clients/assign_to_stream');
+    console.log(`✅ Client assigned to stream successfully:`, result);
     return result;
   },
 
@@ -415,10 +540,10 @@ export const clientApi = {
   // SCREEN ASSIGNMENT
   // ===================================
 
-  async assignClientToScreen(clientId: string, groupId: string, screenNumber: number) {
+  async assignClientToScreen(clientId: string, groupId: string, screenNumber: number, srtIp?: string) {
     console.log(`🖥️ Assigning client ${clientId} to screen ${screenNumber} in group ${groupId}`);
     
-    const response = await fetch(`${API_BASE_URL}/assign_client_to_screen`, {
+    const response = await fetch(`${API_BASE_URL}/api/clients/assign_to_screen`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -426,11 +551,12 @@ export const clientApi = {
       body: JSON.stringify({
         client_id: clientId,
         group_id: groupId,
-        screen_number: screenNumber
+        screen_number: screenNumber,
+        srt_ip: srtIp || '127.0.0.1'
       }),
     });
-
-    const result = await handleApiResponse(response, 'POST /assign_client_to_screen');
+    
+    const result = await handleApiResponse(response, 'POST /api/clients/assign_to_screen');
     console.log(`✅ Client assigned to screen successfully:`, result);
     return result;
   },
@@ -438,94 +564,179 @@ export const clientApi = {
   async unassignClientFromScreen(clientId: string) {
     console.log(`🖥️ Unassigning client ${clientId} from screen`);
     
-    const response = await fetch(`${API_BASE_URL}/unassign_client_from_screen`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        client_id: clientId
-      })
-    });
-
-    const result = await handleApiResponse(response, 'POST /unassign_client_from_screen');
-    console.log(`✅ Client unassigned from screen:`, result);
-    return result;
+    return await this.unassignClient(clientId, 'screen');
   },
 
-  async autoAssignScreens(groupId: string) {
+  async autoAssignScreens(groupId: string, srtIp?: string) {
     console.log(`🤖 Auto-assigning screens for group ${groupId}`);
     
-    const response = await fetch(`${API_BASE_URL}/auto_assign_screens`, {
+    // Try new endpoint first, fallback to legacy
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/clients/auto_assign_group`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          group_id: groupId,
+          assignment_type: 'screens',
+          srt_ip: srtIp || '127.0.0.1'
+        }),
+      });
+
+      const result = await handleApiResponse(response, 'POST /api/clients/auto_assign_group');
+      console.log(`✅ Auto-assigned screens:`, result);
+      return result;
+    } catch (error) {
+      console.warn('New endpoint failed, trying legacy:', error);
+      const response = await fetch(`${API_BASE_URL}/auto_assign_screens`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          group_id: groupId 
+        }),
+      });
+
+      const result = await handleApiResponse(response, 'POST /auto_assign_screens');
+      console.log(`✅ Auto-assigned screens (legacy):`, result);
+      return result;
+    }
+  },
+
+  async autoAssignStreams(groupId: string, srtIp?: string) {
+    console.log(`🤖 Auto-assigning streams for group ${groupId}`);
+    
+    const response = await fetch(`${API_BASE_URL}/api/clients/auto_assign_group`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ 
-        group_id: groupId 
+        group_id: groupId,
+        assignment_type: 'streams',
+        srt_ip: srtIp || '127.0.0.1'
       }),
     });
 
-    const result = await handleApiResponse(response, 'POST /auto_assign_screens');
-    console.log(`✅ Auto-assigned screens:`, result);
+    const result = await handleApiResponse(response, 'POST /api/clients/auto_assign_group');
+    console.log(`✅ Auto-assigned streams:`, result);
     return result;
   },
 
   async getScreenAssignments(groupId: string) {
     console.log(`📋 Getting screen assignments for group ${groupId}`);
     
-    const response = await fetch(`${API_BASE_URL}/get_screen_assignments?group_id=${encodeURIComponent(groupId)}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      }
-    });
+    // Try legacy endpoint first (might still be available)
+    try {
+      const response = await fetch(`${API_BASE_URL}/get_screen_assignments?group_id=${encodeURIComponent(groupId)}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
 
-    const result = await handleApiResponse(response, 'GET /get_screen_assignments');
-    console.log(`✅ Retrieved screen assignments:`, result);
-    return result;
+      const result = await handleApiResponse(response, 'GET /get_screen_assignments');
+      console.log(`✅ Retrieved screen assignments:`, result);
+      return result;
+    } catch (error) {
+      // Fallback: get clients and filter by group
+      console.warn('Legacy endpoint failed, filtering clients by group:', error);
+      const clients = await this.getClients();
+      const groupClients = clients.clients.filter(client => client.group_id === groupId);
+      
+      return {
+        group_id: groupId,
+        assignments: groupClients.map(client => ({
+          client_id: client.client_id,
+          screen_number: client.screen_number,
+          display_name: client.display_name
+        }))
+      };
+    }
+  },
+
+  // ===================================
+  // GENERIC UNASSIGNMENT (NEW)
+  // ===================================
+
+  async unassignClient(clientId: string, unassignType: 'all' | 'stream' | 'screen' = 'all') {
+    console.log(`🎯 Unassigning client ${clientId} (type: ${unassignType})`);
+    
+    // Try new endpoint first, fallback to legacy
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/clients/unassign_client`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          client_id: clientId,
+          unassign_type: unassignType
+        }),
+      });
+
+      const result = await handleApiResponse(response, 'POST /api/clients/unassign_client');
+      console.log(`✅ Client unassigned (${unassignType}):`, result);
+      return result;
+    } catch (error) {
+      console.warn('New endpoint failed, trying legacy:', error);
+      
+      // Map to appropriate legacy endpoint
+      if (unassignType === 'screen') {
+        const response = await fetch(`${API_BASE_URL}/unassign_client_from_screen`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            client_id: clientId
+          })
+        });
+        return await handleApiResponse(response, 'POST /unassign_client_from_screen');
+      } else {
+        // Default to full unassign
+        const response = await fetch(`${API_BASE_URL}/unassign_client`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            client_id: clientId
+          }),
+        });
+        return await handleApiResponse(response, 'POST /unassign_client');
+      }
+    }
   },
 
   // ===================================
   // CLIENT MANAGEMENT
   // ===================================
 
-  async renameClient(clientId: string, displayName: string) {
-    console.log(`✏️ Renaming client ${clientId} to "${displayName}"`);
+  async removeClient(clientId: string) {
+    console.log(`🗑️ Removing client ${clientId} from system`);
     
-    const response = await fetch(`${API_BASE_URL}/rename_client`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        client_id: clientId,
-        display_name: displayName
-      }),
-    });
+    // Try new endpoint first, fallback to legacy
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/clients/remove_client`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          client_id: clientId
+        }),
+      });
 
-    const result = await handleApiResponse(response, 'POST /rename_client');
-    console.log(`✅ Client renamed successfully:`, result);
-    return result;
-  },
-
-  async moveClient(clientId: string, direction: 'up' | 'down') {
-    console.log(`↕️ Moving client ${clientId} ${direction}`);
-    
-    const response = await fetch(`${API_BASE_URL}/move_client`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        client_id: clientId,
-        direction: direction
-      }),
-    });
-
-    const result = await handleApiResponse(response, 'POST /move_client');
-    console.log(`✅ Client moved ${direction}:`, result);
-    return result;
+      const result = await handleApiResponse(response, 'POST /api/clients/remove_client');
+      console.log(`✅ Client removed:`, result);
+      return result;
+    } catch (error) {
+      console.warn('New endpoint failed, trying legacy:', error);
+      return await this.deleteClient(clientId);
+    }
   },
 
   async deleteClient(clientId: string) {
@@ -546,11 +757,72 @@ export const clientApi = {
     return result;
   },
 
+  // These methods don't exist in new backend - kept for compatibility
+  async renameClient(clientId: string, displayName: string) {
+    console.log(`✏️ Renaming client ${clientId} to "${displayName}"`);
+    
+    // Try legacy endpoint
+    try {
+      const response = await fetch(`${API_BASE_URL}/rename_client`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          client_id: clientId,
+          display_name: displayName
+        }),
+      });
+
+      const result = await handleApiResponse(response, 'POST /rename_client');
+      console.log(`✅ Client renamed successfully:`, result);
+      return result;
+    } catch (error) {
+      console.warn('⚠️ renameClient not implemented in new backend');
+      return {
+        success: false,
+        message: 'Rename functionality not available in new backend structure'
+      };
+    }
+  },
+
+  async moveClient(clientId: string, direction: 'up' | 'down') {
+    console.log(`↕️ Moving client ${clientId} ${direction}`);
+    
+    // Try legacy endpoint
+    try {
+      const response = await fetch(`${API_BASE_URL}/move_client`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          client_id: clientId,
+          direction: direction
+        }),
+      });
+
+      const result = await handleApiResponse(response, 'POST /move_client');
+      console.log(`✅ Client moved ${direction}:`, result);
+      return result;
+    } catch (error) {
+      console.warn('⚠️ moveClient not implemented in new backend');
+      return {
+        success: false,
+        message: 'Move functionality not available in new backend structure'
+      };
+    }
+  },
+
   // ===================================
   // CLIENT POLLING & STREAMING
   // ===================================
 
-  async startClientPolling(clientId: string, onStreamReady: (streamData: any) => void, onStatusUpdate?: (status: any) => void) {
+  async startClientPolling(
+    clientId: string, 
+    onStreamReady: (streamData: any) => void, 
+    onStatusUpdate?: (status: any) => void
+  ) {
     console.log(`🔄 Starting polling for client ${clientId}`);
     
     const pollInterval = 3000; // Poll every 3 seconds
@@ -566,7 +838,8 @@ export const clientApi = {
           return;
         }
         
-        const result = await this.waitForStream(clientId);
+        // Use new waitForAssignment method
+        const result = await this.waitForAssignment(clientId);
         
         // Notify status update callback
         if (onStatusUpdate) {
@@ -588,7 +861,7 @@ export const clientApi = {
           console.error(`❌ Client ${clientId} not registered - stopping polling`);
           return; // Stop polling
         } else {
-          console.log(`⏳ Client ${clientId}: ${result.message}`);
+          console.log(`⏳ Client ${clientId}: ${result.message || result.status}`);
           setTimeout(poll, pollInterval); // Continue polling
         }
       } catch (error) {
@@ -604,32 +877,57 @@ export const clientApi = {
   },
 
   // ===================================
-  // UTILITY FUNCTIONS
+  // HEALTH & STATUS
   // ===================================
 
-  async ping() {
+  async getHealthStatus() {
     try {
-      const response = await fetch(`${API_BASE_URL}/ping`);
-      const result = await handleApiResponse(response, 'GET /ping');
-      return { success: true, ...result };
+      const response = await fetch(`${API_BASE_URL}/api/clients/health`);
+      const result = await handleApiResponse(response, 'GET /api/clients/health');
+      return result;
     } catch (error) {
-      console.error('❌ Server ping failed:', error);
+      console.error('❌ Health check failed:', error);
       return { success: false, error: error.message };
     }
   },
 
-  async getServerStatus() {
+  // ===================================
+  // UTILITY FUNCTIONS
+  // ===================================
+
+  async ping() {
+    // Try new health endpoint first, fallback to legacy
     try {
-      const response = await fetch(`${API_BASE_URL}/status`);
-      const result = await handleApiResponse(response, 'GET /status');
-      return result;
+      const healthResult = await this.getHealthStatus();
+      return { success: healthResult.success, ...healthResult };
     } catch (error) {
-      console.error('❌ Failed to get server status:', error);
-      throw error;
+      try {
+        const response = await fetch(`${API_BASE_URL}/ping`);
+        const result = await handleApiResponse(response, 'GET /ping');
+        return { success: true, ...result };
+      } catch (legacyError) {
+        console.error('❌ Server ping failed:', error);
+        return { success: false, error: error.message };
+      }
+    }
+  },
+
+  async getServerStatus() {
+    // Try new health endpoint first, fallback to legacy
+    try {
+      return await this.getHealthStatus();
+    } catch (error) {
+      try {
+        const response = await fetch(`${API_BASE_URL}/status`);
+        const result = await handleApiResponse(response, 'GET /status');
+        return result;
+      } catch (legacyError) {
+        console.error('❌ Failed to get server status:', error);
+        throw error;
+      }
     }
   }
 };
-
 
 export const videoApi = {
   async getVideos() {
