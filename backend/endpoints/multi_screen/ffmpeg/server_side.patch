@@ -1,0 +1,101 @@
+diff --git a/libavcodec/h264_metadata_bsf.c b/libavcodec/h264_metadata_bsf.c
+index 39b9e8eee4..2a0a2cb718 100644
+--- a/libavcodec/h264_metadata_bsf.c
++++ b/libavcodec/h264_metadata_bsf.c
+@@ -20,6 +20,7 @@
+ #include "libavutil/display.h"
+ #include "libavutil/common.h"
+ #include "libavutil/opt.h"
++#include "libavutil/time.h"
+
+ #include "bsf.h"
+ #include "bsf_internal.h"
+@@ -493,6 +494,9 @@ static int h264_metadata_update_fragment(AVBSFContext *bsf, AVPacket *pkt,
+         }
+     }
+
++    // this is the UUID we defined for ts
++    static const uint8_t TS_UUID[] = {0x68, 0x1D, 0x5C, 0x8F, 0x80, 0xCD, 0x48, 0x47, 0x93, 0x0A, 0x99, 0xB9, 0x48, 0x4B, 0x4A, 0x32};
++
+     if (pkt) {
+         // The current packet should be treated as a seek point for metadata
+         // insertion if any of:
+@@ -501,11 +505,25 @@ static int h264_metadata_update_fragment(AVBSFContext *bsf, AVPacket *pkt,
+         // - It is marked as containing a key frame.
+         seek_point = !ctx->done_first_au || has_sps ||
+             (pkt->flags & AV_PKT_FLAG_KEY);
++        seek_point = seek_point || !memcmp(ctx->sei_user_data_payload.uuid_iso_iec_11578, TS_UUID, 16 * sizeof(uint8_t));
+     } else {
+         seek_point = 0;
+     }
+
+     if (ctx->sei_user_data && seek_point) {
++        // TODO: if UUID is ours, put timestamp into payload
++        if (!memcmp(ctx->sei_user_data_payload.uuid_iso_iec_11578, TS_UUID, 16 * sizeof(uint8_t)))
++        {
++            char prefix[] = "timestamp: ";
++            int64_t timestamp = av_gettime();
++            char *payload = malloc(128 * sizeof(char));
++            sprintf(payload, "%s%ld", prefix, timestamp);
++
++//            if (ctx->sei_user_data_payload.data) free(ctx->sei_user_data_payload.data);
++            ctx->sei_user_data_payload.data = (uint8_t *) payload;
++            ctx->sei_user_data_payload.data_length = strlen(payload) + 1;
++        }
++
+         err = ff_cbs_sei_add_message(ctx->common.output, au, 1,
+                                      SEI_TYPE_USER_DATA_UNREGISTERED,
+                                      &ctx->sei_user_data_payload, NULL);
+diff --git a/fftools/ffplay.c b/fftools/ffplay.c
+index d8c69e10bc..462ea3714b 100644
+--- a/fftools/ffplay.c
++++ b/fftools/ffplay.c
+@@ -1561,6 +1561,7 @@ static void video_refresh(void *opaque, double *remaining_time)
+ {
+     VideoState *is = opaque;
+     double time;
++    double print_pts = 0.0;
+
+     Frame *sp, *sp2;
+
+@@ -1614,8 +1615,10 @@ retry:
+                 is->frame_timer = time;
+
+             SDL_LockMutex(is->pictq.mutex);
+-            if (!isnan(vp->pts))
++            if (!isnan(vp->pts)) {
+                 update_video_pts(is, vp->pts, vp->serial);
++                print_pts = vp->pts;
++            }
+             SDL_UnlockMutex(is->pictq.mutex);
+
+             if (frame_queue_nb_remaining(&is->pictq) > 1) {
+@@ -1682,7 +1685,7 @@ display:
+         double av_diff;
+
+         cur_time = av_gettime_relative();
+-        if (!last_time || (cur_time - last_time) >= 30000) {
++        if (!last_time || (cur_time - last_time) >= 3000) {
+             aqsize = 0;
+             vqsize = 0;
+             sqsize = 0;
+@@ -1702,7 +1705,7 @@ display:
+
+             av_bprint_init(&buf, 0, AV_BPRINT_SIZE_AUTOMATIC);
+             av_bprintf(&buf,
+-                      "%7.2f %s:%7.3f fd=%4d aq=%5dKB vq=%5dKB sq=%5dB f=%"PRId64"/%"PRId64"   \r",
++                      "%7.2f %s:%7.3f fd=%4d aq=%5dKB vq=%5dKB sq=%5dB f=%"PRId64"/%"PRId64"  c_t %"PRId64" pts %7.2f \n",
+                       get_master_clock(is),
+                       (is->audio_st && is->video_st) ? "A-V" : (is->video_st ? "M-V" : (is->audio_st ? "M-A" : "   ")),
+                       av_diff,
+@@ -1711,7 +1714,9 @@ display:
+                       vqsize / 1024,
+                       sqsize,
+                       is->video_st ? is->viddec.avctx->pts_correction_num_faulty_dts : 0,
+-                      is->video_st ? is->viddec.avctx->pts_correction_num_faulty_pts : 0);
++                      is->video_st ? is->viddec.avctx->pts_correction_num_faulty_pts : 0,
++                      av_gettime(),
++                      print_pts);
+
+             if (show_status == 1 && AV_LOG_INFO > av_log_get_level())
+                 fprintf(stderr, "%s", buf.str);
