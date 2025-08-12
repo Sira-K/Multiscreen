@@ -16,25 +16,45 @@ from .client_utils import get_group_from_docker, format_time_ago
 logger = logging.getLogger(__name__)
 
 def list_clients():
-    """Get all registered clients with enhanced information"""
+    """List all registered clients with detailed information"""
     try:
         state = get_state()
+        if not state:
+            logger.warning("State not available, returning empty client list")
+            return jsonify({
+                "success": True,
+                "clients": [],
+                "statistics": {
+                    "total_clients": 0,
+                    "active_clients": 0,
+                    "assigned_clients": 0,
+                    "screen_assigned_clients": 0,
+                    "groups_available": 0
+                },
+                "timestamp": time.time()
+            }), 200
         
-        # Get groups info for enrichment
+        # Get group information from Docker
         groups_info = {}
         try:
-            from blueprints.docker_management import discover_groups
-            discovery_result = discover_groups()
-            if discovery_result.get("success", False):
-                for group in discovery_result.get("groups", []):
-                    groups_info[group.get("id")] = group
+            from ..docker_management import get_all_groups
+            groups = get_all_groups()
+            for group in groups:
+                groups_info[group.get("id")] = group
         except Exception as e:
             logger.warning(f"Could not get group info: {e}")
         
         current_time = time.time()
         clients_list = []
         
-        all_clients = state.get_all_clients()
+        # Check if state has the required methods
+        if hasattr(state, 'get_all_clients'):
+            all_clients = state.get_all_clients()
+        elif hasattr(state, 'clients'):
+            all_clients = state.clients
+        else:
+            logger.warning("State has no client methods, returning empty list")
+            all_clients = {}
         
         for client_id, client_data in all_clients.items():
             # Calculate activity status
@@ -108,7 +128,22 @@ def get_client_details(client_id: str):
     """Get detailed information about a specific client"""
     try:
         state = get_state()
-        client = state.get_client(client_id)
+        if not state:
+            return jsonify({
+                "success": False,
+                "error": "Client state not available"
+            }), 500
+        
+        # Check if state has the required methods
+        if hasattr(state, 'get_client'):
+            client = state.get_client(client_id)
+        elif hasattr(state, 'clients'):
+            client = state.clients.get(client_id)
+        else:
+            return jsonify({
+                "success": False,
+                "error": "Client state not available"
+            }), 500
         
         if not client:
             return jsonify({

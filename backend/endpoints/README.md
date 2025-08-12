@@ -1,71 +1,116 @@
-# Multi-Screen SRT Control Server - Refactored
+# Multi-Screen Video Streaming Server
 
-This repository contains a Flask-based server for controlling multi-screen SRT (Secure Reliable Transport) video streaming. The application has been refactored to use Flask Blueprints for better code organization and maintainability.
+A clean, simple Flask-based server for managing multi-screen video streaming with SRT protocol.
 
-## Project Structure
+## 🏗️ Architecture
 
-The project is organized as follows:
+The server follows a clean, service-oriented architecture:
 
 ```
-srt_control_server/
-├── app.py                    # Application entry point
-├── config.py                 # Configuration management
-├── models/
-│   └── app_state.py          # Application state model
-├── utils/
-│   ├── __init__.py
-│   ├── video_utils.py        # Video processing utilities
-│   └── ffmpeg_utils.py       # FFmpeg command building utilities
-├── blueprints/
-│   ├── __init__.py
-│   ├── screen_management.py  # Screen and network endpoints
-│   ├── docker_management.py  # Docker container endpoints
-│   ├── stream_management.py  # SRT stream endpoints
-│   └── client_management.py  # Client registration and management endpoints
-├── static/                   # Static files (if any)
-│   └── ...
-├── templates/                # HTML templates (if any)
-│   └── ...
-└── uploads/                  # Directory for uploaded videos
-    └── ...
+endpoints/
+├── services/           # Business logic services
+│   ├── stream_manager.py      # Core stream operations
+│   ├── stream_controller.py   # Start/stop control
+│   ├── stream_validator.py    # Input validation
+│   ├── stream_builder.py      # FFmpeg commands
+│   ├── docker_service.py      # Docker discovery
+│   ├── ffmpeg_service.py      # FFmpeg utilities
+│   └── srt_service.py         # SRT connection testing
+├── blueprints/         # Flask route handlers
+│   ├── clean_stream_routes.py # New clean routes
+│   ├── stream_management.py   # Legacy routes
+│   ├── docker_management.py   # Docker operations
+│   ├── video_management.py    # Video operations
+│   ├── group_management.py    # Group operations
+│   └── client_management.py   # Client operations
+├── uploads/            # Video file storage
+├── app_config.py       # Configuration management
+├── flask_app.py        # Main Flask application
+└── README.md           # This file
 ```
 
-## Features
+## 🚀 Quick Start
 
-- Configure multiple screens with different orientations (horizontal/vertical)
-- Manage Docker containers for SRT streaming
-- Control FFmpeg processes for video stream splitting
-- Client registration and management
-- Upload and process video files
+### 1. Start the Server
+```bash
+cd endpoints
+python3 flask_app.py
+```
 
-## API Endpoints
+### 2. Start Split-Screen Streaming
+```bash
+curl -X POST http://localhost:5000/start_split_screen \
+  -H "Content-Type: application/json" \
+  -d '{
+    "group_id": "your-group-id",
+    "video_file": "video.mp4",
+    "orientation": "horizontal"
+  }'
+```
 
-### Screen Management
-- `POST /set_screen_ips` - Configure screen count, IPs, and orientation
+### 3. Start Multi-Video Streaming
+```bash
+curl -X POST http://localhost:5000/start_multi_video \
+  -H "Content-Type: application/json" \
+  -d '{
+    "group_id": "your-group-id",
+    "video_files": ["video1.mp4", "video2.mp4"],
+    "layout": "grid"
+  }'
+```
 
-### Docker Management
-- `POST /start_docker` - Start the SRT Docker container
-- `POST /stop_docker` - Stop the SRT Docker container
+### 4. Stop Streaming
+```bash
+curl -X POST http://localhost:5000/stop_stream \
+  -H "Content-Type: application/json" \
+  -d '{"group_id": "your-group-id"}'
+```
+
+## 🔧 Configuration
+
+Edit `app_config.json` to customize:
+
+- **Server settings** (host, port, debug)
+- **File settings** (upload folder, max file size, allowed extensions)
+- **Streaming settings** (default framerate, bitrate, SRT parameters)
+
+## 📡 API Endpoints
 
 ### Stream Management
-- `POST /start_srt` - Start SRT stream using FFmpeg
-- `POST /stop_srt` - Stop the running FFmpeg process
-- `POST /upload_video` - Upload and validate a video file
+- `POST /start_split_screen` - Start split-screen streaming
+- `POST /start_multi_video` - Start multi-video streaming
+- `POST /stop_stream` - Stop streaming for a group
+- `GET /stream_status/<group_id>` - Get streaming status
 
-### Client Management
-- `POST /register_client` - Register a client device with the server
-- `POST /client_status` - Check what stream a client should be displaying
-- `GET /get_clients` - Get a list of all registered clients
-- `POST /assign_stream` - Assign a specific stream to a client
-- `POST /rename_client` - Rename a client for easier identification
+### System
+- `GET /` - API information
+- `GET /health` - Health check
 
-## Installation
+## 🎯 Features
 
-1. Clone the repository
-2. Install dependencies: `pip install flask flask-cors psutil`
-3. Ensure FFmpeg is installed on your system
-4. Run the application: `python app.py`
+- **Split-Screen Streaming** - Single video split into multiple regions
+- **Multi-Video Streaming** - Multiple videos combined into one stream
+- **SRT Protocol** - Low-latency video streaming
+- **Docker Integration** - Automatic group discovery
+- **FFmpeg Integration** - Advanced video processing
+- **Clean Architecture** - Easy to maintain and extend
 
-## Usage
+## 🧹 Code Quality
 
-The server will start on port 5000 by default. You can interact with it using HTTP requests to the various endpoints.
+- **Single Responsibility** - Each class has one clear purpose
+- **Clean Interfaces** - Simple, consistent method signatures
+- **Error Handling** - Consistent error responses
+- **Type Hints** - Better code understanding
+- **Logging** - Comprehensive operation logging
+
+## 🔄 Migration
+
+The server maintains backward compatibility with existing routes while providing new, cleaner endpoints. You can gradually migrate from old routes to new ones.
+
+## 📝 Requirements
+
+- Python 3.7+
+- FFmpeg
+- Docker (for group discovery)
+- Flask
+- psutil

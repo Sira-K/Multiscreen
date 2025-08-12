@@ -1,19 +1,22 @@
 """
 Client Management Module
-Split into multiple files for better organization
+Simple initialization with CORS support
 """
 
-from .client_blueprint import client_bp
-from .client_state import ClientState, get_state  # Import get_state instead of client_state
-from .client_validators import validate_client_registration
-from .client_utils import get_group_from_docker, get_persistent_streams_for_group, format_time_ago
+from flask import Blueprint
+from flask_cors import CORS
 
-__all__ = [
-    'client_bp',
-    'ClientState', 
-    'get_state',  # Export get_state function instead of client_state instance
-    'validate_client_registration',
-    'get_group_from_docker',
-    'get_persistent_streams_for_group',
-    'format_time_ago'
-]
+# Import the main client blueprint
+from .client_blueprint import client_bp
+
+# Enable CORS for client management
+CORS(client_bp, resources={
+    r"/*": {
+        "origins": ["*"],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+        "supports_credentials": True
+    }
+})
+
+__all__ = ['client_bp']

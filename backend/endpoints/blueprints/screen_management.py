@@ -1,7 +1,14 @@
 from flask import Blueprint, request, jsonify
 import logging
 import traceback
-from app_config import save_config
+try:
+    from ..app_config import save_config
+except ImportError:
+    # Fallback for when running from top level
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from app_config import save_config
 
 # Get current application state from app context
 def get_state():

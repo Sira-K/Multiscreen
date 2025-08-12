@@ -18,6 +18,12 @@ def assign_client_to_group():
         logger.info("==== ASSIGN CLIENT TO GROUP REQUEST ====")
         
         state = get_state()
+        if not state:
+            return jsonify({
+                "success": False,
+                "error": "Client state not available"
+            }), 500
+        
         data = request.get_json()
         
         # Validate input
@@ -118,6 +124,12 @@ def assign_client_to_stream():
         logger.info("==== ASSIGN CLIENT TO STREAM REQUEST ====")
         
         state = get_state()
+        if not state:
+            return jsonify({
+                "success": False,
+                "error": "Client state not available"
+            }), 500
+        
         data = request.get_json() or {}
         
         # Import validation function
@@ -137,12 +149,16 @@ def assign_client_to_stream():
         srt_ip = cleaned_data.get("srt_ip", "127.0.0.1")
         
         # Get client
-        client = state.get_client(client_id)
-        if not client:
+        if not hasattr(state, 'clients'):
+            state.clients = {}
+        
+        if client_id not in state.clients:
             return jsonify({
                 "success": False,
                 "error": f"Client {client_id} not found"
             }), 404
+        
+        client = state.clients[client_id]
         
         # Get group
         group = get_group_from_docker(group_id)
@@ -175,7 +191,7 @@ def assign_client_to_stream():
         if not stream_name:
             # Auto-select based on round-robin
             assigned_streams = []
-            all_clients = state.get_all_clients()
+            all_clients = state.clients if hasattr(state, 'clients') else {}
             for other_client in all_clients.values():
                 if (other_client.get("group_id") == group_id and 
                     other_client.get("stream_assignment")):
@@ -208,7 +224,12 @@ def assign_client_to_stream():
             "assignment_status": "stream_assigned",
             "screen_number": None  # Clear screen assignment if using streams
         })
-        state.add_client(client_id, client)
+        
+        # Save the updated client
+        if hasattr(state, 'add_client'):
+            state.add_client(client_id, client)
+        else:
+            state.clients[client_id] = client
         
         logger.info(f"✅ Assigned client {client_id} to stream {stream_name} in group {group_id}")
         logger.info(f"   Stream URL: {stream_url}")
@@ -241,6 +262,12 @@ def assign_client_to_screen():
         logger.info("==== ASSIGN CLIENT TO SCREEN REQUEST ====")
         
         state = get_state()
+        if not state:
+            return jsonify({
+                "success": False,
+                "error": "Client state not available"
+            }), 500
+        
         data = request.get_json() or {}
         
         # Import validation function
@@ -266,12 +293,16 @@ def assign_client_to_screen():
             }), 400
         
         # Get client
-        client = state.get_client(client_id)
-        if not client:
+        if not hasattr(state, 'clients'):
+            state.clients = {}
+        
+        if client_id not in state.clients:
             return jsonify({
                 "success": False,
                 "error": f"Client {client_id} not found"
             }), 404
+        
+        client = state.clients[client_id]
         
         # Get group
         group = get_group_from_docker(group_id)
@@ -299,7 +330,7 @@ def assign_client_to_screen():
             }), 400
         
         # Check if screen is already taken
-        all_clients = state.get_all_clients()
+        all_clients = state.clients if hasattr(state, 'clients') else {}
         is_available, conflict = check_screen_availability(
             client_id, group_id, screen_number, all_clients
         )
@@ -325,7 +356,12 @@ def assign_client_to_screen():
         
         # Update client using state method
         client.update(client_data)
-        state.add_client(client_id, client)
+        
+        # Save the updated client
+        if hasattr(state, 'add_client'):
+            state.add_client(client_id, client)
+        else:
+            state.clients[client_id] = client
         
         logger.info(f"✅ Assigned client {client_id} to screen {screen_number} in group {group_name}")
         logger.info(f"   Client will receive stream URL when streaming starts")
@@ -362,25 +398,50 @@ def unassign_client():
         logger.info("==== UNASSIGN CLIENT REQUEST ====")
         
         state = get_state()
-        data = request.get_json() or {}
-        
-        # Validate input
-        is_valid, error_msg, cleaned_data = validate_unassignment(data)
-        if not is_valid:
+        if not state:
+            logger.error("❌ Failed to get application state")
             return jsonify({
                 "success": False,
-                "error": error_msg
+                "error": "Application state not available"
+            }), 500
+        
+        data = request.get_json() or {}
+        logger.info(f"📝 Unassignment request data: {data}")
+        
+        # Extract and validate required fields
+        client_id = data.get("client_id")
+        unassign_type = data.get("unassign_type", "all")
+        
+        if not client_id:
+            logger.error("❌ Validation failed: client_id is required")
+            return jsonify({
+                "success": False,
+                "error": "client_id is required"
             }), 400
         
-        client_id = cleaned_data["client_id"]
-        unassign_type = cleaned_data["unassign_type"]
+        if unassign_type not in ["all", "stream", "screen"]:
+            logger.error(f"❌ Validation failed: invalid unassign_type: {unassign_type}")
+            return jsonify({
+                "success": False,
+                "error": f"Invalid unassign_type: {unassign_type}. Must be 'all', 'stream', or 'screen'"
+            }), 400
         
-        client = state.get_client(client_id)
-        if not client:
+        logger.info(f"🔍 Looking for client: {client_id}")
+        
+        # Check if state has clients attribute
+        if not hasattr(state, 'clients'):
+            state.clients = {}
+        
+        if client_id not in state.clients:
+            logger.error(f"❌ Client {client_id} not found in state")
             return jsonify({
                 "success": False,
                 "error": "Client not found"
             }), 404
+        
+        client = state.clients[client_id]
+        
+        logger.info(f"✅ Found client {client_id}: {client}")
         
         old_assignments = {
             "group_id": client.get("group_id"),
@@ -388,6 +449,8 @@ def unassign_client():
             "screen_number": client.get("screen_number"),
             "assignment_status": client.get("assignment_status")
         }
+        
+        logger.info(f"📋 Old assignments: {old_assignments}")
         
         if unassign_type == "all":
             # Clear all assignments
@@ -400,14 +463,35 @@ def unassign_client():
                 "assigned_at": None,
                 "unassigned_at": time.time()
             })
+            logger.info(f"🗑️ Cleared all assignments for client {client_id}")
         elif unassign_type == "stream":
             # Clear stream assignment but keep group
+            old_stream = client.get("stream_assignment")
+            old_screen = client.get("screen_number")
+            
+            # Clear stream-related assignments
             client.update({
                 "stream_assignment": None,
                 "stream_url": None,
-                "assignment_status": "group_assigned" if client.get("group_id") else "waiting_for_assignment",
                 "unassigned_at": time.time()
             })
+            
+            # Determine new assignment status
+            if client.get("group_id"):
+                if old_screen is not None:
+                    # Client still has screen assignment
+                    client["assignment_status"] = "screen_assigned"
+                    logger.info(f"🗑️ Cleared stream assignment for client {client_id}, kept screen assignment")
+                else:
+                    # Client only had stream assignment, now just group
+                    client["assignment_status"] = "group_assigned"
+                    logger.info(f"🗑️ Cleared stream assignment for client {client_id}, now group_assigned")
+            else:
+                # No group, back to waiting
+                client["assignment_status"] = "waiting_for_assignment"
+                logger.info(f"🗑️ Cleared stream assignment for client {client_id}, now waiting_for_assignment")
+            
+            logger.info(f"🗑️ Cleared stream assignment for client {client_id} (was: {old_stream})")
         elif unassign_type == "screen":
             # Clear screen assignment but keep group
             client.update({
@@ -417,10 +501,25 @@ def unassign_client():
                 "assignment_status": "group_assigned" if client.get("group_id") else "waiting_for_assignment",
                 "unassigned_at": time.time()
             })
+            logger.info(f"🗑️ Cleared screen assignment for client {client_id}")
         
-        state.add_client(client_id, client)
+        # Save the updated client
+        if hasattr(state, 'add_client'):
+            state.add_client(client_id, client)
+            logger.info(f"💾 Client {client_id} updated in state")
+        else:
+            logger.warning(f"⚠️ State object doesn't have add_client method, using direct assignment")
+            if hasattr(state, 'clients'):
+                state.clients[client_id] = client
+            else:
+                logger.error(f"❌ State object doesn't have clients attribute")
+                return jsonify({
+                    "success": False,
+                    "error": "Invalid state object - missing clients attribute"
+                }), 500
         
-        logger.info(f"Unassigned client {client_id} ({unassign_type})")
+        logger.info(f"✅ Successfully unassigned client {client_id} ({unassign_type})")
+        logger.info(f"📋 New client state: {client}")
         
         return jsonify({
             "success": True,
@@ -466,13 +565,18 @@ def remove_client():
             }), 400
         
         state = get_state()
-        client = state.get_client(client_id)
         
-        if not client:
+        # Check if state has clients attribute
+        if not hasattr(state, 'clients'):
+            state.clients = {}
+        
+        if client_id not in state.clients:
             return jsonify({
                 "success": False,
                 "error": f"Client '{client_id}' not found"
             }), 404
+        
+        client = state.clients[client_id]
         
         client_name = client.get('display_name') or client.get('hostname') or client_id
         
@@ -509,6 +613,12 @@ def auto_assign_group_clients():
         logger.info("==== AUTO-ASSIGN GROUP CLIENTS REQUEST ====")
         
         state = get_state()
+        if not state:
+            return jsonify({
+                "success": False,
+                "error": "Client state not available"
+            }), 500
+        
         data = request.get_json() or {}
         
         group_id = data.get("group_id", "").strip()
@@ -546,7 +656,7 @@ def auto_assign_group_clients():
             group["ports"]["srt_port"] = 10080
         
         # Find unassigned clients in this group
-        all_clients = state.get_all_clients()
+        all_clients = state.clients if hasattr(state, 'clients') else {}
         unassigned_clients = []
         
         for client_id, client in all_clients.items():
@@ -582,7 +692,12 @@ def auto_assign_group_clients():
                     "assigned_at": time.time(),
                     "assignment_status": "screen_assigned"
                 })
-                state.add_client(client["client_id"], client)
+                
+                # Save the updated client
+                if hasattr(state, 'add_client'):
+                    state.add_client(client["client_id"], client)
+                else:
+                    state.clients[client["client_id"]] = client
                 
                 assignments.append({
                     "client_id": client["client_id"],
@@ -622,7 +737,12 @@ def auto_assign_group_clients():
                     "assignment_status": "stream_assigned",
                     "screen_number": None  # Clear screen assignment
                 })
-                state.add_client(client["client_id"], client)
+                
+                # Save the updated client
+                if hasattr(state, 'add_client'):
+                    state.add_client(client["client_id"], client)
+                else:
+                    state.clients[client["client_id"]] = client
                 
                 assignments.append({
                     "client_id": client["client_id"],

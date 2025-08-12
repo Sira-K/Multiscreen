@@ -21,7 +21,43 @@ logger = logging.getLogger(__name__)
 
 def get_state():
     """Get the application state from Flask app config"""
-    return current_app.config.get('APP_STATE')
+    try:
+        # Try to get from Flask app config
+        state = current_app.config.get('APP_STATE')
+        if state is not None:
+            return state
+        
+        # Fallback: create a simple state object
+        logger.warning("APP_STATE not found in config, using fallback state")
+        return SimpleClientState()
+        
+    except Exception as e:
+        logger.warning(f"Error getting state from Flask config: {e}, using fallback")
+        return SimpleClientState()
+
+class SimpleClientState:
+    """Simple fallback client state for when APP_STATE is not available"""
+    
+    def __init__(self):
+        self.clients = {}
+        self.clients_lock = None  # No threading for now
+    
+    def get_client(self, client_id: str):
+        """Get client by ID"""
+        return self.clients.get(client_id)
+    
+    def get_all_clients(self):
+        """Get all clients"""
+        return self.clients
+    
+    def add_client(self, client_id: str, client_data: Dict):
+        """Add or update client"""
+        self.clients[client_id] = client_data
+    
+    def remove_client(self, client_id: str):
+        """Remove client"""
+        if client_id in self.clients:
+            del self.clients[client_id]
 
 def get_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
     """
@@ -333,10 +369,14 @@ def wait_for_assignment():
         assignment_status = client.get("assignment_status", "waiting_for_assignment")
         group_id = client.get("group_id")
         
-        logger.info(f"Client {client_id} checking assignment - Status: {assignment_status}, Group: {group_id}")
+        logger.info(f"🔍 Client {client_id} checking assignment:")
+        logger.info(f"   - Assignment status: {assignment_status}")
+        logger.info(f"   - Group ID: {group_id}")
+        logger.info(f"   - Full client data: {client}")
         
         # Case 1: Waiting for group assignment
         if assignment_status == "waiting_for_assignment" or not group_id:
+            logger.info(f"❌ Client {client_id} is waiting for group assignment or has no group")
             return jsonify({
                 "success": False,
                 "status": "waiting_for_assignment",
@@ -385,6 +425,7 @@ def wait_for_assignment():
         
         # Case 2: Group assigned but no stream assignment
         if assignment_status == "group_assigned":
+            logger.info(f"❌ Client {client_id} has group but no stream/screen assignment")
             return jsonify({
                 "success": False,
                 "status": "waiting_for_stream_assignment",
@@ -396,21 +437,33 @@ def wait_for_assignment():
         
         # Case 3: Stream or screen assigned - check if streaming
         if assignment_status in ["stream_assigned", "screen_assigned"]:
+            logger.info(f"✅ Client {client_id} has stream/screen assignment, checking streaming status")
             # Check if group is streaming
             container_id = group.get("container_id")
             
-            # Simple streaming check - assume it's streaming if we have a container
-            is_streaming = True  # For now, assume streaming is active
+            # Check if group is streaming
+            is_streaming = False
             
             try:
                 # Try to check if FFmpeg is running
-                from ..stream_management import find_running_ffmpeg_for_group
-                processes = find_running_ffmpeg_for_group(group_id, group_name)
+                from ..stream_management import find_running_ffmpeg_for_group_strict
+                processes = find_running_ffmpeg_for_group_strict(group_id, group_name, group.get("container_id"))
                 is_streaming = len(processes) > 0
-            except:
-                # If we can't check, assume it's streaming
-                logger.warning("Cannot verify streaming status, assuming active")
-                is_streaming = True
+                logger.info(f"🔍 FFmpeg check for group {group_name}: {len(processes)} processes found, is_streaming={is_streaming}")
+            except ImportError as e:
+                logger.warning(f"Import error checking streaming status: {e}")
+                # Try alternative import path
+                try:
+                    from blueprints.stream_management import find_running_ffmpeg_for_group_strict
+                    processes = find_running_ffmpeg_for_group_strict(group_id, group_name, group.get("container_id"))
+                    is_streaming = len(processes) > 0
+                    logger.info(f"🔍 FFmpeg check (alt import) for group {group_name}: {len(processes)} processes found, is_streaming={is_streaming}")
+                except Exception as e2:
+                    logger.error(f"Alternative import also failed: {e2}")
+                    is_streaming = False
+            except Exception as e:
+                logger.error(f"Error checking streaming status: {e}")
+                is_streaming = False
             
             if not is_streaming:
                 return jsonify({
@@ -466,6 +519,7 @@ def wait_for_assignment():
             }), 200
         
         # Unknown status
+        logger.warning(f"⚠️ Client {client_id} has unknown assignment status: {assignment_status}")
         return jsonify({
             "success": False,
             "status": "unknown",
@@ -482,7 +536,169 @@ def wait_for_assignment():
             "status": "error",
             "message": f"Internal server error: {str(e)}"
         }), 500
-    
+
+
+def unassign_client_from_screen():
+    """
+    Admin function: Remove a client's screen assignment (frees up the screen for another client)
+    """
+    try:
+        logger.info("==== UNASSIGN CLIENT FROM SCREEN REQUEST RECEIVED ====")
+        
+        state = get_state()
+        data = request.get_json() or {}
+        
+        client_id = data.get("client_id")
+        
+        if not client_id:
+            return jsonify({
+                "success": False,
+                "error": "client_id is required"
+            }), 400
+        
+        # Check if state has clients attribute
+        if not hasattr(state, 'clients'):
+            state.clients = {}
+        
+        if client_id not in state.clients:
+            return jsonify({
+                "success": False,
+                "error": "Client not found"
+            }), 404
+        
+        # Handle state with or without lock
+        if hasattr(state, 'clients_lock'):
+            with state.clients_lock:
+                client = state.clients[client_id]
+                old_group_id = client.get("group_id")
+                old_screen_number = client.get("screen_number")
+                old_stream = client.get("stream_assignment")
+                
+                # Clear screen assignment but keep group assignment
+                client.update({
+                    "screen_number": None,
+                    "stream_assignment": None,
+                    "stream_url": None,
+                    "assignment_status": "assigned_to_group",  # Still in group, just no specific screen
+                    "unassigned_at": time.time()
+                })
+        else:
+            # No lock available, update directly
+            client = state.clients[client_id]
+            old_group_id = client.get("group_id")
+            old_screen_number = client.get("screen_number")
+            old_stream = client.get("stream_assignment")
+            
+            # Clear screen assignment but keep group assignment
+            client.update({
+                "screen_number": None,
+                "stream_assignment": None,
+                "stream_url": None,
+                "assignment_status": "assigned_to_group",  # Still in group, just no specific screen
+                "unassigned_at": time.time()
+            })
+        
+        logger.info(f"✅ Unassigned client {client_id} from screen {old_screen_number} in group {old_group_id}")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Client {client_id} unassigned from screen {old_screen_number}",
+            "client_id": client_id,
+            "group_id": old_group_id,
+            "old_screen_number": old_screen_number,
+            "old_stream": old_stream,
+            "assignment_status": "assigned_to_group"
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error unassigning client from screen: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+def unassign_client_from_stream():
+    """
+    Admin function: Remove a client's stream assignment (frees up the stream for another client)
+    """
+    try:
+        logger.info("==== UNASSIGN CLIENT FROM STREAM REQUEST RECEIVED ====")
+        
+        state = get_state()
+        data = request.get_json() or {}
+        
+        client_id = data.get("client_id")
+        
+        if not client_id:
+            return jsonify({
+                "success": False,
+                "error": "client_id is required"
+            }), 400
+        
+        # Check if state has clients attribute
+        if not hasattr(state, 'clients'):
+            state.clients = {}
+        
+        if client_id not in state.clients:
+            return jsonify({
+                "success": False,
+                "error": "Client not found"
+            }), 404
+        
+        # Handle state with or without lock
+        if hasattr(state, 'clients_lock'):
+            with state.clients_lock:
+                client = state.clients[client_id]
+                old_group_id = client.get("group_id")
+                old_stream = client.get("stream_assignment")
+                old_screen_number = client.get("screen_number")
+                
+                # Clear stream assignment but keep group assignment
+                client.update({
+                    "stream_assignment": None,
+                    "stream_url": None,
+                    "assignment_status": "assigned_to_group" if old_group_id else "waiting_for_assignment",
+                    "unassigned_at": time.time()
+                })
+        else:
+            # No lock available, update directly
+            client = state.clients[client_id]
+            old_group_id = client.get("group_id")
+            old_stream = client.get("stream_assignment")
+            old_screen_number = client.get("screen_number")
+            
+            # Clear stream assignment but keep group assignment
+            client.update({
+                "stream_assignment": None,
+                "stream_url": None,
+                "assignment_status": "assigned_to_group" if old_group_id else "waiting_for_assignment",
+                "unassigned_at": time.time()
+            })
+        
+        logger.info(f"✅ Unassigned client {client_id} from stream {old_stream} in group {old_group_id}")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Client {client_id} unassigned from stream {old_stream}",
+            "client_id": client_id,
+            "group_id": old_group_id,
+            "old_stream": old_stream,
+            "old_screen_number": old_screen_number,
+            "assignment_status": client.get("assignment_status")
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error unassigning client from stream: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
 
 def resolve_stream_urls_for_group(group_id: str, group_name: str):
     """
@@ -511,8 +727,26 @@ def resolve_stream_urls_for_group(group_id: str, group_name: str):
             logger.error(f"Group {group_id} not found")
             return
         
-        screen_count = group.get("screen_count", 2)
-        active_stream_ids = generate_stream_ids(group_id, group_name, screen_count)
+        # Try to get stream IDs from active streaming first
+        try:
+            from blueprints.stream_management import get_active_stream_ids
+            active_stream_ids = get_active_stream_ids(group_id)
+            if active_stream_ids:
+                logger.info(f"✅ Using active stream IDs: {active_stream_ids}")
+            else:
+                # Fallback: try group metadata
+                active_stream_ids = group.get("stream_ids", {})
+                if active_stream_ids:
+                    logger.info(f"⚠️ Using group metadata stream IDs: {active_stream_ids}")
+                else:
+                    # Last resort: generate stream IDs
+                    from blueprints.stream_management import generate_stream_ids
+                    screen_count = group.get("screen_count", 2)
+                    active_stream_ids = generate_stream_ids(group_id, group_name, screen_count)
+                    logger.info(f"⚠️ Generated fallback stream IDs: {active_stream_ids}")
+        except Exception as e:
+            logger.error(f"Error getting active stream IDs: {e}")
+            return
         
         # Update each client with resolved stream URL
         updated_count = 0

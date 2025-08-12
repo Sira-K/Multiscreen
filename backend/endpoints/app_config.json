@@ -2,12 +2,11 @@
   "server": {
     "host": "0.0.0.0",
     "port": 5000,
-    "debug": true,
-    "secret_key": "your-secret-key-change-in-production"
+    "debug": true
   },
   "files": {
     "upload_folder": "uploads",
-    "download_folder": "resized_video",
+    "download_folder": "uploads",
     "max_file_size_mb": 2048,
     "allowed_extensions": [
       "mp4",
@@ -20,17 +19,10 @@
       "m4v"
     ]
   },
-  "display": {
-    "screen_count": 2,
-    "orientation": "horizontal",
-    "grid_rows": 2,
-    "grid_cols": 2,
-    "screen_ips": {},
-    "srt_ip": "127.0.0.1"
-  },
-  "system": {
-    "architecture": "hybrid_docker_discovery",
-    "version": "3.1.0",
-    "log_level": "INFO"
+  "streaming": {
+    "default_framerate": 30,
+    "default_bitrate": "3000k",
+    "srt_latency": 5000000,
+    "srt_timeout": 5000
   }
 }
