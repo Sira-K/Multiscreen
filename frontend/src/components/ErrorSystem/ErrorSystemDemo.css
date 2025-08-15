@@ -1,0 +1,166 @@
+/* Error System Demo - Styling for the demo component */
+
+.error-system-demo {
+    min-height: 100vh;
+    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    padding: 20px;
+}
+
+/* Demo Header */
+.demo-header {
+    text-align: center;
+    margin-bottom: 30px;
+    padding: 40px 20px;
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+    margin-bottom: 30px;
+}
+
+.demo-header h1 {
+    margin: 0 0 15px 0;
+    font-size: 3rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.demo-header p {
+    margin: 0;
+    font-size: 1.2rem;
+    color: #4a5568;
+    font-weight: 400;
+}
+
+/* Demo Content */
+.demo-content {
+    margin-bottom: 40px;
+}
+
+/* Demo Footer */
+.demo-footer {
+    background: white;
+    border-radius: 16px;
+    padding: 30px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+.demo-footer h3 {
+    margin: 0 0 25px 0;
+    text-align: center;
+    color: #2d3748;
+    font-size: 1.8rem;
+}
+
+.usage-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 25px;
+}
+
+.step {
+    display: flex;
+    align-items: flex-start;
+    gap: 20px;
+    padding: 20px;
+    background: #f8fafc;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    transition: all 0.3s ease;
+}
+
+.step:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+    border-color: #cbd5e0;
+}
+
+.step-number {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-radius: 50%;
+    font-weight: 700;
+    font-size: 1.2rem;
+    flex-shrink: 0;
+}
+
+.step-content h4 {
+    margin: 0 0 10px 0;
+    color: #2d3748;
+    font-size: 1.3rem;
+}
+
+.step-content code {
+    background: #edf2f7;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-family: 'Fira Code', 'Monaco', 'Consolas', monospace;
+    font-size: 0.9rem;
+    color: #2d3748;
+    display: inline-block;
+    margin: 5px 0;
+}
+
+.step-content p {
+    margin: 10px 0 0 0;
+    color: #4a5568;
+    line-height: 1.6;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .error-system-demo {
+        padding: 15px;
+    }
+    
+    .demo-header {
+        padding: 30px 15px;
+    }
+    
+    .demo-header h1 {
+        font-size: 2.5rem;
+    }
+    
+    .demo-header p {
+        font-size: 1.1rem;
+    }
+    
+    .demo-footer {
+        padding: 20px;
+    }
+    
+    .step {
+        flex-direction: column;
+        text-align: center;
+        gap: 15px;
+    }
+    
+    .step-number {
+        align-self: center;
+    }
+}
+
+@media (max-width: 480px) {
+    .demo-header h1 {
+        font-size: 2rem;
+    }
+    
+    .demo-header p {
+        font-size: 1rem;
+    }
+    
+    .demo-footer h3 {
+        font-size: 1.5rem;
+    }
+    
+    .step-content h4 {
+        font-size: 1.2rem;
+    }
+}
