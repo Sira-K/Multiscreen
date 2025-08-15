@@ -953,6 +953,7 @@ class UnifiedMultiScreenClient:
                 "-flags", "low_delay", 
                 "-framedrop",
                 "-strict", "experimental",
+                "-fs",  # Fullscreen
                 "-autoexit",
                 "-loglevel", "warning",  # Reduce ffplay verbosity
                 self.current_stream_url
