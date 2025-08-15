@@ -18,7 +18,7 @@ class SRTService:
     
     @classmethod
     def test_connection(cls, srt_ip: str, srt_port: int, 
-                       group_name: str = "unknown", sei: str = "test") -> Dict:
+                       group_name: str = "unknown", sei: str = None) -> Dict:
         """Test SRT connection to a server"""
         try:
             logger.info(f"Testing SRT connection to {srt_ip}:{srt_port}")
@@ -73,9 +73,9 @@ class SRTService:
             }
     
     @classmethod
-    def wait_for_server(cls, srt_ip: str, srt_port: int, timeout: int = 30) -> bool:
-        """Wait for SRT server to become available"""
-        logger.info(f"Waiting for SRT server at {srt_ip}:{srt_port} (timeout: {timeout}s)")
+    def wait_for_server(cls, srt_ip: str, srt_port: int, timeout: int = 5) -> bool:
+        """Wait for SRT server to become available (optimized for speed)"""
+        logger.info(f"🔍 Waiting for SRT server at {srt_ip}:{srt_port} (timeout: {timeout}s)")
         
         start_time = time.time()
         while time.time() - start_time < timeout:
@@ -85,18 +85,109 @@ class SRTService:
                     logger.info(f"✅ SRT server is ready at {srt_ip}:{srt_port}")
                     return True
                     
-                time.sleep(2)
+                time.sleep(1)  # Faster polling
                 
             except Exception as e:
                 logger.debug(f"SRT server check failed: {e}")
-                time.sleep(2)
+                time.sleep(1)  # Faster polling
         
         logger.error(f"❌ SRT server not ready after {timeout} seconds")
         return False
     
     @classmethod
+    def monitor_srt_server(cls, srt_ip: str, srt_port: int, timeout: int = 5) -> Dict[str, any]:
+        """
+        Fast SRT server monitoring with detailed status
+        
+        Args:
+            srt_ip: SRT server IP address
+            srt_port: SRT server port
+            timeout: Maximum time to wait in seconds
+            
+        Returns:
+            Dict with monitoring results:
+            {
+                "success": bool,
+                "ready": bool,
+                "message": str,
+                "response_time_ms": float,
+                "details": Dict
+            }
+        """
+        logger.info(f"🔍 Fast SRT monitoring: {srt_ip}:{srt_port} (timeout: {timeout}s)")
+        
+        start_time = time.time()
+        check_count = 0
+        
+        while time.time() - start_time < timeout:
+            check_count += 1
+            check_start = time.time()
+            
+            try:
+                # Fast UDP port check
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.settimeout(0.5)  # Very fast timeout
+                
+                try:
+                    # Quick connection test
+                    sock.connect((srt_ip, srt_port))
+                    response_time = (time.time() - check_start) * 1000  # Convert to milliseconds
+                    
+                    logger.info(f"✅ SRT server ready in {response_time:.1f}ms (check #{check_count})")
+                    sock.close()
+                    
+                    return {
+                        "success": True,
+                        "ready": True,
+                        "message": f"SRT server ready in {response_time:.1f}ms",
+                        "response_time_ms": response_time,
+                        "checks_performed": check_count,
+                        "total_time_ms": (time.time() - start_time) * 1000,
+                        "details": {
+                            "ip": srt_ip,
+                            "port": srt_port,
+                            "final_check": check_count
+                        }
+                    }
+                    
+                except socket.error as e:
+                    if "refused" in str(e).lower():
+                        # Port is closed/rejected - server definitely not ready
+                        logger.debug(f"Port {srt_port} rejected connection (check #{check_count})")
+                    else:
+                        logger.debug(f"Port {srt_port} check failed (check #{check_count}): {e}")
+                        
+                finally:
+                    sock.close()
+                    
+            except Exception as e:
+                logger.debug(f"SRT check error (check #{check_count}): {e}")
+            
+            # Fast polling interval
+            time.sleep(0.5)
+        
+        # Timeout reached
+        total_time = (time.time() - start_time) * 1000
+        logger.error(f"❌ SRT server not ready after {timeout}s ({total_time:.1f}ms, {check_count} checks)")
+        
+        return {
+            "success": False,
+            "ready": False,
+            "message": f"SRT server not ready after {timeout}s",
+            "response_time_ms": None,
+            "checks_performed": check_count,
+            "total_time_ms": total_time,
+            "details": {
+                "ip": srt_ip,
+                "port": srt_port,
+                "timeout": timeout,
+                "final_check": check_count
+            }
+        }
+    
+    @classmethod
     def _test_with_ffmpeg(cls, srt_ip: str, srt_port: int, 
-                         group_name: str, sei: str) -> Dict:
+                          group_name: str, sei: str = None) -> Dict:
         """Test SRT connection using FFmpeg"""
         try:
             # Simple FFmpeg test command

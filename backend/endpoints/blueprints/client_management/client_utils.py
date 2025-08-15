@@ -59,7 +59,16 @@ def build_stream_url(group: Dict[str, Any], stream_id: str, group_name: str, srt
     
     # Try to get active stream IDs first
     try:
-        from blueprints.stream_management import get_active_stream_ids
+        try:
+            from blueprints.streaming.split_stream import get_active_stream_ids
+        except ImportError:
+            try:
+                from blueprints.streaming.multi_stream import get_active_stream_ids
+            except ImportError:
+                # Fallback function if import fails
+                def get_active_stream_ids(group_id: str):
+                    """Get active stream IDs for a group"""
+                    return {}
         active_stream_ids = get_active_stream_ids(group.get("id", "unknown"))
         if active_stream_ids:
             logger.info(f"✅ Found active stream IDs: {active_stream_ids}")
@@ -85,7 +94,25 @@ def build_stream_url(group: Dict[str, Any], stream_id: str, group_name: str, srt
         else:
             # Fallback: try to generate stream IDs if not available
             try:
-                from blueprints.stream_management import generate_stream_ids
+                try:
+                    from blueprints.streaming.split_stream import generate_stream_ids
+                except ImportError:
+                    try:
+                        from blueprints.streaming.multi_stream import generate_stream_ids
+                    except ImportError:
+                        # Fallback function if import fails
+                        def generate_stream_ids(base_stream_id: str, group_name: str, screen_count: int):
+                            """Generate stream IDs for a group"""
+                            stream_ids = {}
+                            
+                            # Combined stream ID
+                            stream_ids["test"] = f"{base_stream_id[:8]}"
+                            
+                            # Individual screen stream IDs
+                            for i in range(screen_count):
+                                stream_ids[f"test{i}"] = f"{base_stream_id[:8]}_{i}"
+                            
+                            return stream_ids
                 screen_count = group.get("screen_count", 2)
                 fallback_ids = generate_stream_ids(group.get("id", "unknown"), group_name, screen_count)
                 if screen_key in fallback_ids:
@@ -239,7 +266,25 @@ def get_persistent_streams_for_group(group_id: str, group_name: str, split_count
             logger.warning(f"Group may have been created with older version")
             
             # Fallback: generate them now (for backwards compatibility)
-            from blueprints.stream_management import generate_stream_ids
+            try:
+                from blueprints.streaming.split_stream import generate_stream_ids
+            except ImportError:
+                try:
+                    from blueprints.streaming.multi_stream import generate_stream_ids
+                except ImportError:
+                    # Fallback function if import fails
+                    def generate_stream_ids(base_stream_id: str, group_name: str, screen_count: int):
+                        """Generate stream IDs for a group"""
+                        stream_ids = {}
+                        
+                        # Combined stream ID
+                        stream_ids["test"] = f"{base_stream_id[:8]}"
+                        
+                        # Individual screen stream IDs
+                        for i in range(screen_count):
+                            stream_ids[f"test{i}"] = f"{base_stream_id[:8]}_{i}"
+                        
+                        return stream_ids
             screen_count = group.get("screen_count", 2)
             fallback_ids = generate_stream_ids(group_id, group_name, screen_count)
             logger.info(f"Generated fallback stream IDs: {fallback_ids}")
@@ -248,3 +293,61 @@ def get_persistent_streams_for_group(group_id: str, group_name: str, split_count
     except Exception as e:
         logger.error(f"Error getting stream IDs: {e}")
         return {}
+
+# Client Utility Functions
+# Helper functions for client management operations
+
+import logging
+from typing import Dict, Any, Optional, Tuple, List
+
+logger = logging.getLogger(__name__)
+
+def extract_hostname_from_client_id(client_id: str) -> str:
+    """
+    Extract hostname from client ID
+    Client ID format: hostname_ipaddress
+    """
+    if '_' in client_id:
+        return client_id.split('_')[0]
+    return client_id
+
+def extract_ip_from_client_id(client_id: str) -> str:
+    """
+    Extract IP address from client ID
+    Client ID format: hostname_ipaddress
+    """
+    if '_' in client_id:
+        parts = client_id.split('_')
+        if len(parts) >= 2:
+            # Reconstruct IP address (may have multiple underscores)
+            return '_'.join(parts[1:])
+    return "unknown"
+
+def get_clients_by_hostname(state, hostname: str) -> List[Dict[str, Any]]:
+    """
+    Get all clients with the same hostname (different IP addresses)
+    Useful for managing multiple terminal instances from the same device
+    """
+    clients = []
+    if hasattr(state, 'clients') and state.clients:
+        for client_id, client_data in state.clients.items():
+            if extract_hostname_from_client_id(client_id) == hostname:
+                clients.append({
+                    "client_id": client_id,
+                    "hostname": extract_hostname_from_client_id(client_id),
+                    "ip_address": extract_ip_from_client_id(client_id),
+                    **client_data
+                })
+    return clients
+
+def format_client_display_name(client_id: str, client_data: Dict[str, Any]) -> str:
+    """
+    Format a user-friendly display name for the client
+    Shows hostname and IP address clearly
+    """
+    hostname = extract_hostname_from_client_id(client_id)
+    ip_address = extract_ip_from_client_id(client_id)
+    
+    if ip_address != "unknown":
+        return f"{hostname} ({ip_address})"
+    return hostname

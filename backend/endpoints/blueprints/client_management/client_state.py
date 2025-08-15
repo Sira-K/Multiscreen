@@ -141,3 +141,9 @@ def get_state():
             get_state._fallback_state = ClientState()
             get_state._fallback_state.initialize()
         return get_state._fallback_state
+
+def get_persistent_state():
+    """Create and return a persistent client state instance for Flask app config"""
+    state = ClientState()
+    state.initialize()
+    return state

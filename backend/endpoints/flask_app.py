@@ -17,18 +17,17 @@ try:
     from .blueprints.group_management import group_bp
     from .blueprints.video_management import video_bp
     from .blueprints.client_management import client_bp
-    from .blueprints.stream_management import stream_bp
+    from .blueprints.streaming import multi_stream_bp, split_stream_bp
     from .blueprints.docker_management import docker_bp
-    from .blueprints.split_screen_bp import split_screen_bp
 except ImportError:
     # Fallback for direct execution
     from app_config import AppConfig
     from blueprints.group_management import group_bp
     from blueprints.video_management import video_bp
     from blueprints.client_management import client_bp
-    from blueprints.stream_management import stream_bp
+    from blueprints.streaming import multi_stream_bp, split_stream_bp
     from blueprints.docker_management import docker_bp
-    from blueprints.split_screen_bp import split_screen_bp
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -61,6 +60,10 @@ def create_app():
     app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'uploads')
     app.config['UNIFIED_CONFIG'] = config
     
+    # Initialize persistent client state
+    from blueprints.client_management.client_state import get_persistent_state
+    app.config['APP_STATE'] = get_persistent_state()
+    
     # Create uploads directory
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     
@@ -68,9 +71,14 @@ def create_app():
     app.register_blueprint(group_bp)
     app.register_blueprint(video_bp)
     app.register_blueprint(client_bp, url_prefix='/api/clients')
-    app.register_blueprint(stream_bp)
+    app.register_blueprint(multi_stream_bp, url_prefix='/api/streaming')
+    app.register_blueprint(split_stream_bp, url_prefix='/api/streaming')
+    
+    # Add backward compatibility routes (without prefix) with unique names
+    app.register_blueprint(multi_stream_bp, url_prefix='', name='multi_stream_legacy')
+    app.register_blueprint(split_stream_bp, url_prefix='', name='split_stream_legacy')
     app.register_blueprint(docker_bp)
-    app.register_blueprint(split_screen_bp, url_prefix='/api/split_screen')
+
     
     # Root endpoint
     @app.route('/')
@@ -80,9 +88,12 @@ def create_app():
                 "clients": "/api/clients",
                 "docker": "/api/docker",
                 "groups": "/api/groups",
-                "streams": "/api/streams",
+                "multi_stream": "/api/streaming/start_multi_video_srt",
+                "split_stream": "/api/streaming/start_split_screen_srt",
+                "streaming_status": "/api/streaming/all_streaming_statuses",
+                "stop_stream": "/api/streaming/stop_stream",
                 "videos": "/api/videos",
-                "split_screen": "/api/split_screen"
+
             },
             "status": "running",
             "version": "2.0.0"

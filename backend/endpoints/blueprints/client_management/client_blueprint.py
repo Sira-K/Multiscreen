@@ -28,7 +28,8 @@ from .info_endpoints import (
     list_clients,
     get_client_details,
     health_check,
-    get_clients_legacy
+    get_clients_legacy,
+    list_clients_by_hostname
 )
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,11 @@ def wait_for_assignment_route():
 def list_clients_route():
     """Get all registered clients with enhanced information"""
     return list_clients()
+
+@client_bp.route("/list_by_hostname", methods=["GET"])
+def list_clients_by_hostname_route():
+    """Get clients grouped by hostname for managing multiple terminal instances"""
+    return list_clients_by_hostname()
 
 @client_bp.route("/get_client/<client_id>", methods=["GET"])
 def get_client_details_route(client_id: str):

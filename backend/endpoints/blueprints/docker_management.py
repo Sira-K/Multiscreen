@@ -179,7 +179,25 @@ def create_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
         screen_count = group_data.get("screen_count", 2)
         
         # Import generate_stream_ids function
-        from blueprints.stream_management import generate_stream_ids
+        try:
+            from blueprints.streaming.split_stream import generate_stream_ids
+        except ImportError:
+            try:
+                from blueprints.streaming.multi_stream import generate_stream_ids
+            except ImportError:
+                # Fallback function if import fails
+                def generate_stream_ids(base_stream_id: str, group_name: str, screen_count: int):
+                    """Generate stream IDs for a group"""
+                    stream_ids = {}
+                    
+                    # Combined stream ID
+                    stream_ids["test"] = f"{base_stream_id[:8]}"
+                    
+                    # Individual screen stream IDs
+                    for i in range(screen_count):
+                        stream_ids[f"test{i}"] = f"{base_stream_id[:8]}_{i}"
+                    
+                    return stream_ids
         stream_ids = generate_stream_ids(group_id, group_name, screen_count)
         
         logger.info(f"🎯 Generated stream IDs for new group {group_name}:")
@@ -557,6 +575,26 @@ def discover_groups() -> Dict[str, Any]:
             "groups": [],
             "traceback": traceback.format_exc()
         }
+
+
+def get_all_groups() -> List[Dict[str, Any]]:
+    """
+    Get all groups using the discover_groups function
+    
+    Returns:
+        List of group dictionaries
+    """
+    try:
+        result = discover_groups()
+        if result.get("success", False):
+            return result.get("groups", [])
+        else:
+            logger.warning(f"Failed to discover groups: {result.get('error', 'Unknown error')}")
+            return []
+    except Exception as e:
+        logger.error(f"Error in get_all_groups: {e}")
+        return []
+
 
 @docker_bp.route("/docker_status", methods=["GET"])
 def docker_status():

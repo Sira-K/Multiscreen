@@ -221,10 +221,12 @@ def register_client():
         display_name = cleaned_data["display_name"]
         platform = cleaned_data["platform"]
         
-        client_id = hostname  # Use hostname as client ID
+        # Create unique client ID by combining hostname and IP address
+        # This allows multiple terminal instances from the same device to run simultaneously
+        client_id = f"{hostname}_{ip_address}"
         current_time = time.time()
         
-        logger.info(f"Registering client: {client_id} ({ip_address})")
+        logger.info(f"Registering client: {client_id} (hostname: {hostname}, IP: {ip_address})")
         
         # Check for existing client
         existing_client = state.get_client(client_id) if hasattr(state, 'get_client') else state.clients.get(client_id)
@@ -270,6 +272,14 @@ def register_client():
             state.clients[client_id] = client_data
         
         logger.info(f"Client {action}: {client_id} (status: {client_data['assignment_status']})")
+        
+        # Debug: Verify client was saved
+        logger.info(f"State type after save: {type(state)}")
+        logger.info(f"State has clients after save: {hasattr(state, 'clients')}")
+        if hasattr(state, 'clients'):
+            logger.info(f"Available client IDs after save: {list(state.clients.keys())}")
+            saved_client = state.clients.get(client_id)
+            logger.info(f"Saved client data: {saved_client is not None}")
         
         # Prepare response
         response_data = {
@@ -341,12 +351,17 @@ def wait_for_assignment():
     Handles both screen assignments and direct stream assignments
     """
     try:
+        logger.info("==== WAIT FOR ASSIGNMENT REQUEST ====")
+        
         # Import utilities from the same module
         from .client_utils import get_next_steps, build_stream_url
         # DON'T import get_state from client_state - use the one at top of file
         
         data = request.get_json() or {}
         client_id = data.get("client_id")
+        
+        logger.info(f"Request data: {data}")
+        logger.info(f"Client ID: {client_id}")
         
         if not client_id:
             return jsonify({
@@ -356,7 +371,14 @@ def wait_for_assignment():
             }), 400
         
         state = get_state()  # Use the function defined at top of file
+        logger.info(f"State type: {type(state)}")
+        logger.info(f"State has clients: {hasattr(state, 'clients')}")
+        if hasattr(state, 'clients'):
+            logger.info(f"Available client IDs: {list(state.clients.keys())}")
+        
         client = state.get_client(client_id) if hasattr(state, 'get_client') else state.clients.get(client_id)
+        
+        logger.info(f"Found client: {client is not None}")
         
         if not client:
             return jsonify({
@@ -454,7 +476,16 @@ def wait_for_assignment():
                 logger.warning(f"Import error checking streaming status: {e}")
                 # Try alternative import path
                 try:
-                    from blueprints.stream_management import find_running_ffmpeg_for_group_strict
+                    try:
+                        from blueprints.streaming.split_stream import find_running_ffmpeg_for_group_strict
+                    except ImportError:
+                        try:
+                            from blueprints.streaming.multi_stream import find_running_ffmpeg_for_group_strict
+                        except ImportError:
+                            # Fallback function if import fails
+                            def find_running_ffmpeg_for_group_strict(group_id: str, group_name: str, container_id: str):
+                                """Find running FFmpeg processes for a group"""
+                                return []
                     processes = find_running_ffmpeg_for_group_strict(group_id, group_name, group.get("container_id"))
                     is_streaming = len(processes) > 0
                     logger.info(f"🔍 FFmpeg check (alt import) for group {group_name}: {len(processes)} processes found, is_streaming={is_streaming}")
@@ -729,7 +760,17 @@ def resolve_stream_urls_for_group(group_id: str, group_name: str):
         
         # Try to get stream IDs from active streaming first
         try:
-            from blueprints.stream_management import get_active_stream_ids
+            try:
+                from blueprints.streaming.split_stream import get_active_stream_ids
+            except ImportError:
+                try:
+                    from blueprints.streaming.multi_stream import get_active_stream_ids
+                except ImportError:
+                    # Fallback function if import fails
+                    def get_active_stream_ids(group_id: str):
+                        """Get active stream IDs for a group"""
+                        return {}
+            
             active_stream_ids = get_active_stream_ids(group_id)
             if active_stream_ids:
                 logger.info(f"✅ Using active stream IDs: {active_stream_ids}")
@@ -740,7 +781,25 @@ def resolve_stream_urls_for_group(group_id: str, group_name: str):
                     logger.info(f"⚠️ Using group metadata stream IDs: {active_stream_ids}")
                 else:
                     # Last resort: generate stream IDs
-                    from blueprints.stream_management import generate_stream_ids
+                    try:
+                        from blueprints.streaming.split_stream import generate_stream_ids
+                    except ImportError:
+                        try:
+                            from blueprints.streaming.multi_stream import generate_stream_ids
+                        except ImportError:
+                            # Fallback function if import fails
+                            def generate_stream_ids(base_stream_id: str, group_name: str, screen_count: int):
+                                """Generate stream IDs for a group"""
+                                stream_ids = {}
+                                
+                                # Combined stream ID
+                                stream_ids["test"] = f"{base_stream_id[:8]}"
+                                
+                                # Individual screen stream IDs
+                                for i in range(screen_count):
+                                    stream_ids[f"test{i}"] = f"{base_stream_id[:8]}_{i}"
+                                
+                                return stream_ids
                     screen_count = group.get("screen_count", 2)
                     active_stream_ids = generate_stream_ids(group_id, group_name, screen_count)
                     logger.info(f"⚠️ Generated fallback stream IDs: {active_stream_ids}")

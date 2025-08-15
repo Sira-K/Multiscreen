@@ -11,7 +11,7 @@ from flask import jsonify
 
 
 from .client_state import get_state
-from .client_utils import get_group_from_docker, format_time_ago
+from .client_utils import get_group_from_docker, format_time_ago, extract_hostname_from_client_id, extract_ip_from_client_id, format_client_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,11 @@ def list_clients():
                 "display_name": client_data.get("display_name", client_id),
                 "platform": client_data.get("platform", "unknown"),
                 
+                # Enhanced display information using helper functions
+                "hostname_clean": extract_hostname_from_client_id(client_id),
+                "ip_address_clean": extract_ip_from_client_id(client_id),
+                "display_name_formatted": format_client_display_name(client_id, client_data),
+                
                 # Status information
                 "registered_at": client_data.get("registered_at", 0),
                 "last_seen": last_seen,
@@ -118,6 +123,77 @@ def list_clients():
         
     except Exception as e:
         logger.error(f"Error listing clients: {e}")
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+def list_clients_by_hostname():
+    """List clients grouped by hostname for easier management of multiple terminal instances"""
+    try:
+        state = get_state()
+        if not state:
+            return jsonify({
+                "success": False,
+                "error": "Client state not available"
+            }), 500
+        
+        from .client_utils import get_clients_by_hostname
+        
+        # Get all clients
+        all_clients = {}
+        if hasattr(state, 'clients') and state.clients:
+            for client_id, client_data in state.clients.items():
+                hostname = extract_hostname_from_client_id(client_id)
+                if hostname not in all_clients:
+                    all_clients[hostname] = []
+                all_clients[hostname].append({
+                    "client_id": client_id,
+                    "ip_address": extract_ip_from_client_id(client_id),
+                    "display_name": client_data.get("display_name", hostname),
+                    "platform": client_data.get("platform", "unknown"),
+                    "assignment_status": client_data.get("assignment_status", "unknown"),
+                    "group_id": client_data.get("group_id"),
+                    "group_name": client_data.get("group_name"),
+                    "stream_assignment": client_data.get("stream_assignment"),
+                    "screen_number": client_data.get("screen_number"),
+                    "last_seen": client_data.get("last_seen", 0),
+                    "is_active": (time.time() - client_data.get("last_seen", 0)) <= 60
+                })
+        
+        # Sort clients within each hostname by last seen
+        for hostname in all_clients:
+            all_clients[hostname].sort(key=lambda x: x["last_seen"], reverse=True)
+        
+        # Convert to list format for easier frontend consumption
+        hostname_groups = []
+        for hostname, clients in all_clients.items():
+            hostname_groups.append({
+                "hostname": hostname,
+                "client_count": len(clients),
+                "active_count": len([c for c in clients if c["is_active"]]),
+                "assigned_count": len([c for c in clients if c["group_id"]]),
+                "clients": clients
+            })
+        
+        # Sort by hostname
+        hostname_groups.sort(key=lambda x: x["hostname"])
+        
+        return jsonify({
+            "success": True,
+            "hostname_groups": hostname_groups,
+            "statistics": {
+                "total_hostnames": len(hostname_groups),
+                "total_clients": sum(len(g["clients"]) for g in hostname_groups),
+                "total_active": sum(g["active_count"] for g in hostname_groups),
+                "total_assigned": sum(g["assigned_count"] for g in hostname_groups)
+            },
+            "timestamp": time.time()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error listing clients by hostname: {e}")
         traceback.print_exc()
         return jsonify({
             "success": False,

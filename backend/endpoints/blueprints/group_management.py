@@ -206,7 +206,16 @@ def delete_group():
         # Step 1: Stop any running streams for this group
         logger.info(f" Stopping streams for group: {target_name}")
         try:
-            from blueprints.stream_management import stop_group_streams
+            try:
+                from blueprints.streaming.split_stream import stop_group_streams
+            except ImportError:
+                try:
+                    from blueprints.streaming.multi_stream import stop_group_streams
+                except ImportError:
+                    # Fallback function if import fails
+                    def stop_group_streams(group_id: str):
+                        """Stop streams for a group"""
+                        return {"success": True, "message": "Stream stopping not available"}
             
             # Try to stop streams (don't fail deletion if this fails)
             stop_result = stop_group_streams(target_group)
