@@ -1,10 +1,10 @@
-import { useState, useRef, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Upload, Trash2, File, FileVideo, AlertCircle, CheckCircle, RefreshCw } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { useErrorHandler } from '@/components/ErrorSystem/useErrorHandler';
 import { videoApi } from '@/API/api';
 
 // Updated type definitions for new sequential API responses
@@ -80,7 +80,7 @@ interface DeleteResponse {
 }
 
 const VideoFilesTab = () => {
-  const { toast } = useToast();
+  const { showError, handleFileUploadError, handleApiError } = useErrorHandler();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadingFiles, setUploadingFiles] = useState<Record<string, UploadingFile>>({});
   const [videoFiles, setVideoFiles] = useState<VideoFile[]>([]);
@@ -254,15 +254,31 @@ const VideoFilesTab = () => {
       const { successful, failed, total } = response.summary;
       
       if (total > 1) {
-        toast({
-          title: "Upload Complete",
-          description: `${successful}/${total} files uploaded successfully${failed > 0 ? `, ${failed} failed` : ''} in ${response.timing.total_time_seconds}s`,
-          variant: successful === total ? "default" : "destructive"
+        showError({
+          message: `Upload Complete: ${successful}/${total} files uploaded successfully${failed > 0 ? `, ${failed} failed` : ''} in ${response.timing.total_time_seconds}s`,
+          error_code: 'UPLOAD_COMPLETE',
+          error_category: 'INFO',
+          context: {
+            component: 'VideoFilesTab',
+            operation: 'handleSequentialUpload',
+            timestamp: new Date().toISOString(),
+            total_files: total,
+            successful_files: successful,
+            failed_files: failed,
+            total_time_seconds: response.timing.total_time_seconds
+          }
         });
       } else if (successful === 1) {
-        toast({
-          title: "Upload Successful",
-          description: `File uploaded successfully in ${response.timing.total_time_seconds}s`,
+        showError({
+          message: `File uploaded successfully in ${response.timing.total_time_seconds}s`,
+          error_code: 'UPLOAD_SUCCESSFUL',
+          error_category: 'INFO',
+          context: {
+            component: 'VideoFilesTab',
+            operation: 'handleSequentialUpload',
+            timestamp: new Date().toISOString(),
+            total_time_seconds: response.timing.total_time_seconds
+          }
         });
       }
 
@@ -300,10 +316,31 @@ const VideoFilesTab = () => {
         }
       });
 
-      toast({
-        title: "Upload Failed",
-        description: error.message || "All uploads failed",
-        variant: "destructive"
+      // Use error system for better error handling
+      showError({
+        message: error.message || "All uploads failed",
+        error_code: 'FILE_UPLOAD_FAILED',
+        error_category: '5xx',
+        context: {
+          component: 'VideoFilesTab',
+          operation: 'handleSequentialUpload',
+          timestamp: new Date().toISOString(),
+          original_error: error.message,
+          stack: error.stack
+        }
+      });
+      
+      handleApiError({
+        message: error.message || "All uploads failed",
+        error_code: 'FILE_UPLOAD_FAILED',
+        error_category: '5xx',
+        context: {
+          component: 'VideoFilesTab',
+          operation: 'handleSequentialUpload',
+          timestamp: new Date().toISOString(),
+          original_error: error.message,
+          stack: error.stack
+        }
       });
 
       // Reset progress tracking
@@ -333,10 +370,16 @@ const VideoFilesTab = () => {
 
     // Show validation errors
     if (invalidFiles.length > 0) {
-      toast({
-        title: "Some files were skipped",
-        description: `Invalid files: ${invalidFiles.join(', ')}`,
-        variant: "destructive"
+      showError({
+        message: `Some files were skipped: ${invalidFiles.join(', ')}`,
+        error_code: 'FILE_VALIDATION_FAILED',
+        error_category: '4xx',
+        context: {
+          component: 'VideoFilesTab',
+          operation: 'handleFileUpload',
+          timestamp: new Date().toISOString(),
+          invalid_files: invalidFiles
+        }
       });
     }
 
@@ -360,9 +403,16 @@ const VideoFilesTab = () => {
 
     setUploadingFiles(initialUploadStates);
 
-    toast({
-      title: "Upload Started",
-      description: `Uploading ${validFiles.length} file(s) sequentially...`
+    showError({
+      message: `Uploading ${validFiles.length} file(s) sequentially...`,
+      error_code: 'UPLOAD_STARTED',
+      error_category: 'INFO',
+      context: {
+        component: 'VideoFilesTab',
+        operation: 'handleFileUpload',
+        timestamp: new Date().toISOString(),
+        total_files: validFiles.length
+      }
     });
 
     // Start sequential upload
@@ -389,9 +439,17 @@ const VideoFilesTab = () => {
         // Remove from local state
         setVideoFiles(prev => prev.filter(v => v.id !== videoId));
         
-        toast({
-          title: "Video Removed",
-          description: `${videoName} has been deleted successfully.`
+        showError({
+          message: `${videoName} has been deleted successfully.`,
+          error_code: 'VIDEO_DELETED',
+          error_category: 'INFO',
+          context: {
+            component: 'VideoFilesTab',
+            operation: 'removeVideo',
+            video_id: videoId,
+            video_name: videoName,
+            timestamp: new Date().toISOString()
+          }
         });
         
       } else {
@@ -403,10 +461,35 @@ const VideoFilesTab = () => {
       
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       
-      toast({
-        title: "Delete Failed",
-        description: `Failed to delete ${videoName}: ${errorMessage}`,
-        variant: "destructive"
+      // Use error system for better error handling
+      showError({
+        message: `Failed to delete ${videoName}: ${errorMessage}`,
+        error_code: 'VIDEO_DELETION_FAILED',
+        error_category: '5xx',
+        context: {
+          component: 'VideoFilesTab',
+          operation: 'removeVideo',
+          video_id: videoId,
+          video_name: videoName,
+          timestamp: new Date().toISOString(),
+          original_error: errorMessage,
+          stack: error?.stack
+        }
+      });
+      
+      handleApiError({
+        message: `Failed to delete ${videoName}: ${errorMessage}`,
+        error_code: 'VIDEO_DELETION_FAILED',
+        error_category: '5xx',
+        context: {
+          component: 'VideoFilesTab',
+          operation: 'removeVideo',
+          video_id: videoId,
+          video_name: videoName,
+          timestamp: new Date().toISOString(),
+          original_error: errorMessage,
+          stack: error?.stack
+        }
       });
     }
   };
@@ -443,10 +526,32 @@ const VideoFilesTab = () => {
       }
     } catch (error: any) {
       console.error('❌ Error fetching videos:', error);
-      toast({
-        title: "Loading Error",
-        description: "Failed to load videos. Please check your connection.",
-        variant: "destructive"
+      
+      // Use error system for better error handling
+      showError({
+        message: "Failed to load videos. Please check your connection.",
+        error_code: 'VIDEO_FETCH_FAILED',
+        error_category: '5xx',
+        context: {
+          component: 'VideoFilesTab',
+          operation: 'fetchVideos',
+          timestamp: new Date().toISOString(),
+          original_error: error?.message,
+          stack: error?.stack
+        }
+      });
+      
+      handleApiError({
+        message: "Failed to load videos. Please check your connection.",
+        error_code: 'VIDEO_FETCH_FAILED',
+        error_category: '5xx',
+        context: {
+          component: 'VideoFilesTab',
+          operation: 'fetchVideos',
+          timestamp: new Date().toISOString(),
+          original_error: error?.message,
+          stack: error?.stack
+        }
       });
       setVideoFiles([]);
     }

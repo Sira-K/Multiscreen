@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef } from "react";
 import { RefreshCw } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { useErrorHandler } from "@/components/ErrorSystem/useErrorHandler";
 import type { Group, Video, Client } from '../../types';
 
 // Import sub-components
@@ -18,7 +18,7 @@ import { useGroupOperations } from './hooks/useGroupOperations';
 import { useClientAssignment } from './hooks/useClientAssignment';
 
 const StreamsTab = () => {
-  const { toast } = useToast();
+  const { showError, handleApiError } = useErrorHandler();
   const hasInitialized = useRef(false); // Prevent multiple initializations
   
   // State management using custom hooks
@@ -45,7 +45,7 @@ const StreamsTab = () => {
     operationInProgress,
     createGroup,
     deleteGroup
-  } = useGroupOperations(loadInitialData, toast);
+  } = useGroupOperations(loadInitialData);
 
   const {
     getUnassignedClients,
@@ -57,7 +57,7 @@ const StreamsTab = () => {
     handleUnassignClientFromScreen,
     handleAutoAssignScreens,
     getScreenAssignments
-  } = useClientAssignment(clients, loadInitialData, toast);
+  } = useClientAssignment(clients, loadInitialData);
 
   // Initial load with proper error handling - ONLY ONCE
   useEffect(() => {
@@ -69,16 +69,25 @@ const StreamsTab = () => {
         await loadInitialData();
       } catch (error: any) {
         console.error('❌ Error loading initial data:', error);
-        toast({
-          title: "Loading Failed",
-          description: error?.message || "Failed to load application data",
-          variant: "destructive"
+        
+        // Use the new error system for comprehensive error handling
+        showError({
+          message: error?.message || "Failed to load application data",
+          error_code: 'DATA_LOAD_FAILED',
+          error_category: '5xx',
+          context: {
+            component: 'StreamsTab',
+            operation: 'initial_data_load',
+            timestamp: new Date().toISOString(),
+            original_error: error?.message,
+            stack: error?.stack
+          }
         });
       }
     };
 
     initializeData();
-  }, [loadInitialData, toast]);
+  }, [loadInitialData, showError]);
 
   // Debug effect to monitor streaming status changes - THROTTLED
   useEffect(() => {

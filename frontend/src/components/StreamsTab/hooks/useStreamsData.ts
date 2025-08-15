@@ -49,7 +49,23 @@ export const useStreamsData = () => {
 
     } catch (error: any) {
       console.error('❌ Error loading data:', error);
-      throw error; // Re-throw to let parent handle toast
+      
+      // Enhanced error logging for the error system
+      const enhancedError = {
+        message: error?.message || 'Failed to load application data',
+        error_code: 'DATA_LOAD_FAILED',
+        error_category: '5xx',
+        context: {
+          component: 'useStreamsData',
+          operation: 'loadInitialData',
+          timestamp: new Date().toISOString(),
+          original_error: error?.message,
+          stack: error?.stack
+        }
+      };
+      
+      // Re-throw enhanced error to let parent handle it
+      throw enhancedError;
     } finally {
       setLoading(false);
     }
@@ -60,6 +76,22 @@ export const useStreamsData = () => {
     setRefreshing(true);
     try {
       await loadInitialData();
+    } catch (error: any) {
+      console.error('❌ Error refreshing data:', error);
+      // Enhanced error logging for refresh operations
+      const enhancedError = {
+        message: error?.message || 'Failed to refresh application data',
+        error_code: 'DATA_REFRESH_FAILED',
+        error_category: '5xx',
+        context: {
+          component: 'useStreamsData',
+          operation: 'refreshData',
+          timestamp: new Date().toISOString(),
+          original_error: error?.message,
+          stack: error?.stack
+        }
+      };
+      throw enhancedError;
     } finally {
       setRefreshing(false);
     }

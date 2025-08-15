@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
-import ErrorNotification from './ErrorNotification';
 
 const ErrorContext = createContext();
 
@@ -154,6 +153,11 @@ export const ErrorProvider = ({ children }) => {
     setCurrentError(null);
   }, []);
 
+  // Clear current error (alias for hideError for consistency)
+  const clearError = useCallback(() => {
+    setCurrentError(null);
+  }, []);
+
   // Clear error history
   const clearErrorHistory = useCallback(() => {
     setErrorHistory([]);
@@ -255,6 +259,7 @@ export const ErrorProvider = ({ children }) => {
     showDockerError,
     showVideoError,
     hideError,
+    clearError,
     clearErrorHistory,
     retryLastOperation,
     handleApiError,
@@ -265,15 +270,6 @@ export const ErrorProvider = ({ children }) => {
   return (
     <ErrorContext.Provider value={value}>
       {children}
-      
-      {/* Global Error Notification */}
-      {currentError && (
-        <ErrorNotification
-          error={currentError}
-          onClose={hideError}
-          onRetry={retryLastOperation}
-        />
-      )}
     </ErrorContext.Provider>
   );
 };

@@ -1,97 +1,80 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Monitor, Users, Video } from "lucide-react";
 import StreamsTab from "@/components/StreamsTab/StreamsTab";
 import ClientsTab from "@/components/ClientsTab";
 import VideoFilesTab from "@/components/VideoFilesTab";
-import { Monitor, Users, Video } from "lucide-react";
 
-interface Stream {
-  id: string;
-  name: string;
-  url: string;
-  port: number;
-  status: 'active' | 'inactive';
-  clients: string[];
-}
-
-const STORAGE_KEY = 'srt_control_active_tab';
+const STORAGE_KEY = 'activeTab';
 
 const Index = () => {
-  const [streams, setStreams] = useState<Stream[]>([]);
+  const [activeTab, setActiveTab] = useState<string>('streams');
 
-  // Get initial tab from localStorage or default to "streams"
   const getInitialTab = (): string => {
     try {
       const savedTab = localStorage.getItem(STORAGE_KEY);
-      // Validate that it's a valid tab value
       if (savedTab && ['streams', 'clients', 'videos'].includes(savedTab)) {
         return savedTab;
       }
     } catch (error) {
       console.warn('Failed to read tab from localStorage:', error);
     }
-    return 'streams'; // Default fallback
+    return 'streams';
   };
 
-  const [activeTab, setActiveTab] = useState<string>(getInitialTab());
+  useEffect(() => {
+    const initialTab = getInitialTab();
+    setActiveTab(initialTab);
+  }, []);
 
-  // Save tab to localStorage whenever it changes
-  const handleTabChange = (newTab: string) => {
-    setActiveTab(newTab);
+  const handleTabChange = (value: string) => {
+    setActiveTab(value);
     try {
-      localStorage.setItem(STORAGE_KEY, newTab);
-      console.log(`💾 Saved active tab: ${newTab}`);
+      localStorage.setItem(STORAGE_KEY, value);
     } catch (error) {
       console.warn('Failed to save tab to localStorage:', error);
     }
   };
 
-  // Debug: Log tab changes
-  useEffect(() => {
-    console.log(`🔄 Active tab changed to: ${activeTab}`);
-  }, [activeTab]);
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
-      <div className="container mx-auto px-6 py-8">
-        <header className="mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">SRT Streaming Control Panel</h1>
-          <p className="text-gray-600">Manage streams, clients, and video files for your digital signage system</p>
-        </header>
+    <div className="min-h-screen bg-gray-50 p-6">
+      <div className="max-w-7xl mx-auto">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Streaming Management System</h1>
+          <p className="text-gray-600">Manage your streaming groups, clients, and video content</p>
+        </div>
 
         <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
           <TabsList className="grid w-full grid-cols-3 mb-8 bg-white border border-gray-200 shadow-sm">
-            <TabsTrigger 
-              value="streams" 
+            <TabsTrigger
+              value="streams"
               className="flex items-center gap-2 data-[state=active]:bg-blue-600 data-[state=active]:text-white text-gray-700"
             >
               <Monitor className="w-4 h-4" />
               Streams
             </TabsTrigger>
-            <TabsTrigger 
+            <TabsTrigger
               value="clients"
-              className="flex items-center gap-2 data-[state=active]:bg-blue-600 data-[state=active]:text-white text-gray-700"
+              className="flex items-center gap-2 data-[state=active]:bg-green-600 data-[state=active]:text-white text-gray-700"
             >
               <Users className="w-4 h-4" />
               Clients
             </TabsTrigger>
-            <TabsTrigger 
+            <TabsTrigger
               value="videos"
-              className="flex items-center gap-2 data-[state=active]:bg-blue-600 data-[state=active]:text-white text-gray-700"
+              className="flex items-center gap-2 data-[state=active]:bg-purple-600 data-[state=active]:text-white text-gray-700"
             >
               <Video className="w-4 h-4" />
-              Video Files
+              Videos
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value="streams">
-            <StreamsTab/>
+            <StreamsTab />
           </TabsContent>
-
           <TabsContent value="clients">
             <ClientsTab />
           </TabsContent>
-
           <TabsContent value="videos">
             <VideoFilesTab />
           </TabsContent>

@@ -6,13 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { ArrowUp, ArrowDown, Monitor, Wifi, WifiOff, Search, Users, RefreshCw } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { useErrorHandler } from "@/components/ErrorSystem/useErrorHandler";
 import { clientApi } from '@/API/api';
 import type { Client } from '@/types';
 
 // Make ClientsTab self-loading (remove props dependency)
 const ClientsTab = () => {
-  const { toast } = useToast();
+  const { showError } = useErrorHandler();
   const [searchTerm, setSearchTerm] = useState('');
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,17 +35,32 @@ const ClientsTab = () => {
       setClients(activeClients);
       
       if (showRefreshing) {
-        toast({
-          title: "Clients Refreshed",
-          description: `Found ${activeClients.length} active clients (${clientsData.clients?.length || 0} total)`,
+        showError({
+          message: `Clients refreshed successfully. Found ${activeClients.length} active clients (${clientsData.clients?.length || 0} total)`,
+          error_code: 'CLIENTS_REFRESHED',
+          error_category: '2xx',
+          context: {
+            component: 'ClientsTab',
+            operation: 'refreshClients',
+            active_clients: activeClients.length,
+            total_clients: clientsData.clients?.length || 0,
+            timestamp: new Date().toISOString()
+          }
         });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Error loading clients:', error);
-      toast({
-        title: "Error",
-        description: "Failed to load clients",
-        variant: "destructive",
+      showError({
+        message: "Failed to load clients",
+        error_code: 'CLIENTS_LOAD_FAILED',
+        error_category: '5xx',
+        context: {
+          component: 'ClientsTab',
+          operation: 'loadClients',
+          timestamp: new Date().toISOString(),
+          original_error: error?.message,
+          stack: error?.stack
+        }
       });
     } finally {
       setLoading(false);
