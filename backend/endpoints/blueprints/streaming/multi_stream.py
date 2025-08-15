@@ -179,7 +179,21 @@ def start_multi_video_srt():
             if not srt_status["ready"]:
                 logger.error(f"❌ SRT server not ready: {srt_status['message']}")
                 clear_active_stream_ids(group_id)
-                return jsonify({"error": f"SRT server not ready: {srt_status['message']}"}), 500
+                
+                # Use error service for structured error response
+                try:
+                    from error_service import ErrorService, ErrorCode
+                    error_response = ErrorService.create_srt_error("connection_timeout", {
+                        "srt_ip": srt_ip,
+                        "srt_port": srt_port,
+                        "group_id": group_id,
+                        "timeout": 5
+                    })
+                    return jsonify(error_response), 503
+                except ImportError:
+                    # Fallback to simple error if error service not available
+                    return jsonify({"error": f"SRT server not ready: {srt_status['message']}"}), 503
+                    
             logger.info(f"✅ SRT server ready: {srt_status['message']}")
         except Exception as e:
             # Fallback to simple socket check if import fails
@@ -202,7 +216,21 @@ def start_multi_video_srt():
             else:
                 logger.error(f"❌ SRT server not ready after {fallback_timeout}s")
                 clear_active_stream_ids(group_id)
-                return jsonify({"error": f"SRT server not ready after {fallback_timeout}s"}), 500
+                
+                # Use error service for structured error response
+                try:
+                    from error_service import ErrorService, ErrorCode
+                    error_response = ErrorService.create_srt_error("connection_timeout", {
+                        "srt_ip": srt_ip,
+                        "srt_port": srt_port,
+                        "group_id": group_id,
+                        "timeout": fallback_timeout,
+                        "fallback_method": True
+                    })
+                    return jsonify(error_response), 503
+                except ImportError:
+                    # Fallback to simple error if error service not available
+                    return jsonify({"error": f"SRT server not ready after {fallback_timeout}s"}), 500
         
         # Test SRT connection with actual FFmpeg test
         logger.info("🧪 Testing SRT connection with FFmpeg...")

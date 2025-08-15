@@ -190,7 +190,21 @@ def start_split_screen_srt():
             srt_status = SRTService.monitor_srt_server(srt_ip, srt_port, timeout=5)
             if not srt_status["ready"]:
                 logger.error(f"❌ SRT server not ready: {srt_status['message']}")
-                return jsonify({"error": f"SRT server not ready: {srt_status['message']}"}), 500
+                
+                # Use error service for structured error response
+                try:
+                    from error_service import ErrorService, ErrorCode
+                    error_response = ErrorService.create_srt_error("connection_timeout", {
+                        "srt_ip": srt_ip,
+                        "srt_port": srt_port,
+                        "group_id": group_id,
+                        "timeout": 5
+                    })
+                    return jsonify(error_response), 503
+                except ImportError:
+                    # Fallback to simple error if error service not available
+                    return jsonify({"error": f"SRT server not ready: {srt_status['message']}"}), 503
+                    
             logger.info(f"✅ SRT server ready: {srt_status['message']}")
         except Exception as e:
             # Fallback to simple socket check if import fails
@@ -212,7 +226,21 @@ def start_split_screen_srt():
                     time.sleep(1)
             else:
                 logger.error(f"❌ SRT server not ready after {fallback_timeout}s")
-                return jsonify({"error": f"SRT server not ready after {fallback_timeout}s"}), 500
+                
+                # Use error service for structured error response
+                try:
+                    from error_service import ErrorService, ErrorCode
+                    error_response = ErrorService.create_srt_error("connection_timeout", {
+                        "srt_ip": srt_ip,
+                        "srt_port": srt_port,
+                        "group_id": group_id,
+                        "timeout": fallback_timeout,
+                        "fallback_method": True
+                    })
+                    return jsonify(error_response), 503
+                except ImportError:
+                    # Fallback to simple error if error service not available
+                    return jsonify({"error": f"SRT server not ready after {fallback_timeout}s"}), 500
         
         # Test SRT connection
         logger.info("🧪 Testing SRT connection...")
