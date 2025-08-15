@@ -334,6 +334,9 @@ class UnifiedMultiScreenClient:
         self.registered = False
         self.assignment_status = "waiting_for_assignment"
         
+        # Server-assigned client ID (set after registration)
+        self._server_client_id = None
+        
         # Extract server IP for stream URL fixing
         parsed_url = urlparse(self.server_url)
         self.server_ip = parsed_url.hostname or "127.0.0.1"
@@ -352,6 +355,20 @@ class UnifiedMultiScreenClient:
         
         # Find player executable
         self.player_executable = self._find_player_executable()
+    
+    @property
+    def client_id(self) -> str:
+        """Generate unique client ID using hostname and IP address"""
+        # Use server-assigned client ID if available, otherwise generate one
+        if self._server_client_id:
+            return self._server_client_id
+        
+        try:
+            local_ip = self._get_local_ip_address()
+            return f"{self.hostname}_{local_ip}"
+        except Exception:
+            # Fallback to hostname if IP detection fails
+            return self.hostname
     
     def _setup_signal_handlers(self):
         """Setup signal handlers for graceful shutdown"""
@@ -390,6 +407,33 @@ class UnifiedMultiScreenClient:
         
         self.logger.warning("C++ player not found, will use ffplay fallback")
         return None
+    
+    def _get_local_ip_address(self) -> str:
+        """Get the local IP address for unique client identification"""
+        try:
+            # Try to get the IP address that would be used to connect to the server
+            # This helps distinguish between multiple terminal instances on the same machine
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect((self.server_ip, 80))  # Connect to server IP
+            local_ip = s.getsockname()[0]
+            s.close()
+            return local_ip
+        except Exception as e:
+            self.logger.warning(f"Could not determine local IP address: {e}")
+            # Fallback: try to get any non-loopback IP
+            try:
+                hostname = socket.gethostname()
+                local_ip = socket.gethostbyname(hostname)
+                if local_ip.startswith('127.'):
+                    # If it's loopback, try alternative method
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.connect(("8.8.8.8", 80))  # Connect to external IP
+                    local_ip = s.getsockname()[0]
+                    s.close()
+                return local_ip
+            except Exception:
+                # Final fallback: use loopback IP
+                return "127.0.0.1"
     
     def check_time_synchronization(self) -> bool:
         """Check and validate chrony time synchronization"""
@@ -532,6 +576,8 @@ class UnifiedMultiScreenClient:
             print(f"\n{'='*80}")
             print(f"🚀 STARTING UNIFIED CLIENT REGISTRATION")
             print(f"   Client: {self.hostname}")
+            print(f"   Local IP: {self._get_local_ip_address()}")
+            print(f"   Client ID: {self.client_id}")
             print(f"   Display Name: {self.display_name}")
             print(f"   Server: {self.server_url}")
             print(f"   Server IP: {self.server_ip}")
@@ -562,8 +608,12 @@ class UnifiedMultiScreenClient:
             # Get chrony sync status for registration
             sync_status = self.time_sync.get_sync_status()
             
+            # Get local IP address for unique client identification
+            local_ip = self._get_local_ip_address()
+            
             registration_data = {
                 "hostname": self.hostname,
+                "ip_address": local_ip,  # Include IP address for unique client ID
                 "display_name": self.display_name,
                 "platform": f"chrony_{player_type}",  # Indicate chrony sync
                 "time_sync_method": "chrony",
@@ -614,7 +664,7 @@ class UnifiedMultiScreenClient:
                     total_time_ms = (registration_end - registration_start) * 1000
                     
                     print(f"\n✅ REGISTRATION SUCCESSFUL!")
-                    print(f"   Client ID: {result.get('client_id', self.hostname)}")
+                    print(f"   Client ID: {result.get('client_id', self.client_id)}")
                     print(f"   Status: {result.get('status', 'registered')}")
                     print(f"   Time Sync: Chrony/NTP")
                     if 'server_time' in result:
@@ -642,6 +692,7 @@ class UnifiedMultiScreenClient:
                     
                     self.registered = True
                     self.assignment_status = result.get('status', 'waiting_for_assignment')
+                    self._server_client_id = result.get('client_id') # Store server-assigned ID
                     
                     # Show next steps
                     next_steps = result.get('next_steps', [
@@ -683,16 +734,16 @@ class UnifiedMultiScreenClient:
             try:
                 # Use new endpoint if available, fallback to legacy
                 try:
-                    response = requests.post(
-                        f"{self.server_url}/api/clients/wait_for_assignment",
-                        json={"client_id": self.hostname},
-                        timeout=10
-                    )
+                                    response = requests.post(
+                    f"{self.server_url}/api/clients/wait_for_assignment",
+                    json={"client_id": self.client_id},
+                    timeout=10
+                )
                 except requests.exceptions.RequestException:
                     # Fallback to legacy endpoint
                     response = requests.post(
                         f"{self.server_url}/wait_for_stream",
-                        json={"client_id": self.hostname},
+                        json={"client_id": self.client_id},
                         timeout=10
                     )
                 
@@ -1023,13 +1074,13 @@ class UnifiedMultiScreenClient:
             try:
                 response = requests.post(
                     f"{self.server_url}/api/clients/wait_for_assignment",
-                    json={"client_id": self.hostname},
+                    json={"client_id": self.client_id},
                     timeout=5
                 )
             except requests.exceptions.RequestException:
                 response = requests.post(
                     f"{self.server_url}/wait_for_stream",
-                    json={"client_id": self.hostname},
+                    json={"client_id": self.client_id},
                     timeout=5
                 )
             
@@ -1155,6 +1206,7 @@ class UnifiedMultiScreenClient:
             print(f"🎯 UNIFIED MULTI-SCREEN CLIENT WITH CHRONY SYNC")
             print(f"   Following OpenVideoWalls synchronization methodology")
             print(f"   Hostname: {self.hostname}")
+            print(f"   Client ID: {self.client_id}")
             print(f"   Display Name: {self.display_name}")
             print(f"   Server: {self.server_url}")
             print(f"   Time Sync: Chrony/NTP (tolerance: ±{self.time_sync.tolerance_ms}ms)")
