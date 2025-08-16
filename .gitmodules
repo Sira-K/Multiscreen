@@ -1,6 +1,0 @@
-[submodule "client/client"]
-	path = client/client
-	url = https://github.com/hwsel/multi-screen
-[submodule "client/multi-screen"]
-	path = client/multi-screen
-	url = https://github.com/hwsel/multi-screen

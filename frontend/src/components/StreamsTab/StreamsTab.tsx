@@ -9,7 +9,7 @@ import type { Group, Video, Client } from '../../types';
 import StreamsTabHeader from './StreamsTabHeader';
 import StreamsTabStats from './StreamsTabStats';
 import StreamsTabGroups from './StreamsTabGroups';
-import StreamsTabArchitectureInfo from './StreamsTabArchitectureInfo';
+
 
 // Import custom hooks
 import { useStreamsData } from './hooks/useStreamsData';
@@ -18,7 +18,7 @@ import { useGroupOperations } from './hooks/useGroupOperations';
 import { useClientAssignment } from './hooks/useClientAssignment';
 
 const StreamsTab = () => {
-  const { showError, handleApiError } = useErrorHandler();
+  const { showError, showErrorByCode, handleApiError } = useErrorHandler();
   const hasInitialized = useRef(false); // Prevent multiple initializations
   
   // State management using custom hooks
@@ -70,24 +70,19 @@ const StreamsTab = () => {
       } catch (error: any) {
         console.error('❌ Error loading initial data:', error);
         
-        // Use the new error system for comprehensive error handling
-        showError({
-          message: error?.message || "Failed to load application data",
-          error_code: 'DATA_LOAD_FAILED',
-          error_category: '5xx',
-          context: {
-            component: 'StreamsTab',
-            operation: 'initial_data_load',
-            timestamp: new Date().toISOString(),
-            original_error: error?.message,
-            stack: error?.stack
-          }
+        // Use the enhanced error system with showErrorByCode
+        showErrorByCode('DATA_LOAD_FAILED', {
+          component: 'StreamsTab',
+          operation: 'initial_data_load',
+          timestamp: new Date().toISOString(),
+          original_error: error?.message,
+          stack: error?.stack
         });
       }
     };
 
     initializeData();
-  }, [loadInitialData, showError]);
+  }, [loadInitialData, showErrorByCode]);
 
   // Debug effect to monitor streaming status changes - THROTTLED
   useEffect(() => {
@@ -177,8 +172,7 @@ const StreamsTab = () => {
         setShowCreateForm={setShowCreateForm}
       />
 
-      {/* Architecture Info */}
-      <StreamsTabArchitectureInfo />
+
     </div>
   );
 };
