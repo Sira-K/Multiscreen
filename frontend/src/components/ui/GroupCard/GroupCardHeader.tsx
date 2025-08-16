@@ -10,6 +10,7 @@ import {
   ChevronDown, ChevronUp, Copy, VideoIcon
 } from 'lucide-react';
 import { Group, Client } from '../../../types';
+import { VideoAssignment } from './types';
 
 interface GroupCardHeaderProps {
   group: Group;
@@ -27,6 +28,7 @@ interface GroupCardHeaderProps {
   handleStopStreaming: () => void;
   isStartingMultiVideo: boolean;
   isStartingSingleVideo: boolean;
+  videoAssignments: VideoAssignment[]; // Add this prop for video assignment status
 }
 
 const GroupCardHeader: React.FC<GroupCardHeaderProps> = ({
@@ -44,13 +46,18 @@ const GroupCardHeader: React.FC<GroupCardHeaderProps> = ({
   handleStartSingleVideoSplit,
   handleStopStreaming,
   isStartingMultiVideo,
-  isStartingSingleVideo
+  isStartingSingleVideo,
+  videoAssignments
 }) => {
   const isStoppingStream = operationInProgress === 'stopping';
   const isAnyOperationInProgress = operationInProgress !== null || isStartingMultiVideo || isStartingSingleVideo;
   
-  // Determine if streaming can be started (Docker must be running)
-  const canStartStreaming = group.docker_running && !isAnyOperationInProgress;
+  // Determine if streaming can be started based on mode
+  const canStartStreaming = group.docker_running && !isAnyOperationInProgress && (
+    group.streaming_mode === 'single_video_split' 
+      ? !!selectedVideoFile  // Single video split only needs 1 video selected
+      : hasCompleteAssignments  // Multi-video needs all screens to have videos
+  );
   const canStopStreaming = group.docker_running && !isStoppingStream;
 
   const getDockerStatusBadge = () => {
@@ -150,9 +157,10 @@ const GroupCardHeader: React.FC<GroupCardHeaderProps> = ({
                     }
                   }}
                   disabled={!canStartStreaming}
+                  title={!hasCompleteAssignments ? "All screens must have videos assigned for multi-video streaming" : ""}
                 >
                   <Play className="h-3 w-3 mr-1" />
-                  {hasCompleteAssignments ? 'Start' : 'Setup'}
+                  {hasCompleteAssignments ? 'Start' : `${group.screen_count - videoAssignments.filter(a => a.file).length} Videos Missing`}
                 </Button>
               ) : (
                 <Button
@@ -166,6 +174,7 @@ const GroupCardHeader: React.FC<GroupCardHeaderProps> = ({
                     }
                   }}
                   disabled={!canStartStreaming}
+                  title={!selectedVideoFile ? "Select a video file to start streaming" : ""}
                 >
                   <Play className="h-3 w-3 mr-1" />
                   {selectedVideoFile ? 'Start' : 'Select Video'}
@@ -188,6 +197,26 @@ const GroupCardHeader: React.FC<GroupCardHeaderProps> = ({
           </Collapsible>
         </div>
       </div>
+
+      {/* Video Assignment Status - Only show for multi-video mode */}
+      {!localIsStreaming && group.docker_running && group.streaming_mode === 'multi_video' && !hasCompleteAssignments && (
+        <div className="flex items-center gap-2 mt-2 text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded">
+          <AlertCircle className="h-3 w-3" />
+          <span>
+            {group.screen_count - videoAssignments.filter(a => a.file).length} of {group.screen_count} screens need videos assigned
+          </span>
+        </div>
+      )}
+
+      {/* Single Video Status - Only show for single video split mode */}
+      {!localIsStreaming && group.docker_running && group.streaming_mode === 'single_video_split' && !selectedVideoFile && (
+        <div className="flex items-center gap-2 mt-2 text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded">
+          <AlertCircle className="h-3 w-3" />
+          <span>
+            Select a video file to start split-screen streaming
+          </span>
+        </div>
+        )}
 
       {/* Quick Stats Bar */}
       <div className="flex items-center gap-4 mt-2 text-xs text-gray-600">
