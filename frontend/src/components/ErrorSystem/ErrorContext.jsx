@@ -73,12 +73,21 @@ export const ErrorProvider = ({ children }) => {
 
   // Show specific error by code
   const showErrorByCode = useCallback((errorCode, context = {}) => {
-    // This would typically fetch from your error service
+    // Get detailed error information from application error mapping
+    const appError = getApplicationErrorCode(errorCode);
+    
     const error = {
       error_code: errorCode,
-      message: `Error ${errorCode} occurred`,
-      error_category: getCategoryFromCode(errorCode),
-      context
+      message: appError.message,
+      error_category: appError.error_category,
+      common_causes: appError.common_causes,
+      what_this_means: appError.what_this_means,
+      primary_solution: appError.primary_solution,
+      troubleshooting_steps: appError.troubleshooting_steps,
+      context: {
+        ...context,
+        error_type: 'application_error'
+      }
     };
     
     showError(error);
@@ -385,5 +394,58 @@ const mapHttpStatusToError = (status, originalError) => {
       http_status: status,
       original_error: originalError
     }
+  };
+};
+
+// Add specific error code mappings for common application errors
+const getApplicationErrorCode = (errorCode) => {
+  const mapping = {
+    'DATA_LOAD_FAILED': {
+      message: 'Failed to load application data',
+      error_category: '5xx',
+      common_causes: [
+        'Backend server is not running',
+        'Network connectivity issues',
+        'Database connection problems',
+        'API endpoint unavailable',
+        'Authentication/authorization failures'
+      ],
+      what_this_means: 'The application cannot retrieve the necessary data to function properly. This typically indicates a backend service issue or network problem.',
+      primary_solution: 'Check if the backend server is running and accessible. Verify network connectivity and ensure all required services are operational.',
+      troubleshooting_steps: [
+        'Verify backend server is running',
+        'Check network connectivity',
+        'Review server logs for errors',
+        'Ensure database is accessible',
+        'Verify API endpoints are working'
+      ]
+    },
+    'DATA_REFRESH_FAILED': {
+      message: 'Failed to refresh application data',
+      error_category: '5xx',
+      common_causes: [
+        'Backend server temporarily unavailable',
+        'Network timeout',
+        'Rate limiting',
+        'Service overload'
+      ],
+      what_this_means: 'The application cannot update its current data. This may be a temporary issue that resolves itself.',
+      primary_solution: 'Wait a moment and try refreshing again. If the problem persists, check backend server status.',
+      troubleshooting_steps: [
+        'Wait and retry the operation',
+        'Check backend server status',
+        'Verify network connectivity',
+        'Check for rate limiting'
+      ]
+    }
+  };
+  
+  return mapping[errorCode] || {
+    message: `Error ${errorCode} occurred`,
+    error_category: '5xx',
+    common_causes: ['Unknown error'],
+    what_this_means: 'An unexpected error occurred.',
+    primary_solution: 'Check the application logs for more details.',
+    troubleshooting_steps: ['Review error logs', 'Contact support']
   };
 };

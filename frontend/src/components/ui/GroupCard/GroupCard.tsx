@@ -148,6 +148,7 @@ const GroupCard: React.FC<GroupCardProps> = ({
           handleStopStreaming={handleStopStreaming}
           isStartingMultiVideo={isStartingMultiVideo}
           isStartingSingleVideo={isStartingSingleVideo}
+          videoAssignments={videoAssignments}
         />
 
         <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>

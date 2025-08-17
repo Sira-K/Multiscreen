@@ -611,6 +611,17 @@ class UnifiedMultiScreenClient:
             # Get local IP address for unique client identification
             local_ip = self._get_local_ip_address()
             
+            # Filter out None values and convert inf values to avoid JSON serialization issues
+            filtered_sync_status = {}
+            for key, value in sync_status.items():
+                if key in ['synchronized', 'offset_ms', 'stratum', 'reference']:
+                    if value is not None:
+                        # Convert inf values to a large finite number for JSON compatibility
+                        if isinstance(value, float) and (value == float('inf') or value == float('-inf')):
+                            filtered_sync_status[key] = 999999.0  # Use a large finite number
+                        else:
+                            filtered_sync_status[key] = value
+            
             registration_data = {
                 "hostname": self.hostname,
                 "ip_address": local_ip,  # Include IP address for unique client ID
@@ -618,12 +629,7 @@ class UnifiedMultiScreenClient:
                 "platform": f"chrony_{player_type}",  # Indicate chrony sync
                 "time_sync_method": "chrony",
                 "sync_tolerance_ms": self.time_sync.tolerance_ms,
-                "sync_status": {
-                    "synchronized": sync_status.get('synchronized', False),
-                    "offset_ms": sync_status.get('offset_ms'),
-                    "stratum": sync_status.get('stratum'),
-                    "reference": sync_status.get('reference')
-                }
+                "sync_status": filtered_sync_status
             }
             
             print(f"\n📡 Sending registration request...")
@@ -631,13 +637,36 @@ class UnifiedMultiScreenClient:
             
             # Try new registration endpoint first, fallback to legacy
             try:
+                print(f"🔍 Trying new endpoint: {self.server_url}/api/clients/register")
+                print(f"🔍 Registration data: {json.dumps(registration_data, indent=2)}")
                 response = requests.post(
                     f"{self.server_url}/api/clients/register",
                     json=registration_data,
                     timeout=10
                 )
                 endpoint_used = "new (/api/clients/register)"
-            except requests.exceptions.RequestException:
+                print(f"✅ New endpoint succeeded with status: {response.status_code}")
+            except requests.exceptions.RequestException as e:
+                # Fallback to legacy endpoint (simplified data)
+                print(f"❌ New endpoint failed with RequestException: {e}")
+                self.logger.info("New endpoint failed, trying legacy endpoint...")
+                legacy_data = {
+                    "hostname": self.hostname,
+                    "display_name": self.display_name,
+                    "platform": f"chrony_{player_type}"
+                }
+                response = requests.post(
+                    f"{self.server_url}/register_client",
+                    json=legacy_data,
+                    timeout=10
+                )
+                endpoint_used = "legacy (/register_client)"
+            except Exception as e:
+                # Catch any other exceptions
+                print(f"❌ New endpoint failed with unexpected error: {e}")
+                print(f"❌ Error type: {type(e).__name__}")
+                import traceback
+                print(f"❌ Traceback: {traceback.format_exc()}")
                 # Fallback to legacy endpoint (simplified data)
                 self.logger.info("New endpoint failed, trying legacy endpoint...")
                 legacy_data = {

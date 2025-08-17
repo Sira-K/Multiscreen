@@ -20,7 +20,15 @@ const ErrorNotification = () => {
             detailed_solutions: ['Restart the service', 'Verify configuration']
         };
 
-        if (error.context && error.context.server_response) {
+        // Check if we have enhanced error information from the context
+        if (error.common_causes && error.what_this_means && error.primary_solution) {
+            details = {
+                meaning: error.what_this_means,
+                common_causes: error.common_causes,
+                primary_solution: error.primary_solution,
+                detailed_solutions: error.troubleshooting_steps || []
+            };
+        } else if (error.context && error.context.server_response) {
             const serverResponse = error.context.server_response;
             if (serverResponse.error) { details.message = serverResponse.error; }
             if (serverResponse.details) { details.meaning = serverResponse.details; }
@@ -34,9 +42,7 @@ const ErrorNotification = () => {
                     'Check request body structure'
                 ];
             }
-        }
-
-        if (error.error_code) {
+        } else if (error.error_code) {
             const errorCode = error.error_code.toString();
             if (errorCode.startsWith('HTTP_4')) {
                 if (errorCode === 'HTTP_400') {
@@ -180,30 +186,30 @@ const ErrorNotification = () => {
     // Expanded detailed view
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-2 z-50">
-            <div className="bg-white rounded-lg border shadow-lg max-w-lg w-full max-h-[95vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white rounded-xl border shadow-lg max-w-2xl w-full max-h-[90vh] flex flex-col mx-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
                 {/* Header */}
-                <div className={`border-l-4 ${getErrorColor(currentError.error_category || '5xx')} p-4`}>
+                <div className={`border-l-4 ${getErrorColor(currentError.error_category || '5xx')} p-4 flex-shrink-0 rounded-t-xl`}>
                     <div className="flex items-start justify-between">
                         <div className="flex items-start space-x-2">
                             <span className="text-xl">
                                 {getErrorIcon(currentError.error_category || '5xx')}
                             </span>
                             <div className="flex-1 min-w-0">
-                                <h3 className="text-base font-semibold leading-tight tracking-tight truncate">
+                                <h3 className="text-lg font-semibold leading-tight tracking-tight">
                                     Error {currentError.error_code || 'Unknown'}
                                 </h3>
-                                <p className="text-xs mt-1 text-gray-600 line-clamp-2">{currentError.message || 'An error occurred'}</p>
+                                <p className="text-sm mt-1 text-gray-600 break-words">{currentError.message || 'An error occurred'}</p>
                             </div>
                         </div>
                         <div className="flex items-center space-x-2 flex-shrink-0">
                             <button
-                                className="inline-flex items-center justify-center gap-1 whitespace-nowrap rounded text-xs font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 h-7 px-2 bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                                className="inline-flex items-center justify-center gap-1 whitespace-nowrap rounded text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 h-8 px-3 bg-secondary text-secondary-foreground hover:bg-secondary/80"
                                 onClick={() => setIsExpanded(false)}
                             >
                                 Collapse
                             </button>
                             <button
-                                className="inline-flex items-center justify-center gap-1 whitespace-nowrap rounded text-xs font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 h-7 w-7 rounded border border-input bg-background hover:bg-accent hover:text-accent-foreground"
+                                className="inline-flex items-center justify-center gap-1 whitespace-nowrap rounded text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 h-8 w-8 rounded border border-input bg-background hover:bg-accent hover:text-accent-foreground"
                                 onClick={clearError}
                             >
                                 ✕
@@ -213,42 +219,42 @@ const ErrorNotification = () => {
                 </div>
 
                 {/* Content */}
-                <div className="p-4 pt-0">
+                <div className="p-4 pt-0 flex-1 overflow-y-auto">
                     {/* Basic Error Info */}
                     <div className="space-y-3">
                         {currentError.context && (
-                            <div className="space-y-2">
-                                <h4 className="text-xs font-medium text-gray-900">Context</h4>
-                                <div className="bg-gray-50 rounded p-2 text-xs">
-                                    <div className="grid grid-cols-1 gap-1">
+                            <div className="space-y-3">
+                                <h4 className="text-sm font-medium text-gray-900">Context</h4>
+                                <div className="bg-gray-50 rounded-lg p-3 text-sm">
+                                    <div className="space-y-2">
                                         {currentError.context.component && (
-                                            <div className="flex justify-between">
+                                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-1">
                                                 <span className="font-medium text-gray-600">Component:</span>
-                                                <span className="text-gray-900 truncate ml-2">{currentError.context.component}</span>
+                                                <span className="text-gray-900 break-words">{currentError.context.component}</span>
                                             </div>
                                         )}
                                         {currentError.context.operation && (
-                                            <div className="flex justify-between">
+                                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-1">
                                                 <span className="font-medium text-gray-600">Operation:</span>
-                                                <span className="text-gray-900 truncate ml-2">{currentError.context.operation}</span>
+                                                <span className="text-gray-900 break-words">{currentError.context.operation}</span>
                                             </div>
                                         )}
                                         {currentError.context.server_status && (
-                                            <div className="flex justify-between">
+                                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-1">
                                                 <span className="font-medium text-gray-600">HTTP Status:</span>
-                                                <span className="text-gray-900 ml-2">{currentError.context.server_status}</span>
+                                                <span className="text-gray-900">{currentError.context.server_status}</span>
                                             </div>
                                         )}
                                         {currentError.context.api_base_url && (
-                                            <div className="flex justify-between">
+                                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-1">
                                                 <span className="font-medium text-gray-600">API URL:</span>
-                                                <span className="text-gray-900 truncate ml-2 text-xs">{currentError.context.api_base_url}</span>
+                                                <span className="text-gray-900 break-all text-xs">{currentError.context.api_base_url}</span>
                                             </div>
                                         )}
                                         {currentError.context.timestamp && (
-                                            <div className="flex justify-between">
+                                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-1">
                                                 <span className="font-medium text-gray-600">Timestamp:</span>
-                                                <span className="text-gray-900 ml-2 text-xs">{new Date(currentError.context.timestamp).toLocaleString()}</span>
+                                                <span className="text-gray-900">{new Date(currentError.context.timestamp).toLocaleString()}</span>
                                             </div>
                                         )}
                                     </div>
@@ -258,26 +264,26 @@ const ErrorNotification = () => {
 
                         {/* Server Response Details */}
                         {currentError.context && currentError.context.server_response && (
-                            <div className="space-y-2">
-                                <h4 className="text-xs font-medium text-gray-900">Server Response</h4>
-                                <div className="bg-blue-50 border border-blue-200 rounded p-2 text-xs">
-                                    <div className="space-y-1">
+                            <div className="space-y-3">
+                                <h4 className="text-sm font-medium text-gray-900">Server Response</h4>
+                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
+                                    <div className="space-y-2">
                                         {currentError.context.server_response.error && (
-                                            <div className="flex justify-between">
+                                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-1">
                                                 <span className="font-medium text-blue-700">Error:</span>
-                                                <span className="text-blue-900 truncate ml-2">{currentError.context.server_response.error}</span>
+                                                <span className="text-blue-900 break-words">{currentError.context.server_response.error}</span>
                                             </div>
                                         )}
                                         {currentError.context.server_response.message && (
-                                            <div className="flex justify-between">
+                                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-1">
                                                 <span className="font-medium text-blue-700">Message:</span>
-                                                <span className="text-blue-900 truncate ml-2">{currentError.context.server_response.message}</span>
+                                                <span className="text-blue-900 break-words">{currentError.context.server_response.message}</span>
                                             </div>
                                         )}
                                         {currentError.context.server_response.details && (
-                                            <div className="flex justify-between">
+                                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-1">
                                                 <span className="font-medium text-blue-700">Details:</span>
-                                                <span className="text-blue-900 truncate ml-2">{currentError.context.server_response.details}</span>
+                                                <span className="text-blue-900 break-words">{currentError.context.server_response.details}</span>
                                             </div>
                                         )}
                                         {currentError.context.server_response.validation_errors && (
@@ -303,20 +309,20 @@ const ErrorNotification = () => {
                                 {/* Error Meaning */}
                                 {errorDetails.meaning && (
                                     <div>
-                                        <h4 className="text-xs font-medium text-gray-900 mb-1">What This Means</h4>
-                                        <p className="text-xs text-gray-600 bg-gray-50 rounded p-2">{errorDetails.meaning}</p>
+                                        <h4 className="text-sm font-medium text-gray-900 mb-2">What This Means</h4>
+                                        <p className="text-sm text-gray-600 bg-gray-50 rounded-lg p-3 leading-relaxed break-words">{errorDetails.meaning}</p>
                                     </div>
                                 )}
 
                                 {/* Common Causes */}
                                 {errorDetails.common_causes && errorDetails.common_causes.length > 0 && (
                                     <div>
-                                        <h4 className="text-xs font-medium text-gray-900 mb-1">Common Causes</h4>
-                                        <ul className="text-xs text-gray-600 bg-gray-50 rounded p-2 space-y-1">
+                                        <h4 className="text-sm font-medium text-gray-900 mb-2">Common Causes</h4>
+                                        <ul className="text-sm text-gray-600 bg-gray-50 rounded-lg p-3 space-y-2">
                                             {errorDetails.common_causes.map((cause, index) => (
                                                 <li key={index} className="flex items-start">
-                                                    <span className="text-red-500 mr-1 text-xs">•</span>
-                                                    <span className="text-xs">{cause}</span>
+                                                    <span className="text-red-500 mr-2 text-sm flex-shrink-0">•</span>
+                                                    <span className="text-sm break-words">{cause}</span>
                                                 </li>
                                             ))}
                                         </ul>
@@ -326,20 +332,20 @@ const ErrorNotification = () => {
                                 {/* Primary Solution */}
                                 {errorDetails.primary_solution && (
                                     <div>
-                                        <h4 className="text-xs font-medium text-gray-900 mb-1">Primary Solution</h4>
-                                        <p className="text-xs text-gray-600 bg-blue-50 rounded p-2 border border-blue-200">{errorDetails.primary_solution}</p>
+                                        <h4 className="text-sm font-medium text-gray-900 mb-2">Primary Solution</h4>
+                                        <p className="text-sm text-gray-600 bg-blue-50 rounded-lg p-3 border border-blue-200 leading-relaxed break-words">{errorDetails.primary_solution}</p>
                                     </div>
                                 )}
 
                                 {/* Detailed Solutions */}
                                 {errorDetails.detailed_solutions && errorDetails.detailed_solutions.length > 0 && (
                                     <div>
-                                        <h4 className="text-xs font-medium text-gray-900 mb-1">Detailed Solutions</h4>
-                                        <ul className="text-xs text-gray-600 bg-gray-50 rounded p-2 space-y-1">
+                                        <h4 className="text-sm font-medium text-gray-900 mb-2">Detailed Solutions</h4>
+                                        <ul className="text-sm text-gray-600 bg-gray-50 rounded-lg p-3 space-y-2">
                                             {errorDetails.detailed_solutions.map((solution, index) => (
                                                 <li key={index} className="flex items-start">
-                                                    <span className="text-blue-500 mr-1 text-xs">•</span>
-                                                    <span className="text-xs">{solution}</span>
+                                                    <span className="text-blue-500 mr-2 text-sm flex-shrink-0">•</span>
+                                                    <span className="text-sm break-words">{solution}</span>
                                                 </li>
                                             ))}
                                         </ul>
@@ -351,19 +357,19 @@ const ErrorNotification = () => {
                 </div>
 
                 {/* Footer */}
-                <div className="flex items-center justify-between p-4 pt-0 border-t">
-                    <div className="text-xs text-gray-500">
+                <div className="flex items-center justify-between p-4 pt-0 border-t flex-shrink-0 rounded-b-xl">
+                    <div className="text-sm text-gray-500">
                         Error ID: {currentError.id || 'N/A'}
                     </div>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex items-center space-x-3">
                         <button
-                            className="inline-flex items-center justify-center gap-1 whitespace-nowrap rounded text-xs font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 h-7 px-3 bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                            className="inline-flex items-center justify-center gap-1 whitespace-nowrap rounded text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 h-8 px-4 bg-secondary text-secondary-foreground hover:bg-secondary/80"
                             onClick={() => setIsExpanded(false)}
                         >
                             Back to Toast
                         </button>
                         <button
-                            className="inline-flex items-center justify-center gap-1 whitespace-nowrap rounded text-xs font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 h-7 px-3 bg-primary text-primary-foreground hover:bg-primary/90"
+                            className="inline-flex items-center justify-center gap-1 whitespace-nowrap rounded text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 h-8 px-4 bg-primary text-primary-foreground hover:bg-primary/90"
                             onClick={clearError}
                         >
                             Dismiss
