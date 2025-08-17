@@ -39,6 +39,25 @@ split_stream_bp = Blueprint('split_stream', __name__)
 # Configure logger
 logger = logging.getLogger(__name__)
 
+# Global storage for current active stream IDs
+# This stores the stream IDs that are currently being used by active FFmpeg processes
+_active_stream_ids = {}
+
+def get_active_stream_ids(group_id: str) -> Dict[str, str]:
+    """Get current active stream IDs for a group"""
+    return _active_stream_ids.get(group_id, {})
+
+def set_active_stream_ids(group_id: str, stream_ids: Dict[str, str]):
+    """Set current active stream IDs for a group"""
+    _active_stream_ids[group_id] = stream_ids
+    logger.info(f"📝 Stored active stream IDs for group {group_id}: {stream_ids}")
+
+def clear_active_stream_ids(group_id: str):
+    """Clear current active stream IDs for a group when streaming stops"""
+    if group_id in _active_stream_ids:
+        del _active_stream_ids[group_id]
+        logger.info(f"🗑️ Cleared active stream IDs for group {group_id}")
+
 # ============================================================================
 # FLASK ROUTE HANDLERS
 # ============================================================================
@@ -465,6 +484,90 @@ def start_split_screen_srt():
         logger.error("="*60)
         return jsonify({"error": str(e)}), 500
 
+@split_stream_bp.route("/stop_group_stream", methods=["POST", "OPTIONS"])
+def stop_group_stream():
+    """Stop streaming for a specific group"""
+    if request.method == "OPTIONS":
+        # Handle preflight request
+        response = jsonify({"message": "OK"})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
+        response.headers.add("Access-Control-Allow-Methods", "POST, OPTIONS")
+        return response
+    
+    try:
+        data = request.get_json() or {}
+        group_id = data.get("group_id")
+        
+        if not group_id:
+            return jsonify({"error": "group_id is required"}), 400
+        
+        logger.info(f"🛑 Stopping group stream for group: {group_id}")
+        
+        # Discover group
+        group = discover_group_from_docker(group_id)
+        if not group:
+            return jsonify({"error": f"Group '{group_id}' not found"}), 404
+        
+        group_name = group.get("name", group_id)
+        container_id = group.get("container_id")
+        
+        # Find running FFmpeg processes for this group
+        running_processes = find_running_ffmpeg_for_group_strict(group_id, group_name, container_id)
+        
+        if not running_processes:
+            logger.info(f"✅ No active streams found for group '{group_name}'")
+            clear_active_stream_ids(group_id)
+            return jsonify({
+                "message": f"No active streams found for group '{group_name}'",
+                "status": "no_streams"
+            }), 200
+        
+        # Stop each process
+        stopped_count = 0
+        for proc_info in running_processes:
+            try:
+                pid = proc_info["pid"]
+                logger.info(f"🛑 Stopping FFmpeg process {pid} for group '{group_name}'")
+                
+                # Send SIGTERM first
+                os.kill(pid, 15)  # SIGTERM
+                
+                # Wait a bit for graceful shutdown
+                time.sleep(2)
+                
+                # Check if process is still running
+                try:
+                    os.kill(pid, 0)  # Check if process exists
+                    logger.info(f"⚠️  Process {pid} still running, sending SIGKILL")
+                    os.kill(pid, 9)  # SIGKILL
+                except OSError:
+                    # Process already terminated
+                    pass
+                
+                stopped_count += 1
+                logger.info(f"✅ Successfully stopped FFmpeg process {pid}")
+                
+            except Exception as e:
+                logger.error(f"❌ Error stopping process {proc_info['pid']}: {e}")
+        
+        # Clear active stream IDs
+        clear_active_stream_ids(group_id)
+        
+        logger.info(f"✅ Stopped {stopped_count} FFmpeg process(es) for group '{group_name}'")
+        
+        return jsonify({
+            "message": f"Stopped {stopped_count} stream(s) for group '{group_name}'",
+            "status": "stopped",
+            "group_id": group_id,
+            "group_name": group_name,
+            "stopped_processes": stopped_count
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error stopping group stream: {e}")
+        return jsonify({"error": str(e)}), 500
+
 # ============================================================================
 # COMMAND BUILDER FUNCTIONS
 # ============================================================================
@@ -490,7 +593,10 @@ def build_split_screen_ffmpeg_command(
 ) -> List[str]:
     """
     Build FFmpeg command for split-screen streaming
-    Takes a single video and splits it into multiple screen regions
+    Takes a single video and splits it into multiple screen regions.
+    
+    The video is scaled to fill the entire canvas (crop if needed) to avoid black bars.
+    For example: 1920x1080 video → 3840x2160 (scaled up) → cropped to 3840x1080
     """
     
     ffmpeg_path = find_ffmpeg_executable()
@@ -502,12 +608,13 @@ def build_split_screen_ffmpeg_command(
     # Use a single filter chain with commas instead of semicolons to avoid stream specifier issues
     filter_parts = []
     
-    # Start with scaling and padding
+    # Scale video to fill entire canvas and crop if needed (no black bars)
+    # force_original_aspect_ratio=increase: scales up to fill canvas, may exceed dimensions
+    # crop: trims excess to exact canvas size, ensuring video covers entire area
     filter_parts.append(
         f"[0:v]scale={canvas_width}:{canvas_height}:"
-        f"force_original_aspect_ratio=decrease,"
-        f"pad={canvas_width}:{canvas_height}:"
-        f"(ow-iw)/2:(oh-ih)/2:black"
+        f"force_original_aspect_ratio=increase,"
+        f"crop={canvas_width}:{canvas_height}:0:0"
     )
     
     # Add split to create multiple copies - combine with output labels to avoid comma issue

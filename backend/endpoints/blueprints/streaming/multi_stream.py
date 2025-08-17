@@ -174,7 +174,7 @@ def start_multi_video_srt():
             if services_path not in sys.path:
                 sys.path.insert(0, services_path)
             
-            from srt_service import SRTService
+            from services.srt_service import SRTService
             srt_status = SRTService.monitor_srt_server(srt_ip, srt_port, timeout=5)
             if not srt_status["ready"]:
                 logger.error(f"❌ SRT server not ready: {srt_status['message']}")
@@ -578,9 +578,18 @@ def all_streaming_statuses():
         logger.error(f"Error getting streaming statuses: {e}")
         return jsonify({"error": str(e)}), 500
 
-@multi_stream_bp.route("/stop_stream", methods=["POST"])
-def stop_stream():
+
+@multi_stream_bp.route("/stop_group_stream", methods=["POST", "OPTIONS"])
+def stop_group_stream():
     """Stop streaming for a specific group"""
+    if request.method == "OPTIONS":
+        # Handle preflight request
+        response = jsonify({"message": "OK"})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
+        response.headers.add("Access-Control-Allow-Methods", "POST, OPTIONS")
+        return response
+    
     try:
         data = request.get_json() or {}
         group_id = data.get("group_id")
@@ -588,7 +597,7 @@ def stop_stream():
         if not group_id:
             return jsonify({"error": "group_id is required"}), 400
         
-        logger.info(f"🛑 Stopping stream for group: {group_id}")
+        logger.info(f"🛑 Stopping group stream for group: {group_id}")
         
         # Discover group
         group = discover_group_from_docker(group_id)
@@ -644,14 +653,14 @@ def stop_stream():
         
         return jsonify({
             "message": f"Stopped {stopped_count} stream(s) for group '{group_name}'",
+            "status": "stopped",
             "group_id": group_id,
             "group_name": group_name,
-            "stopped_processes": stopped_count,
-            "status": "stopped"
+            "stopped_processes": stopped_count
         }), 200
         
     except Exception as e:
-        logger.error(f"Error stopping stream: {e}")
+        logger.error(f"Error stopping group stream: {e}")
         return jsonify({"error": str(e)}), 500
 
 # ============================================================================

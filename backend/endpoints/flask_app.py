@@ -91,7 +91,7 @@ def create_app():
                 "multi_stream": "/api/streaming/start_multi_video_srt",
                 "split_stream": "/api/streaming/start_split_screen_srt",
                 "streaming_status": "/api/streaming/all_streaming_statuses",
-                "stop_stream": "/api/streaming/stop_stream",
+                "stop_stream": "/api/streaming/stop_group_stream",
                 "videos": "/api/videos",
 
             },

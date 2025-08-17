@@ -82,20 +82,26 @@ def check_streaming_status_for_group(group_id: str, group_name: str, container_i
     """
     try:
         # Try to import the stream status check
-        from ..stream_management import find_running_ffmpeg_for_group
-        processes = find_running_ffmpeg_for_group(group_id, group_name)
+        from ..streaming.split_stream import find_running_ffmpeg_for_group_strict
+        processes = find_running_ffmpeg_for_group_strict(group_id, group_name, None)
         return len(processes) > 0
     except ImportError:
-        logger.warning("Stream management not available, checking alternative way")
-        # Try checking if FFmpeg is running with the group name
         try:
-            import subprocess
-            result = subprocess.run(['pgrep', '-f', f'live/{group_name}/'], capture_output=True)
-            return result.returncode == 0
-        except:
-            # Assume streaming is active if we can't check
-            logger.warning("Cannot verify streaming status, assuming active")
-            return True
+            # Try alternative import path
+            from ..streaming.multi_stream import find_running_ffmpeg_for_group_strict
+            processes = find_running_ffmpeg_for_group_strict(group_id, group_name, None)
+            return len(processes) > 0
+        except ImportError:
+            logger.warning("Stream management not available, checking alternative way")
+            # Try checking if FFmpeg is running with the group name
+            try:
+                import subprocess
+                result = subprocess.run(['pgrep', '-f', f'live/{group_name}/'], capture_output=True)
+                return result.returncode == 0
+            except:
+                # Assume streaming is active if we can't check
+                logger.warning("Cannot verify streaming status, assuming active")
+                return True
     except Exception as e:
         logger.error(f"Error checking streaming status: {e}")
         # Assume streaming is active if we can't check
@@ -468,7 +474,7 @@ def wait_for_assignment():
             
             try:
                 # Try to check if FFmpeg is running
-                from ..stream_management import find_running_ffmpeg_for_group_strict
+                from ..streaming.split_stream import find_running_ffmpeg_for_group_strict
                 processes = find_running_ffmpeg_for_group_strict(group_id, group_name, group.get("container_id"))
                 is_streaming = len(processes) > 0
                 logger.info(f"🔍 FFmpeg check for group {group_name}: {len(processes)} processes found, is_streaming={is_streaming}")
@@ -476,22 +482,19 @@ def wait_for_assignment():
                 logger.warning(f"Import error checking streaming status: {e}")
                 # Try alternative import path
                 try:
-                    try:
-                        from blueprints.streaming.split_stream import find_running_ffmpeg_for_group_strict
-                    except ImportError:
-                        try:
-                            from blueprints.streaming.multi_stream import find_running_ffmpeg_for_group_strict
-                        except ImportError:
-                            # Fallback function if import fails
-                            def find_running_ffmpeg_for_group_strict(group_id: str, group_name: str, container_id: str):
-                                """Find running FFmpeg processes for a group"""
-                                return []
+                    from ..streaming.multi_stream import find_running_ffmpeg_for_group_strict
                     processes = find_running_ffmpeg_for_group_strict(group_id, group_name, group.get("container_id"))
                     is_streaming = len(processes) > 0
                     logger.info(f"🔍 FFmpeg check (alt import) for group {group_name}: {len(processes)} processes found, is_streaming={is_streaming}")
-                except Exception as e2:
-                    logger.error(f"Alternative import also failed: {e2}")
-                    is_streaming = False
+                except ImportError as e2:
+                    logger.warning(f"Both streaming imports failed, using fallback: {e2}")
+                    # Fallback function if import fails
+                    def find_running_ffmpeg_for_group_strict(group_id: str, group_name: str, container_id: str):
+                        """Find running FFmpeg processes for a group"""
+                        return []
+                    processes = find_running_ffmpeg_for_group_strict(group_id, group_name, group.get("container_id"))
+                    is_streaming = len(processes) > 0
+                    logger.info(f"🔍 FFmpeg check (fallback) for group {group_name}: {len(processes)} processes found, is_streaming={is_streaming}")
             except Exception as e:
                 logger.error(f"Error checking streaming status: {e}")
                 is_streaming = False
@@ -512,24 +515,47 @@ def wait_for_assignment():
             # Streaming is active - prepare stream URL
             stream_url = client.get("stream_url")
             
-            # If no stream URL yet, build it
-            if not stream_url:
+            # Get current active stream IDs from running FFmpeg process
+            current_stream_ids = {}
+            try:
+                from ..streaming.multi_stream import get_active_stream_ids
+                current_stream_ids = get_active_stream_ids(group_id)
+                logger.info(f"🔍 Current active stream IDs: {current_stream_ids}")
+            except ImportError:
+                try:
+                    from ..streaming.split_stream import get_active_stream_ids
+                    current_stream_ids = get_active_stream_ids(group_id)
+                    logger.info(f"🔍 Current active stream IDs (split): {current_stream_ids}")
+                except ImportError:
+                    logger.warning("Could not import streaming modules to get active stream IDs")
+                    current_stream_ids = {}
+            
+            # If no stream URL yet, or if we have new stream IDs, rebuild it
+            if not stream_url or current_stream_ids:
                 if assignment_status == "screen_assigned":
-                    # For screen assignment, build URL with screen number
+                    # For screen assignment, use current active stream ID if available
                     screen_number = client.get("screen_number", 0)
-                    stream_id = f"screen{screen_number}"
+                    if current_stream_ids and f"test{screen_number}" in current_stream_ids:
+                        # Use the actual current stream ID from FFmpeg
+                        actual_stream_id = current_stream_ids[f"test{screen_number}"]
+                        logger.info(f"✅ Using current active stream ID for screen {screen_number}: {actual_stream_id}")
+                    else:
+                        # Fallback to screen-based ID
+                        actual_stream_id = f"screen{screen_number}"
+                        logger.warning(f"⚠️ No current stream ID found, using fallback: {actual_stream_id}")
                 else:
                     # For stream assignment, use the assigned stream
-                    stream_id = client.get("stream_assignment", "default")
+                    actual_stream_id = client.get("stream_assignment", "default")
                 
                 # Get SRT IP from client or use default
                 srt_ip = client.get("srt_ip", "127.0.0.1")
                 
-                # Build the stream URL
-                stream_url = build_stream_url(group, stream_id, group_name, srt_ip)
+                # Build the stream URL with the actual stream ID
+                stream_url = build_stream_url(group, actual_stream_id, group_name, srt_ip)
                 
-                # Update client with stream URL
+                # Update client with stream URL and current stream IDs
                 client["stream_url"] = stream_url
+                client["current_stream_ids"] = current_stream_ids
                 if hasattr(state, 'add_client'):
                     state.add_client(client_id, client)
                 else:
