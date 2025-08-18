@@ -2,7 +2,7 @@
 
 A clean, simple Flask-based server for managing multi-screen video streaming with SRT protocol.
 
-## 🏗️ Architecture
+## Architecture
 
 The server follows a clean, service-oriented architecture:
 
@@ -29,7 +29,7 @@ endpoints/
 └── README.md           # This file
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Start the Server
 ```bash
@@ -66,7 +66,7 @@ curl -X POST http://localhost:5000/stop_stream \
   -d '{"group_id": "your-group-id"}'
 ```
 
-## 🔧 Configuration
+## Configuration
 
 Edit `app_config.json` to customize:
 
@@ -74,7 +74,7 @@ Edit `app_config.json` to customize:
 - **File settings** (upload folder, max file size, allowed extensions)
 - **Streaming settings** (default framerate, bitrate, SRT parameters)
 
-## 📡 API Endpoints
+## API Endpoints
 
 ### Stream Management
 - `POST /start_split_screen` - Start split-screen streaming
@@ -86,7 +86,7 @@ Edit `app_config.json` to customize:
 - `GET /` - API information
 - `GET /health` - Health check
 
-## 🎯 Features
+## Features
 
 - **Split-Screen Streaming** - Single video split into multiple regions
 - **Multi-Video Streaming** - Multiple videos combined into one stream
@@ -103,11 +103,11 @@ Edit `app_config.json` to customize:
 - **Type Hints** - Better code understanding
 - **Logging** - Comprehensive operation logging
 
-## 🔄 Migration
+## Migration
 
 The server maintains backward compatibility with existing routes while providing new, cleaner endpoints. You can gradually migrate from old routes to new ones.
 
-## 📝 Requirements
+## Requirements
 
 - Python 3.7+
 - FFmpeg

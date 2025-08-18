@@ -30,7 +30,7 @@ class SRTService:
             try:
                 # Try to connect to the port
                 sock.connect((srt_ip, srt_port))
-                logger.info(f"✅ Socket connection successful to {srt_ip}:{srt_port}")
+                logger.info(f"Socket connection successful to {srt_ip}:{srt_port}")
                 sock.close()
                 
                 # Test with FFmpeg if available
@@ -53,7 +53,7 @@ class SRTService:
                     }
                     
             except socket.error as e:
-                logger.error(f"❌ Socket connection failed: {e}")
+                logger.error(f"Socket connection failed: {e}")
                 return {
                     "success": False,
                     "message": f"Socket connection failed: {e}",
@@ -75,14 +75,14 @@ class SRTService:
     @classmethod
     def wait_for_server(cls, srt_ip: str, srt_port: int, timeout: int = 5) -> bool:
         """Wait for SRT server to become available (optimized for speed)"""
-        logger.info(f"🔍 Waiting for SRT server at {srt_ip}:{srt_port} (timeout: {timeout}s)")
+        logger.info(f"Waiting for SRT server at {srt_ip}:{srt_port} (timeout: {timeout}s)")
         
         start_time = time.time()
         while time.time() - start_time < timeout:
             try:
                 result = cls.test_connection(srt_ip, srt_port)
                 if result["success"]:
-                    logger.info(f"✅ SRT server is ready at {srt_ip}:{srt_port}")
+                    logger.info(f"SRT server is ready at {srt_ip}:{srt_port}")
                     return True
                     
                 time.sleep(1)  # Faster polling
@@ -91,7 +91,7 @@ class SRTService:
                 logger.debug(f"SRT server check failed: {e}")
                 time.sleep(1)  # Faster polling
         
-        logger.error(f"❌ SRT server not ready after {timeout} seconds")
+        logger.error(f"SRT server not ready after {timeout} seconds")
         return False
     
     @classmethod
@@ -114,7 +114,7 @@ class SRTService:
                 "details": Dict
             }
         """
-        logger.info(f"🔍 Fast SRT monitoring: {srt_ip}:{srt_port} (timeout: {timeout}s)")
+        logger.info(f"Fast SRT monitoring: {srt_ip}:{srt_port} (timeout: {timeout}s)")
         
         start_time = time.time()
         check_count = 0
@@ -133,7 +133,7 @@ class SRTService:
                     sock.connect((srt_ip, srt_port))
                     response_time = (time.time() - check_start) * 1000  # Convert to milliseconds
                     
-                    logger.info(f"✅ SRT server ready in {response_time:.1f}ms (check #{check_count})")
+                    logger.info(f"SRT server ready in {response_time:.1f}ms (check #{check_count})")
                     sock.close()
                     
                     return {
@@ -168,7 +168,7 @@ class SRTService:
         
         # Timeout reached
         total_time = (time.time() - start_time) * 1000
-        logger.error(f"❌ SRT server not ready after {timeout}s ({total_time:.1f}ms, {check_count} checks)")
+        logger.error(f"SRT server not ready after {timeout}s ({total_time:.1f}ms, {check_count} checks)")
         
         return {
             "success": False,

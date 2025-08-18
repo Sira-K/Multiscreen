@@ -29,9 +29,47 @@ except ImportError:
     from blueprints.docker_management import docker_bp
 
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+def clear_all_logs():
+    """Clear all log files when server starts"""
+    try:
+        logs_dir = os.path.join(os.path.dirname(__file__), 'logs')
+        if os.path.exists(logs_dir):
+            log_files = [
+                'all.log',
+                'errors.log', 
+                'ffmpeg.log',
+                'clients.log',
+                'streaming.log',
+                'system.log'
+            ]
+            
+            for log_file in log_files:
+                log_path = os.path.join(logs_dir, log_file)
+                if os.path.exists(log_path):
+                    # Clear the file content
+                    with open(log_path, 'w') as f:
+                        f.write(f"# Log file cleared at server startup: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        f.write(f"# Server session started\n")
+                        f.write("=" * 80 + "\n\n")
+                    print(f"Cleared log file: {log_file}")
+    except Exception as e:
+        print(f"Warning: Could not clear log files: {e}")
+
+# Configure comprehensive logging
+try:
+    from logging_config import setup_comprehensive_logging
+    logger = setup_comprehensive_logging()
+    
+    # Clear all logs at startup
+    clear_all_logs()
+    
+    logger.info("Enhanced logging system initialized")
+    logger.info("All previous log files cleared for new server session")
+except ImportError:
+    # Fallback to basic logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    logger.warning("Enhanced logging not available, using basic logging")
 
 def create_app():
     """Create and configure Flask application"""
@@ -91,7 +129,7 @@ def create_app():
                 "multi_stream": "/api/streaming/start_multi_video_srt",
                 "split_stream": "/api/streaming/start_split_screen_srt",
                 "streaming_status": "/api/streaming/all_streaming_statuses",
-                "stop_stream": "/api/streaming/stop_stream",
+                "stop_stream": "/api/streaming/stop_group_stream",
                 "videos": "/api/videos",
 
             },
