@@ -74,7 +74,7 @@ def stream_monitor(process, group_id, group_name, stream_config):
     Single, consistent monitoring approach
     """
     try:
-        logger.info(f"🔍 Starting stream monitor for {group_name} (PID: {process.pid})")
+        logger.info(f" Starting stream monitor for {group_name} (PID: {process.pid})")
         
         frame_count = 0
         last_frame_time = time.time()
@@ -106,7 +106,7 @@ def stream_monitor(process, group_id, group_name, stream_config):
                             
                             # Log progress every 500 frames
                             if frame_count % 500 == 0:
-                                logger.info(f"📈 {group_name}: {frame_count} frames processed")
+                                logger.info(f" {group_name}: {frame_count} frames processed")
                         
                         # Check for critical errors
                         critical_errors = [
@@ -118,7 +118,7 @@ def stream_monitor(process, group_id, group_name, stream_config):
                         line_lower = line.lower()
                         for error in critical_errors:
                             if error in line_lower:
-                                logger.error(f"🚨 CRITICAL ERROR in {group_name}: {line}")
+                                logger.error(f" CRITICAL ERROR in {group_name}: {line}")
                                 process.terminate()
                                 return
                 
@@ -126,10 +126,10 @@ def stream_monitor(process, group_id, group_name, stream_config):
                 time_since_frame = current_time - last_frame_time
                 if frame_count > 0 and time_since_frame > STALL_TIMEOUT:
                     stall_warnings += 1
-                    logger.error(f"🚨 STREAM STALLED: {group_name} ({time_since_frame:.1f}s since last frame)")
+                    logger.error(f" STREAM STALLED: {group_name} ({time_since_frame:.1f}s since last frame)")
                     
                     if stall_warnings >= MAX_STALL_WARNINGS:
-                        logger.error(f"💀 TERMINATING STALLED STREAM: {group_name}")
+                        logger.error(f" TERMINATING STALLED STREAM: {group_name}")
                         process.terminate()
                         return
                 
@@ -140,14 +140,14 @@ def stream_monitor(process, group_id, group_name, stream_config):
                         memory_mb = proc_info.memory_info().rss / 1024 / 1024
                         
                         if memory_mb > MAX_MEMORY_MB:
-                            logger.error(f"🚨 HIGH MEMORY: {group_name} using {memory_mb:.1f}MB")
+                            logger.error(f" HIGH MEMORY: {group_name} using {memory_mb:.1f}MB")
                             if memory_mb > MAX_MEMORY_MB * 2:
-                                logger.error(f"💀 TERMINATING due to memory leak")
+                                logger.error(f" TERMINATING due to memory leak")
                                 process.terminate()
                                 return
                         
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        logger.error(f"❌ Process {process.pid} no longer exists")
+                        logger.error(f" Process {process.pid} no longer exists")
                         return
                     
                     last_resource_check = current_time
@@ -155,15 +155,15 @@ def stream_monitor(process, group_id, group_name, stream_config):
                 time.sleep(0.1)
                 
             except Exception as e:
-                logger.error(f"❌ Monitor error for {group_name}: {e}")
+                logger.error(f" Monitor error for {group_name}: {e}")
                 time.sleep(1)
         
         # Process ended
         exit_code = process.returncode
-        logger.warning(f"🏁 {group_name} ended with exit code {exit_code}, {frame_count} total frames")
+        logger.warning(f" {group_name} ended with exit code {exit_code}, {frame_count} total frames")
         
     except Exception as e:
-        logger.error(f"💥 Monitor crashed for {group_name}: {e}")
+        logger.error(f" Monitor crashed for {group_name}: {e}")
     finally:
         clear_active_stream_ids(group_id)
 
@@ -196,7 +196,7 @@ def build_reliable_ffmpeg_command(
     if stream_ids is None:
         stream_ids = generate_stream_ids(base_stream_id, group_name, screen_count)
     
-    logger.info(f"🔧 Building reliable FFmpeg command")
+    logger.info(f" Building reliable FFmpeg command")
     logger.info(f"   Videos: {len(video_files)}, Screens: {screen_count}")
     logger.info(f"   Output: {output_width}x{output_height}, Orientation: {orientation}")
     
@@ -264,8 +264,8 @@ def build_reliable_ffmpeg_command(
             f"srt://{srt_ip}:{srt_port}?streamid=#!::r=live/{group_name}/{stream_id},m=publish"
         ])
     
-    logger.info(f"🎯 Created {screen_count + 1} streams (1 combined + {screen_count} individual)")
-    logger.info(f"🔧 Using 'faster' preset with 30-frame keyframes, 4 threads")
+    logger.info(f" Created {screen_count + 1} streams (1 combined + {screen_count} individual)")
+    logger.info(f" Using 'faster' preset with 30-frame keyframes, 4 threads")
     
     return ffmpeg_cmd
 
@@ -338,7 +338,7 @@ def start_multi_video_srt():
         # Clean up old containers first
         cleanup_count = cleanup_old_srs_containers(max_containers=3)
         if cleanup_count > 0:
-            logger.info(f"🧹 Cleaned up {cleanup_count} old containers")
+            logger.info(f" Cleaned up {cleanup_count} old containers")
         
         # Get request data
         data = request.get_json() or {}
@@ -381,7 +381,7 @@ def start_multi_video_srt():
         framerate = data.get("framerate", 30)
         bitrate = data.get("bitrate", "2500k")
         
-        logger.info(f"🚀 Starting reliable streaming for {group_name}")
+        logger.info(f" Starting reliable streaming for {group_name}")
         logger.info(f"   Port: {srt_port}, Videos: {len(video_files)}, Screens: {screen_count}")
         
         # Check for existing streams
@@ -447,7 +447,7 @@ def start_multi_video_srt():
                 return jsonify({"error": f"Video file not found: {video_file}"}), 400
         
         # Launch FFmpeg
-        logger.info("🚀 Launching reliable FFmpeg process...")
+        logger.info(" Launching reliable FFmpeg process...")
         process = subprocess.Popen(
             ffmpeg_cmd,
             stdout=subprocess.PIPE,
@@ -457,7 +457,7 @@ def start_multi_video_srt():
             universal_newlines=True
         )
         
-        logger.info(f"✅ FFmpeg started: PID {process.pid}")
+        logger.info(f" FFmpeg started: PID {process.pid}")
         
         # Monitor startup
         streaming_detected = monitor_ffmpeg_startup(process, timeout=10)
@@ -738,7 +738,7 @@ def monitor_ffmpeg_startup(process, timeout: int = 10) -> bool:
     start_time = time.time()
     frame_count = 0
     
-    logger.info("👀 Monitoring FFmpeg startup...")
+    logger.info(" Monitoring FFmpeg startup...")
     
     while time.time() - start_time < timeout:
         if process.poll() is not None:
@@ -757,11 +757,11 @@ def monitor_ffmpeg_startup(process, timeout: int = 10) -> bool:
                         frame_count += 1
                         if not streaming_detected:
                             streaming_detected = True
-                            logger.info(f"✅ FFmpeg streaming started: {output}")
+                            logger.info(f" FFmpeg streaming started: {output}")
                         
                         # Consider startup successful after a few frames
                         if frame_count >= 3:
-                            logger.info("✅ FFmpeg startup confirmed")
+                            logger.info(" FFmpeg startup confirmed")
                             return True
                     
                     # Check for errors
@@ -769,13 +769,13 @@ def monitor_ffmpeg_startup(process, timeout: int = 10) -> bool:
                         "error", "failed", "invalid", "not found", "permission denied",
                         "connection refused", "timeout", "unable to"
                     ]):
-                        logger.error(f"❌ FFmpeg error detected: {output}")
+                        logger.error(f" FFmpeg error detected: {output}")
                         
         except Exception as e:
             logger.debug(f"Error reading FFmpeg output: {e}")
             break
     
-    logger.warning(f"⏰ FFmpeg startup timeout after {timeout}s, frames: {frame_count}")
+    logger.warning(f" FFmpeg startup timeout after {timeout}s, frames: {frame_count}")
     return streaming_detected
 
 def get_all_ffmpeg_processes() -> List[Dict[str, Any]]:
@@ -804,7 +804,7 @@ def stop_ffmpeg_processes(processes: List[Dict[str, Any]], group_name: str) -> i
     for proc_info in processes:
         try:
             pid = proc_info["pid"]
-            logger.info(f"🛑 Stopping FFmpeg process {pid} for group '{group_name}'")
+            logger.info(f" Stopping FFmpeg process {pid} for group '{group_name}'")
             
             # Send SIGTERM first for graceful shutdown
             os.kill(pid, 15)  # SIGTERM
@@ -822,7 +822,7 @@ def stop_ffmpeg_processes(processes: List[Dict[str, Any]], group_name: str) -> i
                 pass
             
             stopped_count += 1
-            logger.info(f"✅ Successfully stopped FFmpeg process {pid}")
+            logger.info(f" Successfully stopped FFmpeg process {pid}")
             
         except Exception as e:
             logger.error(f"Error stopping process {proc_info['pid']}: {e}")
