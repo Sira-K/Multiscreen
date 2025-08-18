@@ -63,7 +63,10 @@ find_project_root() {
         return 0
     fi
     
-    return 1
+    # If no C++ project found, just use current directory for client setup
+    print_status "No C++ project found - setting up client-only environment"
+    print_status "Using current directory: $(pwd)"
+    return 0
 }
 
 # Function to print colored output
@@ -110,7 +113,7 @@ setup_window_tools() {
     
     # Check and install wmctrl
     if command -v wmctrl &> /dev/null; then
-        print_window "✓ wmctrl is already installed"
+        print_window " wmctrl is already installed"
     else
         print_window "Installing wmctrl..."
         if command -v apt-get &> /dev/null; then
@@ -131,7 +134,7 @@ setup_window_tools() {
     
     # Check and install xdotool
     if command -v xdotool &> /dev/null; then
-        print_window "✓ xdotool is already installed"
+        print_window " xdotool is already installed"
     else
         print_window "Installing xdotool..."
         if command -v apt-get &> /dev/null; then
@@ -151,7 +154,7 @@ setup_window_tools() {
     
     # Check and install tkinter (Python GUI)
     if python3 -c "import tkinter" 2>/dev/null; then
-        print_window "✓ tkinter is already available"
+        print_window " tkinter is already available"
     else
         print_window "Installing tkinter..."
         if command -v apt-get &> /dev/null; then
@@ -169,7 +172,7 @@ setup_window_tools() {
         fi
     fi
     
-    print_window "✓ Window management tools setup completed successfully!"
+    print_window " Window management tools setup completed successfully!"
 }
 
 # Function to setup ffmpeg
@@ -180,7 +183,7 @@ setup_ffmpeg() {
     
     # Check if ffmpeg is already installed
     if command -v ffmpeg &> /dev/null; then
-        print_status "✓ ffmpeg is already installed"
+        print_status " ffmpeg is already installed"
         return 0
     fi
     
@@ -200,29 +203,30 @@ setup_ffmpeg() {
         return 1
     fi
     
-    print_status "✓ ffmpeg setup completed successfully!"
+    print_status " ffmpeg setup completed successfully!"
 }
 
-# Function to build the C++ player
+# Function to build the C++ player (optional)
 build_player() {
     print_status "=========================================="
-    print_status "Building C++ player for SEI streams"
+    print_status "Checking C++ player build requirements"
     print_status "=========================================="
+    
+    # Check if we're in the right directory for C++ build
+    if [ ! -f "CMakeLists.txt" ] || [ ! -d "multi-screen" ]; then
+        print_warning "C++ player source not found - skipping build"
+        print_warning "Client will use ffplay fallback for all streams"
+        return 0
+    fi
     
     # Check if CMake is available
     if ! command -v cmake &> /dev/null; then
-        print_error "CMake is required but not installed. Please install it first:"
-        echo "  Ubuntu/Debian: sudo apt-get install cmake build-essential"
-        echo "  RHEL/CentOS:   sudo yum install cmake gcc-c++ make"
-        echo "  Fedora:        sudo dnf install cmake gcc-c++ make"
-        return 1
+        print_warning "CMake not available - skipping C++ player build"
+        print_warning "Client will use ffplay fallback for all streams"
+        return 0
     fi
     
-    # Check if we're in the right directory
-    if [ ! -f "CMakeLists.txt" ]; then
-        print_error "CMakeLists.txt not found. Please run this script from the project root."
-        return 1
-    fi
+    print_status "Building C++ player for SEI streams..."
     
     # Clean build if requested
     if [ $CLEAN_BUILD -eq 1 ]; then
@@ -244,11 +248,11 @@ build_player() {
     
     # Check if build was successful
     if [ -f "player/player" ]; then
-        print_status "✓ Player built successfully!"
+        print_status " Player built successfully!"
         chmod +x player/player
     else
-        print_error "Build failed - player binary not found"
-        return 1
+        print_warning "Build failed - C++ player will not be available"
+        print_warning "Client will use ffplay fallback for all streams"
     fi
     
     cd ..
@@ -354,7 +358,7 @@ python3 client.py --server "$SERVER_URL" --hostname "$HOSTNAME" --display-name "
 EOF
 
     chmod +x "$PROJECT_ROOT/run_client.sh"
-    print_status "✓ Created run_client.sh script"
+    print_status " Created run_client.sh script"
     
     # Create multi-monitor setup script
     cat > "$PROJECT_ROOT/setup_multi_monitor.sh" << 'EOF'
@@ -362,18 +366,18 @@ EOF
 # Multi-Monitor Setup Script for Raspberry Pi
 # This script helps configure multiple monitors for video wall setup
 
-echo "🖥️  Multi-Monitor Setup for Raspberry Pi"
+echo "  Multi-Monitor Setup for Raspberry Pi"
 echo "=========================================="
 
 # Check if we're on Raspberry Pi
 if ! grep -q "Raspberry Pi" /proc/cpuinfo 2>/dev/null; then
-    echo "⚠️  This script is designed for Raspberry Pi"
+    echo "  This script is designed for Raspberry Pi"
     echo "   It may work on other systems but is not tested"
     echo ""
 fi
 
 # Check current display setup
-echo "📺 Current Display Configuration:"
+echo " Current Display Configuration:"
 if command -v xrandr &> /dev/null; then
     xrandr --listmonitors
 else
@@ -381,7 +385,7 @@ else
 fi
 
 echo ""
-echo "🔧 Monitor Configuration Options:"
+echo " Monitor Configuration Options:"
 echo "1. Dual Monitor (Side by Side)"
 echo "2. Dual Monitor (Stacked)"
 echo "3. Triple Monitor (Horizontal)"
@@ -402,7 +406,7 @@ case $choice in
                 # Configure side by side
                 xrandr --output $(echo $HDMI_OUTPUTS | awk '{print $1}') --mode 1920x1080 --pos 0x0
                 xrandr --output $(echo $HDMI_OUTPUTS | awk '{print $2}') --mode 1920x1080 --pos 1920x0
-                echo "✓ Dual monitor setup configured"
+                echo " Dual monitor setup configured"
             else
                 echo "Could not detect HDMI outputs automatically"
                 echo "Please configure manually using xrandr"
@@ -420,7 +424,7 @@ case $choice in
                 # Configure stacked
                 xrandr --output $(echo $HDMI_OUTPUTS | awk '{print $1}') --mode 1920x1080 --pos 0x0
                 xrandr --output $(echo $HDMI_OUTPUTS | awk '{print $2}') --mode 1920x1080 --pos 0x1080
-                echo "✓ Dual monitor setup configured"
+                echo " Dual monitor setup configured"
             else
                 echo "Could not detect HDMI outputs automatically"
                 echo "Please configure manually using xrandr"
@@ -439,7 +443,7 @@ case $choice in
                 xrandr --output $(echo $HDMI_OUTPUTS | awk '{print $1}') --mode 1920x1080 --pos 0x0
                 xrandr --output $(echo $HDMI_OUTPUTS | awk '{print $2}') --mode 1920x1080 --pos 1920x0
                 xrandr --output $(echo $HDMI_OUTPUTS | awk '{print $3}') --mode 1920x1080 --pos 3840x0
-                echo "✓ Triple monitor setup configured"
+                echo " Triple monitor setup configured"
             else
                 echo "Could not detect HDMI outputs automatically"
                 echo "Please configure manually using xrandr"
@@ -460,11 +464,11 @@ case $choice in
         echo "DISPLAY: $DISPLAY"
         echo ""
         if [ "$XDG_SESSION_TYPE" = "wayland" ]; then
-            echo "🎯 You're using Wayland"
+            echo " You're using Wayland"
             echo "   - Use the client hotkeys to move windows between monitors"
             echo "   - Monitors are configured through desktop environment settings"
         else
-            echo "🎯 You're using X11/XWayland"
+            echo " You're using X11/XWayland"
             echo "   - Use xrandr to configure monitor positions"
             echo "   - Use the client hotkeys to move windows between monitors"
         fi
@@ -476,7 +480,7 @@ case $choice in
 esac
 
 echo ""
-echo "✅ Setup complete!"
+echo " Setup complete!"
 echo ""
 echo "Next steps:"
 echo "1. Start your multi-screen client:"
@@ -489,7 +493,7 @@ echo "   Ctrl+H: Show help"
 EOF
 
     chmod +x "$PROJECT_ROOT/setup_multi_monitor.sh"
-    print_status "✓ Created setup_multi_monitor.sh script"
+    print_status " Created setup_multi_monitor.sh script"
     
     # Create systemd service template
     cat > "$PROJECT_ROOT/multiscreen-client.service" << 'EOF'
@@ -511,7 +515,7 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-    print_status "✓ Created systemd service template"
+    print_status " Created systemd service template"
 }
 
 # Function to show help
@@ -580,17 +584,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Main execution
-echo "🚀 Multi-Screen Client Setup Script"
+echo " Multi-Screen Client Setup Script"
 echo "===================================="
 echo ""
 
-# Find project root
-if ! find_project_root; then
-    print_error "Could not find multi-screen project directory"
-    print_error "Please run this script from the project root or a subdirectory"
-    exit 1
-fi
-
+# Find project root (or use current directory for client-only setup)
+find_project_root
 print_status "Project root: $PROJECT_ROOT"
 
 # Setup window management tools
@@ -612,13 +611,17 @@ print_status "Setup Complete!"
 print_status "=========================================="
 echo ""
 
-print_window "✓ Window management tools installed (wmctrl, xdotool, tkinter)"
-print_status "✓ ffmpeg installed for video playback"
-print_status "✓ C++ player built successfully"
-print_status "✓ Convenience scripts created"
+print_window " Window management tools installed (wmctrl, xdotool, tkinter)"
+print_status " ffmpeg installed for video playback"
+if [ -f "$BUILD_DIR/player/player" ]; then
+    print_status " C++ player built successfully (SEI stream support)"
+else
+    print_status " ffplay fallback configured (all streams)"
+fi
+print_status " Convenience scripts created"
 echo ""
 
-print_status "🎮 Next steps:"
+print_status " Next steps:"
 echo "1. Configure your monitors:"
 echo "   ./setup_multi_monitor.sh"
 echo ""
@@ -631,10 +634,10 @@ echo "   Ctrl+1-4: Specific monitor"
 echo "   Ctrl+H: Show help"
 echo ""
 
-print_status "📚 For more information:"
+print_status " For more information:"
 echo "- Client help: ./run_client.sh --help"
 echo "- Monitor setup: ./setup_multi_monitor.sh --help"
 echo "- Hotkey reference: Press Ctrl+H while client is running"
 
-print_status "🎯 Setup completed successfully!"
+print_status " Setup completed successfully!"
 print_status "Your multi-screen client is ready with movable window support!"
