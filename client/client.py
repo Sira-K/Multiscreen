@@ -18,6 +18,8 @@ import socket
 from typing import Optional, Dict, Any, Tuple
 from urllib.parse import urlparse
 from pathlib import Path
+import tkinter as tk
+from tkinter import messagebox
 
 
 class UnifiedMultiScreenClient:
@@ -27,7 +29,7 @@ class UnifiedMultiScreenClient:
     """
     
     def __init__(self, server_url: str, hostname: str = None, display_name: str = None, 
-                 force_ffplay: bool = False, window_x: int = None, window_y: int = None):
+                 force_ffplay: bool = False):
         """
         Initialize the multi-screen client
         
@@ -36,15 +38,21 @@ class UnifiedMultiScreenClient:
             hostname: Unique client identifier
             display_name: Friendly display name
             force_ffplay: Force use of ffplay instead of smart selection
-            window_x: Initial X position for video window (optional)
-            window_y: Initial Y position for video window (optional)
         """
         self.server_url = server_url.rstrip('/')
         self.hostname = hostname or socket.gethostname()
         self.display_name = display_name or f"Display-{self.hostname}"
         self.force_ffplay = force_ffplay
-        self.window_x = window_x
-        self.window_y = window_y
+        
+        # Window management
+        self.window_manager = None
+        self.current_monitor = 0
+        self.monitor_positions = [
+            (0, 0),      # Monitor 1 (left)
+            (1920, 0),   # Monitor 2 (right)
+            (3840, 0),   # Monitor 3 (if available)
+            (0, 1080),   # Monitor 4 (bottom-left)
+        ]
         
         # Stream management
         self.current_stream_url = None
@@ -160,6 +168,103 @@ class UnifiedMultiScreenClient:
             except Exception:
                 # Final fallback: use loopback IP
                 return "127.0.0.1"
+    
+    def create_window_manager(self):
+        """Create a hidden window manager for hotkey handling"""
+        try:
+            self.window_manager = tk.Tk()
+            self.window_manager.withdraw()  # Hide the window
+            self.window_manager.title("Multi-Screen Client Window Manager")
+            
+            # Bind hotkeys
+            self.window_manager.bind('<Control-m>', self.move_to_next_monitor)
+            self.window_manager.bind('<Control-Left>', self.move_to_previous_monitor)
+            self.window_manager.bind('<Control-Right>', self.move_to_next_monitor)
+            self.window_manager.bind('<Control-1>', lambda e: self.move_to_monitor(0))
+            self.window_manager.bind('<Control-2>', lambda e: self.move_to_monitor(1))
+            self.window_manager.bind('<Control-3>', lambda e: self.move_to_monitor(2))
+            self.window_manager.bind('<Control-4>', lambda e: self.move_to_monitor(3))
+            self.window_manager.bind('<Control-h>', self.show_help)
+            
+            # Make window always on top and focusable
+            self.window_manager.attributes('-topmost', True)
+            self.window_manager.focus_force()
+            
+            print(f"🎮 Window Manager Started")
+            print(f"   Hotkeys:")
+            print(f"     Ctrl+M or Ctrl+Right: Move to next monitor")
+            print(f"     Ctrl+Left: Move to previous monitor")
+            print(f"     Ctrl+1-4: Move to specific monitor")
+            print(f"     Ctrl+H: Show help")
+            
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to create window manager: {e}")
+            return False
+    
+    def move_to_monitor(self, monitor_index: int):
+        """Move the fullscreen window to a specific monitor"""
+        if not self.player_process or self.player_process.poll() is not None:
+            return
+        
+        if monitor_index >= len(self.monitor_positions):
+            print(f"❌ Monitor {monitor_index + 1} not available")
+            return
+        
+        x, y = self.monitor_positions[monitor_index]
+        self.current_monitor = monitor_index
+        
+        try:
+            # Use wmctrl to move the window (works with Wayland/XWayland)
+            window_title = f"Multi-Screen Client - {self.display_name}"
+            
+            # Find the window by title
+            result = subprocess.run(['wmctrl', '-l'], capture_output=True, text=True)
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if window_title in line:
+                        window_id = line.split()[0]
+                        # Move window to new position
+                        subprocess.run(['wmctrl', '-ir', window_id, '-e', f'0,{x},{y},-1,-1'])
+                        print(f"🖥️  Moved to Monitor {monitor_index + 1} (x={x}, y={y})")
+                        return
+            
+            # Fallback: try xdotool if wmctrl doesn't work
+            subprocess.run(['xdotool', 'search', '--name', window_title, 'windowmove', str(x), str(y)])
+            print(f"🖥️  Moved to Monitor {monitor_index + 1} (x={x}, y={y})")
+            
+        except FileNotFoundError:
+            print(f"❌ Window management tools not found. Install with:")
+            print(f"   sudo apt install wmctrl xdotool")
+        except Exception as e:
+            self.logger.error(f"Failed to move window: {e}")
+    
+    def move_to_next_monitor(self, event=None):
+        """Move to the next monitor"""
+        next_monitor = (self.current_monitor + 1) % len(self.monitor_positions)
+        self.move_to_monitor(next_monitor)
+    
+    def move_to_previous_monitor(self, event=None):
+        """Move to the previous monitor"""
+        prev_monitor = (self.current_monitor - 1) % len(self.monitor_positions)
+        self.move_to_monitor(prev_monitor)
+    
+    def show_help(self, event=None):
+        """Show hotkey help"""
+        help_text = """
+🎮 Multi-Screen Client Hotkeys:
+
+Ctrl+M or Ctrl+Right: Move to next monitor
+Ctrl+Left: Move to previous monitor
+Ctrl+1: Move to Monitor 1 (left)
+Ctrl+2: Move to Monitor 2 (right)
+Ctrl+3: Move to Monitor 3 (if available)
+Ctrl+4: Move to Monitor 4 (bottom-left)
+Ctrl+H: Show this help
+
+Note: Make sure the client window has focus for hotkeys to work.
+        """
+        messagebox.showinfo("Multi-Screen Client Help", help_text)
     
 
     
@@ -550,12 +655,6 @@ class UnifiedMultiScreenClient:
             print(f"   Capability: SEI timestamp processing")
             
             env = os.environ.copy()
-            
-            # Add window positioning environment variables for C++ player if specified
-            if self.window_x is not None and self.window_y is not None:
-                env['WINDOW_X'] = str(self.window_x)
-                env['WINDOW_Y'] = str(self.window_y)
-            
             cmd = [self.player_executable, self.current_stream_url]
             
             self.player_process = subprocess.Popen(
@@ -616,16 +715,12 @@ class UnifiedMultiScreenClient:
                 "-flags", "low_delay", 
                 "-framedrop",
                 "-strict", "experimental",
+                "-window_title", f"Multi-Screen Client - {self.display_name}",
                 "-fs",  # Fullscreen
                 "-autoexit",
                 "-loglevel", "warning",  # Reduce ffplay verbosity
+                self.current_stream_url
             ]
-            
-            # Add window positioning if specified (Wayland compatible)
-            if self.window_x is not None and self.window_y is not None:
-                cmd.extend(["-x", str(self.window_x), "-y", str(self.window_y)])
-            
-            cmd.append(self.current_stream_url)
             
             self.player_process = subprocess.Popen(
                 cmd, 
@@ -681,6 +776,14 @@ class UnifiedMultiScreenClient:
         
         while self.running and not self._shutdown_event.is_set() and self.player_process.poll() is None:
             current_time = time.time()
+            
+            # Handle window manager events
+            if self.window_manager:
+                try:
+                    self.window_manager.update()
+                except tk.TclError:
+                    # Window manager closed
+                    break
             
             # Check for stream changes
             if current_time - last_stream_check >= stream_check_interval:
@@ -843,6 +946,14 @@ class UnifiedMultiScreenClient:
         # Stop components
         self.stop_stream()
         
+        # Clean up window manager
+        if self.window_manager:
+            try:
+                self.window_manager.destroy()
+            except:
+                pass
+            self.window_manager = None
+        
         print(f" Shutdown complete")
     
     def _emergency_cleanup(self):
@@ -867,6 +978,9 @@ class UnifiedMultiScreenClient:
             if not self.register():
                 print(f" Registration failed - exiting")
                 return
+            
+            # Step 1.5: Create window manager for hotkeys
+            self.create_window_manager()
             
             # Step 2: Main loop - wait for assignment and play streams
             while self.running and not self._shutdown_event.is_set():
@@ -920,12 +1034,12 @@ def main():
  Unified Multi-Screen Client for Video Wall Systems
 
 A simple and reliable client for multi-screen video streaming that supports
-automatic player selection with fullscreen windows.
+automatic player selection with movable fullscreen windows.
 
 Features:
    Automatic server registration with unique client identification
    Smart player selection (C++ player for SEI streams, ffplay fallback)
-   Fullscreen video windows
+   Movable fullscreen windows with hotkeys
    Uses system default display (DISPLAY=:0.0)
    Automatic reconnection and error recovery
    Support for multiple instances on the same device
@@ -955,14 +1069,15 @@ Features:
     python3 client.py --server http://192.168.1.100:5000 \\
       --hostname client-1 --display-name "Screen 1" --force-ffplay
 
-  Multi-monitor setup (Wayland/XWayland):
-    # First monitor
+  Multi-monitor setup with hotkeys:
+    # Start client (will appear on first monitor)
     DISPLAY=:0 python3 client.py --server http://192.168.1.100:5000 \\
       --hostname client-1 --display-name "Monitor 1" &
     
-    # Second monitor (positioned at x=1920)
-    DISPLAY=:0 python3 client.py --server http://192.168.1.100:5000 \\
-      --hostname client-2 --display-name "Monitor 2" --window-x 1920 --window-y 0 &
+    # Use hotkeys to move between monitors:
+    # Ctrl+M or Ctrl+Right: Next monitor
+    # Ctrl+Left: Previous monitor
+    # Ctrl+1-4: Specific monitor
 
   Debug mode with detailed logging:
     python3 client.py --server http://192.168.1.100:5000 \\
@@ -1031,12 +1146,6 @@ For more information, visit: https://github.com/your-repo/openvideowalls
     optional_group.add_argument('--force-ffplay', 
                                action='store_true',
                                help='Force use of ffplay for all streams (disable smart C++/ffplay selection)')
-    optional_group.add_argument('--window-x', 
-                               type=int, 
-                               help='Initial X position for video window (for multi-monitor setups)')
-    optional_group.add_argument('--window-y', 
-                               type=int, 
-                               help='Initial Y position for video window (for multi-monitor setups)')
 
     optional_group.add_argument('--debug', 
                                action='store_true',
@@ -1081,9 +1190,7 @@ For more information, visit: https://github.com/your-repo/openvideowalls
             server_url=args.server,
             hostname=args.hostname,
             display_name=args.display_name,
-            force_ffplay=args.force_ffplay,
-            window_x=args.window_x,
-            window_y=args.window_y
+            force_ffplay=args.force_ffplay
         )
         
         print(" Starting Unified Multi-Screen Client...")
