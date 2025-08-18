@@ -27,7 +27,7 @@ class UnifiedMultiScreenClient:
     """
     
     def __init__(self, server_url: str, hostname: str = None, display_name: str = None, 
-                 force_ffplay: bool = False):
+                 force_ffplay: bool = False, window_x: int = None, window_y: int = None):
         """
         Initialize the multi-screen client
         
@@ -36,11 +36,15 @@ class UnifiedMultiScreenClient:
             hostname: Unique client identifier
             display_name: Friendly display name
             force_ffplay: Force use of ffplay instead of smart selection
+            window_x: Initial X position for video window (optional)
+            window_y: Initial Y position for video window (optional)
         """
         self.server_url = server_url.rstrip('/')
         self.hostname = hostname or socket.gethostname()
         self.display_name = display_name or f"Display-{self.hostname}"
         self.force_ffplay = force_ffplay
+        self.window_x = window_x
+        self.window_y = window_y
         
         # Stream management
         self.current_stream_url = None
@@ -546,6 +550,12 @@ class UnifiedMultiScreenClient:
             print(f"   Capability: SEI timestamp processing")
             
             env = os.environ.copy()
+            
+            # Add window positioning environment variables for C++ player if specified
+            if self.window_x is not None and self.window_y is not None:
+                env['WINDOW_X'] = str(self.window_x)
+                env['WINDOW_Y'] = str(self.window_y)
+            
             cmd = [self.player_executable, self.current_stream_url]
             
             self.player_process = subprocess.Popen(
@@ -609,8 +619,13 @@ class UnifiedMultiScreenClient:
                 "-fs",  # Fullscreen
                 "-autoexit",
                 "-loglevel", "warning",  # Reduce ffplay verbosity
-                self.current_stream_url
             ]
+            
+            # Add window positioning if specified (Wayland compatible)
+            if self.window_x is not None and self.window_y is not None:
+                cmd.extend(["-x", str(self.window_x), "-y", str(self.window_y)])
+            
+            cmd.append(self.current_stream_url)
             
             self.player_process = subprocess.Popen(
                 cmd, 
@@ -940,7 +955,14 @@ Features:
     python3 client.py --server http://192.168.1.100:5000 \\
       --hostname client-1 --display-name "Screen 1" --force-ffplay
 
-
+  Multi-monitor setup (Wayland/XWayland):
+    # First monitor
+    DISPLAY=:0 python3 client.py --server http://192.168.1.100:5000 \\
+      --hostname client-1 --display-name "Monitor 1" &
+    
+    # Second monitor (positioned at x=1920)
+    DISPLAY=:0 python3 client.py --server http://192.168.1.100:5000 \\
+      --hostname client-2 --display-name "Monitor 2" --window-x 1920 --window-y 0 &
 
   Debug mode with detailed logging:
     python3 client.py --server http://192.168.1.100:5000 \\
@@ -1009,6 +1031,12 @@ For more information, visit: https://github.com/your-repo/openvideowalls
     optional_group.add_argument('--force-ffplay', 
                                action='store_true',
                                help='Force use of ffplay for all streams (disable smart C++/ffplay selection)')
+    optional_group.add_argument('--window-x', 
+                               type=int, 
+                               help='Initial X position for video window (for multi-monitor setups)')
+    optional_group.add_argument('--window-y', 
+                               type=int, 
+                               help='Initial Y position for video window (for multi-monitor setups)')
 
     optional_group.add_argument('--debug', 
                                action='store_true',
@@ -1053,7 +1081,9 @@ For more information, visit: https://github.com/your-repo/openvideowalls
             server_url=args.server,
             hostname=args.hostname,
             display_name=args.display_name,
-            force_ffplay=args.force_ffplay
+            force_ffplay=args.force_ffplay,
+            window_x=args.window_x,
+            window_y=args.window_y
         )
         
         print(" Starting Unified Multi-Screen Client...")
