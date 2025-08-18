@@ -9,11 +9,49 @@ import time
 import uuid
 import logging
 import traceback
+import functools
 from typing import Dict, Any, List, Optional
 from flask import request, jsonify, current_app
 import requests
 
 logger = logging.getLogger(__name__)
+
+# =====================================
+# LOGGING DECORATOR
+# =====================================
+
+def log_function_call(func):
+    """Decorator to log function calls with detailed information"""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        func_name = func.__name__
+        logger.info(f"🚀 {func_name} called with args={args}, kwargs={kwargs}")
+        
+        start_time = time.time()
+        try:
+            result = func(*args, **kwargs)
+            execution_time = (time.time() - start_time) * 1000
+            logger.info(f"✅ {func_name} completed successfully in {execution_time:.1f}ms")
+            return result
+        except Exception as e:
+            execution_time = (time.time() - start_time) * 1000
+            logger.error(f"❌ {func_name} failed after {execution_time:.1f}ms with error: {e}")
+            logger.error(f"📊 Error type: {type(e).__name__}")
+            logger.error(f"🔍 Full traceback:\n{traceback.format_exc()}")
+            
+            # Log system state for debugging
+            try:
+                import psutil
+                logger.error(f"💻 System state at error in {func_name}:")
+                logger.error(f"   CPU: {psutil.cpu_percent(interval=1):.1f}%")
+                logger.error(f"   Memory: {psutil.virtual_memory().percent:.1f}%")
+                logger.error(f"   Disk: {psutil.disk_usage('/').percent:.1f}%")
+                logger.error(f"   Active processes: {len(psutil.pids())}")
+            except Exception as sys_e:
+                logger.error(f"Could not get system state: {sys_e}")
+            
+            raise
+    return wrapper
 
 # =====================================
 # HELPER FUNCTIONS
@@ -67,7 +105,16 @@ def get_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
     try:
         from ..docker_management import get_all_groups
         groups = get_all_groups()
-        return groups.get(group_id, {})
+        
+        # Search through the list to find the matching group
+        for group in groups:
+            if group.get("id") == group_id:
+                return group
+        
+        # Group not found
+        logger.warning(f"Group {group_id} not found in Docker discovery")
+        return {}
+        
     except ImportError:
         logger.warning("Docker management not available")
         return {}
@@ -189,6 +236,7 @@ def build_stream_url_for_client(group: Dict[str, Any], stream_id: str, group_nam
 # CLIENT ENDPOINTS
 # =====================================
 
+@log_function_call
 def register_client():
     """
     Register a client device
@@ -351,6 +399,7 @@ def unregister_client():
             "error": f"Unregistration failed: {str(e)}"
         }), 500
 
+@log_function_call
 def wait_for_assignment():
     """
     FIXED: Enhanced client endpoint to check assignment status and get stream URL when ready

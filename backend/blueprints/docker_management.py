@@ -200,7 +200,7 @@ def create_docker(group_data: Dict[str, Any]) -> Dict[str, Any]:
                     return stream_ids
         stream_ids = generate_stream_ids(group_id, group_name, screen_count)
         
-        logger.info(f"🎯 Generated stream IDs for new group {group_name}:")
+        logger.info(f"Generated stream IDs for new group {group_name}:")
         logger.info(f"   Combined: {stream_ids.get('test')}")
         for i in range(screen_count):
             screen_key = f"test{i}"

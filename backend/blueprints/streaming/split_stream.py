@@ -50,13 +50,13 @@ def get_active_stream_ids(group_id: str) -> Dict[str, str]:
 def set_active_stream_ids(group_id: str, stream_ids: Dict[str, str]):
     """Set current active stream IDs for a group"""
     _active_stream_ids[group_id] = stream_ids
-    logger.info(f"📝 Stored active stream IDs for group {group_id}: {stream_ids}")
+    logger.info(f"Stored active stream IDs for group {group_id}: {stream_ids}")
 
 def clear_active_stream_ids(group_id: str):
     """Clear current active stream IDs for a group when streaming stops"""
     if group_id in _active_stream_ids:
         del _active_stream_ids[group_id]
-        logger.info(f"🗑️ Cleared active stream IDs for group {group_id}")
+        logger.info(f"Cleared active stream IDs for group {group_id}")
 
 # ============================================================================
 # FLASK ROUTE HANDLERS
@@ -72,48 +72,46 @@ def start_split_screen_srt():
         video_file = data.get("video_file")
         
         logger.info("="*60)
-        logger.info("🚀 STARTING SPLIT-SCREEN SRT STREAM")
-        logger.info(f"📋 Group ID: {group_id}")
-        logger.info(f"📹 Video file: {video_file}")
+        logger.info(f"STARTING SPLIT-SCREEN STREAM: {group_id} -> {video_file}")
         logger.info("="*60)
         
         if not group_id or not video_file:
-            logger.error("❌ Missing required parameters: group_id or video_file")
+            logger.error("Missing required parameters: group_id or video_file")
             return jsonify({"error": "group_id and video_file are required"}), 400
         
         # Discover group
-        logger.info(f"🔍 Discovering group '{group_id}' from Docker...")
+        logger.info(f"Discovering group '{group_id}' from Docker...")
         group = discover_group_from_docker(group_id)
         if not group:
-            logger.error(f"❌ Group '{group_id}' not found in Docker")
+            logger.error(f"Group '{group_id}' not found in Docker")
             return jsonify({"error": f"Group '{group_id}' not found"}), 404
 
         group_name = group.get("name", group_id)
-        logger.info(f"✅ Found group: '{group_name}'")
+        logger.info(f"Found group: '{group_name}'")
         
         # Check Docker status
         docker_running = group.get("docker_running", False)
-        logger.info(f"🐳 Docker container status: {'Running' if docker_running else 'Stopped'}")
+        logger.info(f"Docker container status: {'Running' if docker_running else 'Stopped'}")
         
         if not docker_running:
-            logger.error(f"❌ Docker container for group '{group_name}' is not running")
+            logger.error(f"Docker container for group '{group_name}' is not running")
             return jsonify({"error": f"Docker container for group '{group_name}' is not running"}), 400
         
         # Check for existing streams
         container_id = group.get("container_id")
-        logger.info(f"🔍 Checking for existing FFmpeg processes...")
+        logger.info(f"Checking for existing FFmpeg processes...")
         logger.info(f"   Container ID: {container_id}")
         
         existing_ffmpeg = find_running_ffmpeg_for_group_strict(group_id, group_name, container_id)
         if existing_ffmpeg:
-            logger.warning(f"⚠️  Found {len(existing_ffmpeg)} existing FFmpeg process(es)")
+            logger.warning(f"Found {len(existing_ffmpeg)} existing FFmpeg process(es)")
             logger.info("   Streaming already active, returning current status")
             return jsonify({
                 "message": f"Split-screen streaming already active for group '{group_name}'",
                 "status": "already_active"
             }), 200
         
-        logger.info("✅ No existing streams found")
+        logger.info("No existing streams found")
         
         # Configuration
         screen_count = data.get("screen_count", group.get("screen_count", 2))
@@ -123,20 +121,17 @@ def start_split_screen_srt():
         grid_rows = data.get("grid_rows", 2)
         grid_cols = data.get("grid_cols", 2)
         
-        logger.info("⚙️  Stream configuration:")
-        logger.info(f"   Screen count: {screen_count}")
-        logger.info(f"   Orientation: {orientation}")
-        logger.info(f"   Output resolution: {output_width}x{output_height}")
-        if orientation.lower() == "grid":
-            logger.info(f"   Grid layout: {grid_rows}x{grid_cols}")
-        
+        logger.info(f"Config: {screen_count} screens, {orientation}, {output_width}x{output_height}, Grid: {grid_rows}x{grid_cols}")
+
+
+
         # Get streaming parameters - FIX THE PORT RESOLUTION HERE
         ports = group.get("ports", {})
         srt_ip = data.get("srt_ip", "127.0.0.1")
         
         # For Docker containers, we might need to use the container's IP
         # But for now, let's try with localhost since the port is mapped
-        logger.info(f"🔌 Using SRT IP: {srt_ip}")
+        logger.info(f"Using SRT IP: {srt_ip}")
         
         # IMPORTANT: Use the external port that clients connect to, not the internal Docker port
         # The Docker container maps external_port:10080/udp, so we need the external port
@@ -154,43 +149,37 @@ def start_split_screen_srt():
             # The Docker container maps 10110:10080/udp, so publishing to 10110 will reach the SRT server
             external_srt_port = srt_port  # External port clients connect to (e.g., 10110)
             
-            logger.info(f"🔌 Port mapping: External={external_srt_port} (clients) -> Internal=10080 (Docker)")
-            logger.info(f"🔌 Publishing to: {srt_ip}:{external_srt_port} (external port)")
-            logger.info(f"🔌 Clients connect to: {srt_ip}:{external_srt_port}")
+            logger.info(f"Port mapping: {external_srt_port}->10080, Publishing: {srt_ip}:{external_srt_port}")
             
             # Use external port for publishing (FFmpeg output) - this will reach the SRT server
             srt_port = external_srt_port
         else:
             # If srt_port was provided in data, assume it's the external port
             # But we still need to use the external port for publishing
-            logger.info(f"🔌 SRT port provided in request: {srt_port}")
-            logger.info(f"🔌 This should be the external port that Docker forwards to the container")
+            logger.info(f"SRT port provided: {srt_port} (external Docker port)")
             
             # CRITICAL FIX: Always use the Docker container's external port for publishing
             # The provided port might be wrong, so use the actual Docker port mapping
             docker_srt_port = ports.get("srt_port")
             if docker_srt_port and docker_srt_port != srt_port:
-                logger.warning(f"⚠️  Provided SRT port {srt_port} doesn't match Docker port {docker_srt_port}")
+                logger.warning(f"Provided SRT port {srt_port} doesn't match Docker port {docker_srt_port}")
                 logger.warning(f"   Using Docker port mapping instead: {docker_srt_port}")
                 srt_port = docker_srt_port
             else:
-                logger.info(f"✅ Using provided SRT port: {srt_port}")
+                logger.info(f"Using provided SRT port: {srt_port}")
                 logger.info(f"   This should reach the SRT server inside the Docker container")
         
         # Log the port being used for debugging
-        logger.info(f"🔌 Using SRT port {srt_port} for group {group_name} (from container ports: {ports})")
-        logger.info(f"🔌 Docker port mapping: {srt_port}:10080/udp")
-        logger.info(f"🔌 FFmpeg will publish to: {srt_ip}:{srt_port}")
-        logger.info(f"🔌 This will reach the SRT server listening on port 10080 inside the container")
+        logger.info(f"SRT port {srt_port} for {group_name}, Docker mapping: {srt_port}:10080/udp")
         
         # CRITICAL: Double-check that we're using the correct port
         docker_srt_port = ports.get("srt_port")
         if docker_srt_port and docker_srt_port != srt_port:
-            logger.error(f"❌ PORT MISMATCH: Using {srt_port} but Docker container has {docker_srt_port}")
-            logger.error(f"❌ This will cause connection failures!")
+            logger.error(f"PORT MISMATCH: Using {srt_port} but Docker container has {docker_srt_port}")
+            logger.error(f"This will cause connection failures!")
             # Force use the correct port
             srt_port = docker_srt_port
-            logger.info(f"✅ Corrected to use Docker port: {srt_port}")
+            logger.info(f"Corrected to use Docker port: {srt_port}")
         
         # Import modules at the top to avoid scope issues
         import sys
@@ -208,7 +197,8 @@ def start_split_screen_srt():
             from srt_service import SRTService
             srt_status = SRTService.monitor_srt_server(srt_ip, srt_port, timeout=5)
             if not srt_status["ready"]:
-                logger.error(f"❌ SRT server not ready: {srt_status['message']}")
+                logger.error(f"SRT server not ready: {srt_status['message']}")
+                clear_active_stream_ids(group_id)
                 
                 # Use error service for structured error response
                 try:
@@ -224,11 +214,11 @@ def start_split_screen_srt():
                     # Fallback to simple error if error service not available
                     return jsonify({"error": f"SRT server not ready: {srt_status['message']}"}), 503
                     
-            logger.info(f"✅ SRT server ready: {srt_status['message']}")
+            logger.info(f"SRT server ready: {srt_status['message']}")
         except Exception as e:
             # Fallback to simple socket check if import fails
-            logger.warning(f"⚠️  SRT service import failed: {e}")
-            logger.info(f"🔍 Falling back to simple SRT check at {srt_ip}:{srt_port}")
+            logger.warning(f"SRT service import failed: {e}")
+            logger.info(f"Falling back to simple SRT check at {srt_ip}:{srt_port}")
             
             # Simple fallback with pre-imported modules
             start_time = time.time()
@@ -238,13 +228,14 @@ def start_split_screen_srt():
                     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                         sock.settimeout(1)
                         sock.connect((srt_ip, srt_port))
-                        logger.info(f"✅ SRT server ready (fallback method)")
+                        logger.info(f"SRT server ready (fallback method)")
                         break
                 except Exception as sock_e:
-                    logger.debug(f"🔄 SRT port {srt_port} not ready yet: {sock_e}")
+                    logger.debug(f"SRT port {srt_port} not ready yet: {sock_e}")
                     time.sleep(1)
             else:
-                logger.error(f"❌ SRT server not ready after {fallback_timeout}s")
+                logger.error(f"SRT server not ready after {fallback_timeout}s")
+                clear_active_stream_ids(group_id)
                 
                 # Use error service for structured error response
                 try:
@@ -262,32 +253,36 @@ def start_split_screen_srt():
                     return jsonify({"error": f"SRT server not ready after {fallback_timeout}s"}), 500
         
         # Test SRT connection
-        logger.info("🧪 Testing SRT connection...")
+        logger.info("Testing SRT connection...")
         try:
             test_result = SRTService.test_connection(srt_ip, srt_port, group_name, sei)
             if not test_result["success"]:
-                logger.error(f"❌ SRT connection test failed: {test_result}")
+                logger.error(f"SRT connection test failed: {test_result}")
+                clear_active_stream_ids(group_id)
                 # Don't fail here, just warn - the connection might still work
-                logger.warning("⚠️  SRT connection test failed, but continuing anyway...")
+                logger.warning("SRT connection test failed, but continuing anyway...")
             else:
-                logger.info("✅ SRT connection test passed")
+                logger.info("SRT connection test passed")
         except Exception as e:
-            logger.warning(f"⚠️  SRT connection test error: {e}")
-            logger.warning("⚠️  Continuing anyway - connection might still work...")
+            logger.warning(f"SRT connection test error: {e}")
+            logger.warning("Continuing anyway - connection might still work...")
         
         # Verify video file exists
         file_path = os.path.join("uploads", video_file)
         if not os.path.exists(file_path):
-            logger.error(f"❌ Video file not found: {file_path}")
+            logger.error(f"Video file not found: {file_path}")
             return jsonify({"error": f"Video file not found: {video_file}"}), 404
         
         file_size = os.path.getsize(file_path)
-        logger.info(f"✅ Video file verified: {file_path}")
+        logger.info(f"Video file verified: {file_path}")
         logger.info(f"   Size: {file_size} bytes ({file_size / (1024*1024):.1f} MB)")
         
         # Generate unique stream ID
         base_stream_id = str(uuid.uuid4())[:8]
         stream_ids = generate_stream_ids(base_stream_id, group_name, screen_count)
+        
+        # CRITICAL: Store active stream IDs so clients can get stream URLs
+        set_active_stream_ids(group_id, stream_ids)
         
         # Get encoding parameters
         framerate = data.get("framerate", 30)
@@ -305,11 +300,10 @@ def start_split_screen_srt():
             canvas_width = output_width * grid_cols
             canvas_height = output_height * grid_rows
         
-        logger.info(f"📊 Canvas dimensions: {canvas_width}x{canvas_height}")
-        logger.info(f"📺 Screen sections: {output_width}x{output_height}")
+        logger.info(f"Canvas: {canvas_width}x{canvas_height}, Sections: {output_width}x{output_height}")
         
         # Build FFmpeg command
-        logger.info("✅ Using system FFmpeg (standard mode)")
+        logger.info("Using system FFmpeg (standard mode)")
         
         ffmpeg_cmd = build_split_screen_ffmpeg_command(
             video_file=file_path,
@@ -331,12 +325,11 @@ def start_split_screen_srt():
             stream_ids=stream_ids
         )
         
-        logger.info("🎬 Starting FFmpeg process...")
-        logger.info(f"📋 FFmpeg command: {' '.join(ffmpeg_cmd)}")
-        logger.info(f"📂 Working directory: {os.getcwd()}")
+        logger.info(f"Starting FFmpeg process in {os.getcwd()}")
+        logger.debug(f"FFmpeg command: {' '.join(ffmpeg_cmd)}")
         
         # Start the FFmpeg process with enhanced error capture
-        logger.info("🚀 Launching FFmpeg process...")
+        logger.debug("Launching FFmpeg process...")
         process = subprocess.Popen(
             ffmpeg_cmd,
             stdout=subprocess.PIPE,
@@ -344,7 +337,7 @@ def start_split_screen_srt():
             universal_newlines=True,
             bufsize=1
         )
-        logger.info(f"✅ FFmpeg process started with PID: {process.pid}")
+        logger.info(f"FFmpeg started: PID {process.pid}")
         
         # Read initial output to catch early errors
         initial_lines = []
@@ -354,7 +347,7 @@ def start_split_screen_srt():
             try:
                 # Check if process is still running
                 if process.poll() is not None:
-                    logger.error(f"❌ FFmpeg process died early with exit code: {process.returncode}")
+                    logger.error(f"FFmpeg process died early with exit code: {process.returncode}")
                     break
                 
                 # Try to read a line with timeout
@@ -372,7 +365,7 @@ def start_split_screen_srt():
                     if any(indicator in line_clean.lower() for indicator in [
                         "frame=", "fps=", "bitrate=", "time=", "speed="
                     ]):
-                        logger.info("✅ FFmpeg streaming started successfully!")
+                        logger.info("FFmpeg streaming started")
                         break
                         
                     # Look for error indicators  
@@ -380,7 +373,7 @@ def start_split_screen_srt():
                         "error", "failed", "invalid", "not found", "permission denied",
                         "no such file", "connection refused", "timeout", "unable to"
                     ]):
-                        logger.error(f"❌ Error detected: {line_clean}")
+                        logger.error(f"Error detected: {line_clean}")
                 
                 time.sleep(0.2)  # Small delay
                 
@@ -391,22 +384,156 @@ def start_split_screen_srt():
         # Final check
         final_poll = process.poll()
         if final_poll is not None:
-            logger.error(f"❌ FFmpeg process ended with exit code: {final_poll}")
+            logger.error(f"FFmpeg process ended with exit code: {final_poll}")
             
-            # Try to get any remaining output
+            # Try to get any remaining output and show last few lines
             try:
-                remaining, _ = process.communicate(timeout=3)
-                if remaining:
-                    logger.error(f"FFmpeg final output:\n{remaining}")
-            except:
-                pass
+                stdout, stderr = process.communicate(timeout=3)
+                
+                # Show last few lines of stdout if available
+                if stdout:
+                    stdout_lines = stdout.strip().split('\n')
+                    last_stdout = stdout_lines[-10:] if len(stdout_lines) > 10 else stdout_lines
+                    logger.error(f"FFmpeg startup stdout (last {len(last_stdout)} lines):")
+                    for line in last_stdout:
+                        if line.strip():
+                            logger.error(f"   {line.strip()}")
+                
+                # Show last few lines of stderr if available
+                if stderr:
+                    stderr_lines = stderr.strip().split('\n')
+                    last_stderr = stderr_lines[-10:] if len(stderr_lines) > 10 else stderr_lines
+                    logger.error(f"FFmpeg startup stderr (last {len(last_stderr)} lines):")
+                    for line in last_stderr:
+                        if line.strip():
+                            logger.error(f"   {line.strip()}")
+                            
+                # If no recent output, show a note
+                if not stdout and not stderr:
+                    logger.error(f"No FFmpeg startup output captured - process may have crashed immediately")
+                    
+            except Exception as e:
+                logger.error(f"Could not get FFmpeg startup output: {e}")
                 
             return jsonify({"error": f"FFmpeg failed to start (exit code: {final_poll})"}), 500
         
-        logger.info("✅ Streaming output detected")
+        logger.debug("Streaming output detected")
+        
+        # Start background monitoring thread for continuous error detection
+        def background_monitor():
+            """Background thread to monitor FFmpeg process for errors"""
+            try:
+                logger.info(f"Background monitoring started for PID {process.pid}")
+                logger.debug(f"Command: {' '.join(ffmpeg_cmd[:10])}...")
+                
+                # Monitor process resources
+                start_time = time.time()
+                last_check = start_time
+                
+                # Capture last few lines of output for debugging
+                last_output_lines = []
+                max_output_lines = 10  # Keep last 10 lines
+                
+                while process.poll() is None:
+                    time.sleep(5)  # Check every 5 seconds
+                    current_time = time.time()
+                    
+                    # Log process status every 30 seconds
+                    if current_time - last_check >= 30:
+                        try:
+                            import psutil
+                            proc = psutil.Process(process.pid)
+                            cpu_percent = proc.cpu_percent()
+                            memory_info = proc.memory_info()
+                            memory_mb = memory_info.rss / 1024 / 1024
+                            
+                            logger.debug(f"FFmpeg {process.pid}: CPU {cpu_percent:.1f}%, Mem {memory_mb:.1f}MB, Uptime {current_time-start_time:.1f}s")
+                            
+                            # Check for resource issues
+                            if memory_mb > 2000:  # > 2GB
+                                logger.warning(f"High memory usage: {memory_mb:.1f}MB")
+                            if memory_mb > 4000:  # > 4GB - critical
+                                logger.error(f"CRITICAL: Memory usage {memory_mb:.1f}MB - process may crash soon!")
+                            if cpu_percent > 90:
+                                logger.warning(f"High CPU usage: {cpu_percent:.1f}%")
+                                
+                        except Exception as e:
+                            logger.debug(f"Could not get process stats: {e}")
+                        
+                        last_check = current_time
+                    
+                # Process has ended
+                exit_code = process.returncode
+                uptime = time.time() - start_time
+                logger.warning(f"FFmpeg process {process.pid} ended with exit code: {exit_code} after {uptime:.1f}s")
+                
+                if exit_code != 0:
+                    logger.error(f"FFmpeg process failed with exit code: {exit_code}")
+                    logger.error(f"Process details: PID={process.pid}, Uptime={uptime:.1f}s, Exit Code={exit_code}")
+                    
+                    # Try to get any remaining output and show last few lines
+                    try:
+                        stdout, stderr = process.communicate(timeout=3)
+                        
+                        # Show last few lines of stdout if available
+                        if stdout:
+                            stdout_lines = stdout.strip().split('\n')
+                            last_stdout = stdout_lines[-max_output_lines:] if len(stdout_lines) > max_output_lines else stdout_lines
+                            logger.error(f"FFmpeg final stdout (last {len(last_stdout)} lines):")
+                            for line in last_stdout:
+                                if line.strip():
+                                    logger.error(f"   {line.strip()}")
+                        
+                        # Show last few lines of stderr if available
+                        if stderr:
+                            stderr_lines = stderr.strip().split('\n')
+                            last_stderr = stderr_lines[-max_output_lines:] if len(stderr_lines) > max_output_lines else stderr_lines
+                            logger.error(f"FFmpeg final stderr (last {len(last_stderr)} lines):")
+                            for line in last_stderr:
+                                if line.strip():
+                                    logger.error(f"   {line.strip()}")
+                                    
+                        # If no recent output, show a note
+                        if not stdout and not stderr:
+                            logger.error(f"No recent FFmpeg output captured - process may have crashed silently")
+                            
+                    except Exception as e:
+                        logger.error(f"Could not get FFmpeg output: {e}")
+                    
+                    # Log system resources at failure
+                    try:
+                        import psutil
+                        cpu_percent = psutil.cpu_percent(interval=1)
+                        memory = psutil.virtual_memory()
+                        disk = psutil.disk_usage('/')
+                        
+                        logger.error(f"System resources at failure:")
+                        logger.error(f"   CPU: {cpu_percent:.1f}%")
+                        logger.error(f"   Memory: {memory.percent:.1f}% ({memory.used/1024/1024/1024:.1f}GB / {memory.total/1024/1024/1024:.1f}GB)")
+                        logger.error(f"   Disk: {disk.percent:.1f}% ({disk.used/1024/1024/1024:.1f}GB / {disk.total/1024/1024/1024:.1f}GB)")
+                        
+                        # Check for resource exhaustion
+                        if memory.percent > 90:
+                            logger.error(f"CRITICAL: High memory usage may have caused FFmpeg failure")
+                        if disk.percent > 95:
+                            logger.error(f"CRITICAL: Low disk space may have caused FFmpeg failure")
+                            
+                    except Exception as e:
+                        logger.error(f"Could not get system resources: {e}")
+                        
+            except Exception as e:
+                logger.error(f"Background monitoring error: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        # Start background monitoring in daemon thread
+        import threading
+        monitor_thread = threading.Thread(target=background_monitor, daemon=True)
+        monitor_thread.start()
+        logger.debug("Background monitoring thread started")
         
         # Generate response
-        logger.info("📊 Generating response data...")
+        logger.debug("Generating response data...")
         crop_info = generate_client_crop_info(
             screen_count=screen_count,
             orientation=orientation,
@@ -420,7 +547,7 @@ def start_split_screen_srt():
         client_stream_urls = {}
         
         # For client URLs, use the external IP that clients can actually reach
-        external_srt_ip = "128.205.39.64"  # External IP clients connect to
+        external_srt_ip = "127.0.0.1"  # Local IP for testing (same as multi-stream)
         external_srt_port = srt_port  # External port (e.g., 10100)
         
         # Combined stream URL
@@ -435,20 +562,29 @@ def start_split_screen_srt():
             individual_stream_path = f"live/{group_name}/{individual_stream_id}"
             client_stream_urls[f"screen{i}"] = f"srt://{external_srt_ip}:{external_srt_port}?streamid=#!::r={individual_stream_path},m=request&{srt_params}"
         
-        logger.info("📺 Client stream URLs:")
-        for name, url in client_stream_urls.items():
-            logger.info(f"   {name}: {url}")
+        logger.info(f"Client stream URLs: {len(client_stream_urls)} streams")
+        logger.debug(f"URLs: {list(client_stream_urls.keys())}")
         
         # Generate test result string
         test_result = f"ffplay '{client_stream_urls['combined']}'"
         
+        # CRITICAL: Resolve stream URLs for all assigned clients
+        try:
+            from blueprints.client_management.client_endpoints import resolve_stream_urls_for_group
+            logger.info(f"Resolving stream URLs for group {group_name}")
+            resolve_stream_urls_for_group(group_id, group_name)
+        except ImportError:
+            try:
+                # Fallback for when running directly
+                from client_management.client_endpoints import resolve_stream_urls_for_group
+                logger.debug(f"Resolving stream URLs for group {group_name}")
+                resolve_stream_urls_for_group(group_id, group_name)
+            except Exception as e:
+                logger.warning(f"Could not resolve client stream URLs: {e}")
+                # This is not critical - streaming will still work
+        
         logger.info("="*60)
-        logger.info("🎉 SPLIT-SCREEN STREAMING STARTED SUCCESSFULLY")
-        logger.info(f"📋 Group: {group_name}")
-        logger.info(f"🔧 Process PID: {process.pid}")
-        logger.info(f"📺 Screens: {screen_count}")
-        logger.info(f"🔗 Combined Stream: {client_stream_urls['combined']}")
-        logger.info(f"📺 {screen_count} Individual streams also available")
+        logger.info(f"SPLIT-SCREEN STREAMING STARTED: {group_name} (PID: {process.pid}, {screen_count} screens)")
         logger.info("="*60)
         
         return jsonify({
@@ -477,12 +613,37 @@ def start_split_screen_srt():
         
     except Exception as e:
         logger.error("="*60)
-        logger.error("💥 EXCEPTION IN start_split_screen_srt")
-        logger.error(f"❌ Error type: {type(e).__name__}")
-        logger.error(f"❌ Error message: {str(e)}")
-        logger.error("Stack trace:", exc_info=True)
+        logger.error(f"EXCEPTION: {type(e).__name__}: {str(e)}")
+        
+        # Get detailed error information
+        import traceback
+        error_traceback = traceback.format_exc()
+        logger.error(f"Full traceback:\n{error_traceback}")
+        
+        # Log system state for debugging
+        try:
+            import psutil
+            logger.error(f"System state: CPU {psutil.cpu_percent(interval=1):.1f}%, Mem {psutil.virtual_memory().percent:.1f}%, Disk {psutil.disk_usage('/').percent:.1f}%")
+            
+            # Check FFmpeg processes specifically
+            ffmpeg_count = 0
+            for proc in psutil.process_iter(['pid', 'name']):
+                try:
+                    if proc.info['name'] == 'ffmpeg':
+                        ffmpeg_count += 1
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+            logger.error(f"FFmpeg processes: {ffmpeg_count}")
+            
+        except Exception as sys_e:
+            logger.error(f"Could not get system state: {sys_e}")
+        
         logger.error("="*60)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "timestamp": time.time()
+        }), 500
 
 @split_stream_bp.route("/stop_group_stream", methods=["POST", "OPTIONS"])
 def stop_group_stream():
@@ -516,7 +677,7 @@ def stop_group_stream():
         running_processes = find_running_ffmpeg_for_group_strict(group_id, group_name, container_id)
         
         if not running_processes:
-            logger.info(f"✅ No active streams found for group '{group_name}'")
+            logger.info(f"No active streams found for group '{group_name}'")
             clear_active_stream_ids(group_id)
             return jsonify({
                 "message": f"No active streams found for group '{group_name}'",
@@ -539,22 +700,22 @@ def stop_group_stream():
                 # Check if process is still running
                 try:
                     os.kill(pid, 0)  # Check if process exists
-                    logger.info(f"⚠️  Process {pid} still running, sending SIGKILL")
+                    logger.info(f"Process {pid} still running, sending SIGKILL")
                     os.kill(pid, 9)  # SIGKILL
                 except OSError:
                     # Process already terminated
                     pass
                 
                 stopped_count += 1
-                logger.info(f"✅ Successfully stopped FFmpeg process {pid}")
+                logger.info(f"Successfully stopped FFmpeg process {pid}")
                 
             except Exception as e:
-                logger.error(f"❌ Error stopping process {proc_info['pid']}: {e}")
+                logger.error(f"Error stopping process {proc_info['pid']}: {e}")
         
         # Clear active stream IDs
         clear_active_stream_ids(group_id)
         
-        logger.info(f"✅ Stopped {stopped_count} FFmpeg process(es) for group '{group_name}'")
+        logger.info(f"Stopped {stopped_count} FFmpeg process(es) for group '{group_name}'")
         
         return jsonify({
             "message": f"Stopped {stopped_count} stream(s) for group '{group_name}'",
@@ -601,7 +762,9 @@ def build_split_screen_ffmpeg_command(
     
     ffmpeg_path = find_ffmpeg_executable()
     
-    # Build input (single video file)
+    # Build input (single video file) with proper looping
+    # Note: -stream_loop -1 ensures the video file loops infinitely
+    # This is the correct FFmpeg option for infinite input looping
     input_args = ["-stream_loop", "-1", "-re", "-i", video_file]
     
     # Build filter complex for proper multi-screen layout
@@ -645,17 +808,21 @@ def build_split_screen_ffmpeg_command(
     # Join with commas for single filter chain
     complete_filter = ",".join(filter_parts)
     
-    # Build FFmpeg command
+    # Build FFmpeg command with memory optimization
     ffmpeg_cmd = [
         ffmpeg_path,
         "-y",
         "-v", "error",
-        "-stats"
+        "-stats",
+        # Memory optimization flags (input-only)
+        "-thread_queue_size", "512",  # Limit input queue
+        "-fflags", "+genpts+discardcorrupt",  # Better frame handling
+        "-avoid_negative_ts", "make_zero"  # Prevent timestamp issues
     ]
     
     ffmpeg_cmd.extend(input_args + ["-filter_complex", complete_filter])
     
-    # Encoding parameters
+    # Encoding parameters with memory optimization
     encoding_params = [
         "-an", "-c:v", "libx264",
         "-preset", "veryfast", "-tune", "zerolatency",
@@ -665,7 +832,12 @@ def build_split_screen_ffmpeg_command(
         "-pes_payload_size", "0",
         "-bf", "0", "-g", "1",
         "-r", str(framerate),
-        "-f", "mpegts"
+        "-f", "mpegts",
+        # Memory optimization for output
+        "-max_muxing_queue_size", "512",  # Limit output queue
+        "-g", "30",  # Keyframe interval (overrides the g=1 above)
+        "-refs", "2",  # Limit reference frames
+        "-sc_threshold", "40"  # Moderate scene change detection
     ]
     
     # SRT parameters - simplified for better compatibility
@@ -744,7 +916,7 @@ def find_running_ffmpeg_for_group_strict(group_id: str, group_name: str, contain
                         match_method = f"container_id({container_id[:12]})"
                     
                     if is_match:
-                        logger.info(f"✅ Found FFmpeg process {proc.info['pid']} for group '{group_name}' via {match_method}")
+                        logger.info(f"Found FFmpeg process {proc.info['pid']} for group '{group_name}' via {match_method}")
                         processes.append({
                             'pid': proc.info['pid'],
                             'cmdline': proc.info['cmdline'],
@@ -862,7 +1034,7 @@ def find_ffmpeg_executable() -> str:
         if os.path.exists(abs_path) and os.access(abs_path, os.X_OK):
             logger.info(f"Found custom FFmpeg binary: {abs_path}")
             if _verify_openvideowall_support(abs_path):
-                logger.info(f"✅ Using OpenVideoWalls custom FFmpeg: {abs_path}")
+                logger.info(f"Using OpenVideoWalls custom FFmpeg: {abs_path}")
                 return abs_path
             else:
                 logger.debug(f"Custom FFmpeg at {abs_path} lacks OpenVideoWalls support")
@@ -872,7 +1044,7 @@ def find_ffmpeg_executable() -> str:
         # Test if system ffmpeg exists and works
         result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
-            logger.info("✅ Using system FFmpeg (standard mode)")
+            logger.info("Using system FFmpeg (standard mode)")
             return "ffmpeg"
     except Exception as e:
         logger.debug(f"System FFmpeg test failed: {e}")
@@ -882,7 +1054,7 @@ def find_ffmpeg_executable() -> str:
         result = subprocess.run(["which", "ffmpeg"], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             system_path = result.stdout.strip()
-            logger.info(f"✅ Using system FFmpeg: {system_path}")
+            logger.info(f"Using system FFmpeg: {system_path}")
             return "ffmpeg"
     except Exception as e:
         logger.debug(f"'which ffmpeg' failed: {e}")
@@ -953,9 +1125,9 @@ def _has_openvideowall_support(ffmpeg_path: str) -> bool:
         _has_openvideowall_support.cache[ffmpeg_path] = has_support
         
         if has_support:
-            logger.info(f"🎯 OpenVideoWalls support confirmed: {ffmpeg_path}")
+            logger.info(f"OpenVideoWalls support confirmed: {ffmpeg_path}")
         else:
-            logger.info(f"📺 Standard FFmpeg mode: {ffmpeg_path}")
+            logger.info(f"Standard FFmpeg mode: {ffmpeg_path}")
     
     return _has_openvideowall_support.cache[ffmpeg_path]
 
