@@ -27,7 +27,7 @@ class UnifiedMultiScreenClient:
     """
     
     def __init__(self, server_url: str, hostname: str = None, display_name: str = None, 
-                 force_ffplay: bool = False):
+                 force_ffplay: bool = False, window_x: int = 100, window_y: int = 100):
         """
         Initialize the multi-screen client
         
@@ -36,11 +36,15 @@ class UnifiedMultiScreenClient:
             hostname: Unique client identifier
             display_name: Friendly display name
             force_ffplay: Force use of ffplay instead of smart selection
+            window_x: Initial X position for video window
+            window_y: Initial Y position for video window
         """
         self.server_url = server_url.rstrip('/')
         self.hostname = hostname or socket.gethostname()
         self.display_name = display_name or f"Display-{self.hostname}"
         self.force_ffplay = force_ffplay
+        self.window_x = window_x
+        self.window_y = window_y
         
         # Stream management
         self.current_stream_url = None
@@ -544,6 +548,12 @@ class UnifiedMultiScreenClient:
             print(f"   Capability: SEI timestamp processing")
             
             env = os.environ.copy()
+            # Add window positioning environment variables for C++ player
+            env['WINDOW_TITLE'] = f"Multi-Screen Client - {self.display_name}"
+            env['WINDOW_X'] = str(self.window_x)
+            env['WINDOW_Y'] = str(self.window_y)
+            env['WINDOW_FULLSCREEN'] = "1"  # Enable fullscreen
+            
             cmd = [self.player_executable, self.current_stream_url]
             
             self.player_process = subprocess.Popen(
@@ -604,6 +614,9 @@ class UnifiedMultiScreenClient:
                 "-flags", "low_delay", 
                 "-framedrop",
                 "-strict", "experimental",
+                "-window_title", f"Multi-Screen Client - {self.display_name}",
+                "-x", str(self.window_x),  # Initial X position
+                "-y", str(self.window_y),  # Initial Y position
                 "-fs",  # Fullscreen
                 "-autoexit",
                 "-loglevel", "warning",  # Reduce ffplay verbosity
@@ -903,11 +916,12 @@ def main():
  Unified Multi-Screen Client for Video Wall Systems
 
 A simple and reliable client for multi-screen video streaming that supports
-automatic player selection using the system's default display.
+automatic player selection with movable fullscreen windows.
 
 Features:
    Automatic server registration with unique client identification
    Smart player selection (C++ player for SEI streams, ffplay fallback)
+   Movable fullscreen windows (position on any display/monitor)
    Uses system default display (DISPLAY=:0.0)
    Automatic reconnection and error recovery
    Support for multiple instances on the same device
@@ -937,6 +951,10 @@ Features:
     python3 client.py --server http://192.168.1.100:5000 \\
       --hostname client-1 --display-name "Screen 1" --force-ffplay
 
+  Position fullscreen window on specific display:
+    python3 client.py --server http://192.168.1.100:5000 \\
+      --hostname client-1 --display-name "Screen 1" --window-x 1920 --window-y 0
+
   Debug mode with detailed logging:
     python3 client.py --server http://192.168.1.100:5000 \\
       --hostname client-1 --display-name "Screen 1" --debug
@@ -965,6 +983,11 @@ Features:
        --hostname client-1 --display-name "Screen 1"
 
   3. Use web interface to assign clients to groups and start streaming
+
+  4. Position fullscreen windows:
+     - Fullscreen windows will appear at the specified position (default: 100,100)
+     - Use --window-x and --window-y to position on different displays
+     - Example: --window-x 1920 --window-y 0 for second monitor
 
  TROUBLESHOOTING:
 
@@ -1002,6 +1025,14 @@ For more information, visit: https://github.com/your-repo/openvideowalls
     optional_group.add_argument('--force-ffplay', 
                                action='store_true',
                                help='Force use of ffplay for all streams (disable smart C++/ffplay selection)')
+    optional_group.add_argument('--window-x', 
+                               type=int, 
+                               default=100,
+                               help='Initial X position for fullscreen window (default: 100, use 1920 for second monitor)')
+    optional_group.add_argument('--window-y', 
+                               type=int, 
+                               default=100,
+                               help='Initial Y position for fullscreen window (default: 100, use 0 for top of monitor)')
     optional_group.add_argument('--debug', 
                                action='store_true',
                                help='Enable debug logging (includes SEI detection details)')
@@ -1044,7 +1075,9 @@ For more information, visit: https://github.com/your-repo/openvideowalls
             server_url=args.server,
             hostname=args.hostname,
             display_name=args.display_name,
-            force_ffplay=args.force_ffplay
+            force_ffplay=args.force_ffplay,
+            window_x=args.window_x,
+            window_y=args.window_y
         )
         
         print(" Starting Unified Multi-Screen Client...")
