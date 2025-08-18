@@ -27,7 +27,7 @@ class UnifiedMultiScreenClient:
     """
     
     def __init__(self, server_url: str, hostname: str = None, display_name: str = None, 
-                 force_ffplay: bool = False, display: str = None):
+                 force_ffplay: bool = False):
         """
         Initialize the multi-screen client
         
@@ -36,18 +36,11 @@ class UnifiedMultiScreenClient:
             hostname: Unique client identifier
             display_name: Friendly display name
             force_ffplay: Force use of ffplay instead of smart selection
-            display: X11 display to use (e.g., ":0.0" for first monitor, ":0.1" for second)
         """
         self.server_url = server_url.rstrip('/')
         self.hostname = hostname or socket.gethostname()
         self.display_name = display_name or f"Display-{self.hostname}"
         self.force_ffplay = force_ffplay
-        self.display = display
-        
-        # Set DISPLAY environment variable if specified
-        if self.display:
-            os.environ['DISPLAY'] = self.display
-            print(f"  Setting DISPLAY environment variable to: {self.display}")
         
         # Stream management
         self.current_stream_url = None
@@ -264,8 +257,6 @@ class UnifiedMultiScreenClient:
             print(f"   Display Name: {self.display_name}")
             print(f"   Server: {self.server_url}")
             print(f"   Server IP: {self.server_ip}")
-            if self.display:
-                print(f"   Display: {self.display}")
             print(f"   Smart Player: {'Enabled' if not self.force_ffplay else 'Disabled (force ffplay)'}")
             
             registration_start = time.time()
@@ -288,8 +279,7 @@ class UnifiedMultiScreenClient:
                 "hostname": self.hostname,
                 "ip_address": local_ip,  # Include IP address for unique client ID
                 "display_name": self.display_name,
-                "platform": f"multiscreen_{player_type}",  # Indicate multi-screen capability
-                "display": self.display  # Include display information
+                "platform": f"multiscreen_{player_type}"  # Indicate multi-screen capability
             }
             
             print(f"\n Sending registration request...")
@@ -355,8 +345,6 @@ class UnifiedMultiScreenClient:
                     print(f"\n REGISTRATION SUCCESSFUL!")
                     print(f"   Client ID: {result.get('client_id', self.client_id)}")
                     print(f"   Status: {result.get('status', 'registered')}")
-                    if self.display:
-                        print(f"   Display: {self.display}")
                     if 'server_time' in result:
                         print(f"   Server Time: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(result['server_time']))}")
                     print(f"   Total Registration Time: {total_time_ms:.1f}ms")
@@ -449,8 +437,6 @@ class UnifiedMultiScreenClient:
                     print(f"   Assignment Type: {data.get('assignment_status', 'unknown')}")
                     if data.get('screen_number') is not None:
                         print(f"   Screen Number: {data.get('screen_number')}")
-                    if self.display:
-                        print(f"   Display: {self.display}")
                     print(f"   Stream URL: {self.current_stream_url}")
                     print(f"   Stream Version: {self.current_stream_version}")
                     return True
@@ -539,8 +525,6 @@ class UnifiedMultiScreenClient:
             print(f"   Selected: {player_type.upper()}")
             print(f"   Reason: {reason}")
             print(f"   Stream URL: {self.current_stream_url}")
-            if self.display:
-                print(f"   Display: {self.display}")
             
             if player_type == "cpp_player":
                 return self._play_with_cpp_player()
@@ -558,8 +542,6 @@ class UnifiedMultiScreenClient:
             print(f"   Stream URL: {self.current_stream_url}")
             print(f"   Stream Version: {self.current_stream_version}")
             print(f"   Capability: SEI timestamp processing")
-            if self.display:
-                print(f"   Display: {self.display}")
             
             env = os.environ.copy()
             cmd = [self.player_executable, self.current_stream_url]
@@ -615,8 +597,6 @@ class UnifiedMultiScreenClient:
             print(f"   Stream URL: {self.current_stream_url}")
             print(f"   Stream Version: {self.current_stream_version}")
             print(f"   Capability: Standard video playback")
-            if self.display:
-                print(f"   Display: {self.display}")
             
             cmd = [
                 "ffplay",
@@ -676,8 +656,6 @@ class UnifiedMultiScreenClient:
         print(f"   PID: {self.player_process.pid}")
         print(f"   Stream: {self.current_stream_url}")
         print(f"   Player Type: {self.current_player_type}")
-        if self.display:
-            print(f"   Display: {self.display}")
         
         last_stream_check = time.time()
         stream_check_interval = 10
@@ -864,8 +842,6 @@ class UnifiedMultiScreenClient:
             print(f"   Client ID: {self.client_id}")
             print(f"   Display Name: {self.display_name}")
             print(f"   Server: {self.server_url}")
-            if self.display:
-                print(f"   Display: {self.display}")
             print(f"   Smart Player: {'Enabled' if not self.force_ffplay else 'Disabled (force ffplay)'}")
             print(f"   C++ Player: {'Available' if self.player_executable else 'Not found'}")
             print(f"{'='*80}")
@@ -927,12 +903,12 @@ def main():
  Unified Multi-Screen Client for Video Wall Systems
 
 A simple and reliable client for multi-screen video streaming that supports
-automatic player selection and physical display assignment.
+automatic player selection using the system's default display.
 
 Features:
    Automatic server registration with unique client identification
    Smart player selection (C++ player for SEI streams, ffplay fallback)
-   Physical display assignment (--display parameter)
+   Uses system default display (DISPLAY=:0.0)
    Automatic reconnection and error recovery
    Support for multiple instances on the same device
         """,
@@ -942,83 +918,65 @@ Features:
 
   Standard usage:
     python3 client.py --server http://192.168.1.100:5000 \\
-      --hostname rpi-client-1 --display-name "Monitor 1" --display :0.0
+      --hostname rpi-client-1 --display-name "Monitor 1"
 
-  Dual-monitor setup:
-    # Client 1 (Monitor 1):
+  Multiple clients on same device:
+    # Client 1:
     python3 client.py --server http://192.168.1.100:5000 \\
-      --hostname rpi-client-1 --display-name "Left Screen" --display :0.0
+      --hostname rpi-client-1 --display-name "Client 1"
 
-    # Client 2 (Monitor 2):
+    # Client 2:
     python3 client.py --server http://192.168.1.100:5000 \\
-      --hostname rpi-client-2 --display-name "Right Screen" --display :0.1
+      --hostname rpi-client-2 --display-name "Client 2"
 
-  DISPLAY PARAMETER GUIDE:
-
-  :0.0    = First monitor (left screen in side-by-side setup)
-  :0.1    = Second monitor (right screen in side-by-side setup)
-  :0.2    = Third monitor (if available)
-  :0      = Default display (usually spans all monitors)
-
-  Note: The --display parameter automatically sets the DISPLAY environment
-        variable, so you don't need to configure it manually.
+  Note: Uses system default display (DISPLAY=:0.0)
 
   ADVANCED OPTIONS:
 
   Force ffplay for all streams (disable smart selection):
     python3 client.py --server http://192.168.1.100:5000 \\
-      --hostname client-1 --display-name "Screen 1" --display :0.0 --force-ffplay
+      --hostname client-1 --display-name "Screen 1" --force-ffplay
 
   Debug mode with detailed logging:
     python3 client.py --server http://192.168.1.100:5000 \\
-      --hostname client-1 --display-name "Screen 1" --display :0.0 --debug
+      --hostname client-1 --display-name "Screen 1" --debug
 
  DEPLOYMENT EXAMPLES:
 
-  Systemd service for Client 1 (Monitor 1):
+  Systemd service for Client 1:
     ExecStart=/usr/bin/python3 client.py \\
       --server http://192.168.1.100:5000 \\
       --hostname rpi-client-1 \\
-      --display-name "Monitor 1" \\
-      --display :0.0
+      --display-name "Client 1"
 
-  Systemd service for Client 2 (Monitor 2):
+  Systemd service for Client 2:
     ExecStart=/usr/bin/python3 client.py \\
       --server http://192.168.1.100:5000 \\
       --hostname rpi-client-2 \\
-      --display-name "Monitor 2" \\
-      --display :0.1
+      --display-name "Client 2"
 
  SETUP PROCESS:
 
   1. Ensure ffmpeg/ffplay is installed:
      sudo apt install ffmpeg
 
-  2. Configure dual monitors (if needed):
-     xrandr --output HDMI-1 --mode 1920x1080 --pos 0x0
-     xrandr --output HDMI-2 --mode 1920x1080 --pos 1920x0
-
-  3. Start clients on specific displays:
+  2. Start client:
      python3 client.py --server http://YOUR_SERVER_IP:5000 \\
-       --hostname client-1 --display-name "Screen 1" --display :0.0
+       --hostname client-1 --display-name "Screen 1"
 
-     python3 client.py --server http://YOUR_SERVER_IP:5000 \\
-       --hostname client-2 --display-name "Screen 2" --display :0.1
-
-  4. Use web interface to assign clients to groups and start streaming
+  3. Use web interface to assign clients to groups and start streaming
 
  TROUBLESHOOTING:
 
   Check display configuration:
     xrandr --listmonitors
 
-  Test display assignment:
-    DISPLAY=:0.0 xeyes &
-    DISPLAY=:0.1 xeyes &
+  Test display:
+    xeyes &
 
   View client logs:
     python3 client.py --server http://YOUR_SERVER_IP:5000 \\
-      --hostname client-1 --display-name "Screen 1" --display :0.0 --debug
+      --hostname client-1 --display-name "Screen 1" --debug
 
 For more information, visit: https://github.com/your-repo/openvideowalls
         """
@@ -1038,10 +996,6 @@ For more information, visit: https://github.com/your-repo/openvideowalls
                                required=True,
                                metavar='NAME',
                                help='Display name for admin interface - Example: "Monitor 1"')
-    required_group.add_argument('--display', 
-                               required=True,
-                               metavar='DISPLAY',
-                               help='X11 display to use - Examples: :0.0 (first monitor), :0.1 (second monitor)')
     
     # Optional arguments group
     optional_group = parser.add_argument_group('  Optional Arguments')
@@ -1065,18 +1019,7 @@ For more information, visit: https://github.com/your-repo/openvideowalls
         print("   Example: --server https://videowall.example.com:5000")
         sys.exit(1)
     
-    # Validate display parameter
-    if not (args.display.startswith(':') and ('.' in args.display or args.display == ':0')):
-        print(" Error: Display must be in format :0.0, :0.1, or :0")
-        print("")
-        print("  Valid display examples:")
-        print("   :0.0  = First monitor (left screen)")
-        print("   :0.1  = Second monitor (right screen)")
-        print("   :0.2  = Third monitor")
-        print("   :0    = Default display (spans all monitors)")
-        print("")
-        print(" Tip: Use 'xrandr --listmonitors' to see available displays")
-        sys.exit(1)
+
     
     # Validate hostname (basic check)
     if not args.hostname.strip():
@@ -1101,12 +1044,10 @@ For more information, visit: https://github.com/your-repo/openvideowalls
             server_url=args.server,
             hostname=args.hostname,
             display_name=args.display_name,
-            force_ffplay=args.force_ffplay,
-            display=args.display
+            force_ffplay=args.force_ffplay
         )
         
         print(" Starting Unified Multi-Screen Client...")
-        print(f"  Using display: {args.display}")
         print("   Press Ctrl+C to stop gracefully")
         
         client.run()
