@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Unified Multi-Screen Client with Chrony Time Synchronization
-Implements OpenVideoWalls-style time sync using chrony/NTP for precise client-client synchronization
+Unified Multi-Screen Client for Video Wall Systems
+Simple, reliable client for multi-screen video streaming
 """
-
 import argparse
 import requests
 import time
@@ -20,304 +19,35 @@ from typing import Optional, Dict, Any, Tuple
 from urllib.parse import urlparse
 from pathlib import Path
 
-class ChronyTimeSync:
-    """Chrony-based time synchronization service following OpenVideoWalls methodology"""
-    
-    def __init__(self, tolerance_ms: float = 50.0):
-        self.tolerance_ms = tolerance_ms
-        self.sync_status = {"synchronized": False, "offset_ms": float('inf')}
-        self.logger = logging.getLogger(__name__)
-        
-    def check_chrony_installation(self) -> bool:
-        """Check if chrony is installed and accessible"""
-        try:
-            result = subprocess.run(['chronyc', '--help'], capture_output=True, timeout=5)
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            return False
-    
-    def install_chrony_config(self) -> bool:
-        """Generate and suggest chrony configuration for video wall synchronization"""
-        config = self.generate_chrony_config()
-        
-        print(f"\n🕒 CHRONY CONFIGURATION FOR VIDEO WALL SYNCHRONIZATION")
-        print(f"{'='*70}")
-        print(f"Following OpenVideoWalls methodology for precise time sync")
-        print(f"Tolerance: ±{self.tolerance_ms}ms for synchronized video playback")
-        print(f"{'='*70}")
-        
-        print(f"\n📋 Required chrony configuration (/etc/chrony/chrony.conf):")
-        print(f"{'─'*50}")
-        print(config)
-        print(f"{'─'*50}")
-        
-        print(f"\n🔧 Installation Steps:")
-        print(f"1. sudo nano /etc/chrony/chrony.conf")
-        print(f"2. Replace content with the configuration above")
-        print(f"3. sudo systemctl restart chrony")
-        print(f"4. sudo systemctl enable chrony")
-        print(f"5. Wait 2-5 minutes for initial synchronization")
-        
-        return True
-    
-    def generate_chrony_config(self) -> str:
-        """Generate chrony configuration optimized for video wall synchronization"""
-        return """# Chrony Configuration for OpenVideoWalls Multi-Screen Synchronization
-# Implements precise time sync methodology from OpenVideoWalls paper
-
-# Multiple high-quality NTP sources for redundancy and accuracy
-# All clients use the same sources = common time reference
-pool pool.ntp.org iburst maxsources 3
-pool time.google.com iburst maxsources 2  
-pool time.cloudflare.com iburst maxsources 2
-
-# Quick time correction on startup (OpenVideoWalls requirement)
-# Allow steps up to 1 second for first 3 corrections
-makestep 1.0 3
-
-# Video wall optimizations
-maxupdateskew 100.0    # Handle network jitter in video streaming environments
-driftfile /var/lib/chrony/drift
-rtcsync                # Keep hardware clock in sync
-
-# Logging for monitoring sync quality
-logdir /var/log/chrony
-log measurements statistics tracking refclocks
-
-# Security
-cmdallow 127.0.0.1
-bindcmdaddress 127.0.0.1
-bindcmdaddress ::1
-
-# Performance tuning for sub-50ms synchronization
-minpoll 4              # Poll every 16 seconds minimum
-maxpoll 6              # Poll every 64 seconds maximum
-"""
-    
-    def get_sync_status(self) -> Dict[str, Any]:
-        """Get comprehensive chrony synchronization status"""
-        try:
-            # Get tracking information
-            tracking_result = subprocess.run(
-                ['chronyc', 'tracking'], 
-                capture_output=True, 
-                text=True, 
-                timeout=5
-            )
-            
-            if tracking_result.returncode != 0:
-                return {
-                    "synchronized": False,
-                    "error": "chrony not running or accessible",
-                    "offset_ms": float('inf'),
-                    "stratum": None,
-                    "reference": None
-                }
-            
-            tracking_data = self.parse_chrony_tracking(tracking_result.stdout)
-            
-            # Get sources information for additional context
-            sources_result = subprocess.run(
-                ['chronyc', 'sources'], 
-                capture_output=True, 
-                text=True, 
-                timeout=5
-            )
-            
-            sources_data = []
-            if sources_result.returncode == 0:
-                sources_data = self.parse_chrony_sources(sources_result.stdout)
-            
-            # Calculate synchronization quality
-            offset_ms = tracking_data.get('last_offset_ms', float('inf'))
-            is_synchronized = (
-                abs(offset_ms) <= self.tolerance_ms and 
-                tracking_data.get('stratum', 16) < 16 and
-                tracking_data.get('reference_id') != '127.127.1.1'  # Not using local clock
-            )
-            
-            sync_status = {
-                "synchronized": is_synchronized,
-                "offset_ms": offset_ms,
-                "tolerance_ms": self.tolerance_ms,
-                "stratum": tracking_data.get('stratum'),
-                "reference": tracking_data.get('reference_name'),
-                "reference_id": tracking_data.get('reference_id'),
-                "root_delay_ms": tracking_data.get('root_delay_ms'),
-                "root_dispersion_ms": tracking_data.get('root_dispersion_ms'),
-                "last_update_ago": tracking_data.get('last_update_ago'),
-                "leap_status": tracking_data.get('leap_status'),
-                "sources_count": len(sources_data),
-                "sources": sources_data[:3],  # Top 3 sources
-                "timestamp": time.time()
-            }
-            
-            self.sync_status = sync_status
-            return sync_status
-            
-        except subprocess.TimeoutExpired:
-            return {"synchronized": False, "error": "chronyc timeout", "offset_ms": float('inf')}
-        except Exception as e:
-            return {"synchronized": False, "error": str(e), "offset_ms": float('inf')}
-    
-    def parse_chrony_tracking(self, output: str) -> Dict[str, Any]:
-        """Parse chronyc tracking output into structured data"""
-        tracking = {}
-        
-        for line in output.split('\n'):
-            line = line.strip()
-            if ':' in line:
-                key, value = line.split(':', 1)
-                key = key.strip().lower().replace(' ', '_')
-                value = value.strip()
-                
-                # Parse specific fields
-                if 'reference_id' in key:
-                    tracking['reference_id'] = value.split()[0]
-                    if '(' in value and ')' in value:
-                        tracking['reference_name'] = value.split('(')[1].split(')')[0]
-                
-                elif 'stratum' in key:
-                    try:
-                        tracking['stratum'] = int(value)
-                    except ValueError:
-                        tracking['stratum'] = 16
-                
-                elif 'root_delay' in key:
-                    try:
-                        delay_sec = float(value.split()[0])
-                        tracking['root_delay_ms'] = delay_sec * 1000
-                    except (ValueError, IndexError):
-                        tracking['root_delay_ms'] = None
-                
-                elif 'root_dispersion' in key:
-                    try:
-                        disp_sec = float(value.split()[0])
-                        tracking['root_dispersion_ms'] = disp_sec * 1000
-                    except (ValueError, IndexError):
-                        tracking['root_dispersion_ms'] = None
-                
-                elif 'last_offset' in key:
-                    try:
-                        # Parse offset (can be in seconds or milliseconds)
-                        if 'ms' in value:
-                            tracking['last_offset_ms'] = float(value.replace('ms', '').strip())
-                        else:
-                            offset_sec = float(value.split()[0])
-                            tracking['last_offset_ms'] = offset_sec * 1000
-                    except (ValueError, IndexError):
-                        tracking['last_offset_ms'] = float('inf')
-                
-                elif 'last_update' in key:
-                    tracking['last_update_ago'] = value
-                
-                elif 'leap_status' in key:
-                    tracking['leap_status'] = value
-                
-                else:
-                    tracking[key] = value
-        
-        return tracking
-    
-    def parse_chrony_sources(self, output: str) -> list:
-        """Parse chronyc sources output"""
-        sources = []
-        lines = output.split('\n')
-        
-        for line in lines[2:]:  # Skip header lines
-            line = line.strip()
-            if line and not line.startswith('='):
-                parts = line.split()
-                if len(parts) >= 4:
-                    source = {
-                        'indicator': parts[0][0] if parts[0] else '',
-                        'name': parts[0][1:] if len(parts[0]) > 1 else parts[1] if len(parts) > 1 else '',
-                        'stratum': parts[1] if len(parts) > 1 else '',
-                        'poll': parts[2] if len(parts) > 2 else '',
-                        'reach': parts[3] if len(parts) > 3 else '',
-                        'lastRx': parts[4] if len(parts) > 4 else '',
-                        'last_sample': parts[5:] if len(parts) > 5 else []
-                    }
-                    sources.append(source)
-        
-        return sources
-    
-    def wait_for_synchronization(self, max_wait_minutes: int = 10) -> bool:
-        """Wait for chrony to achieve synchronization within tolerance"""
-        print(f"\n⏱️  WAITING FOR CHRONY SYNCHRONIZATION")
-        print(f"   Tolerance: ±{self.tolerance_ms}ms")
-        print(f"   Max wait: {max_wait_minutes} minutes")
-        print(f"   Following OpenVideoWalls sync methodology...")
-        
-        start_time = time.time()
-        max_wait_seconds = max_wait_minutes * 60
-        check_interval = 10  # Check every 10 seconds
-        
-        while (time.time() - start_time) < max_wait_seconds:
-            status = self.get_sync_status()
-            
-            offset_ms = status.get('offset_ms', float('inf'))
-            synchronized = status.get('synchronized', False)
-            stratum = status.get('stratum', 16)
-            
-            print(f"   Status: Offset={offset_ms:.1f}ms, Stratum={stratum}, Sync={synchronized}")
-            
-            if synchronized:
-                print(f"✅ SYNCHRONIZATION ACHIEVED!")
-                print(f"   Final offset: {offset_ms:.1f}ms (within ±{self.tolerance_ms}ms)")
-                print(f"   Time to sync: {(time.time() - start_time):.1f} seconds")
-                return True
-            
-            time.sleep(check_interval)
-        
-        print(f"⏰ Synchronization timeout after {max_wait_minutes} minutes")
-        final_status = self.get_sync_status()
-        print(f"   Final offset: {final_status.get('offset_ms', 'unknown')}ms")
-        return False
-    
-    def print_detailed_status(self):
-        """Print comprehensive sync status for debugging"""
-        status = self.get_sync_status()
-        
-        print(f"\n📊 CHRONY SYNCHRONIZATION STATUS")
-        print(f"{'='*50}")
-        print(f"Synchronized: {'✅ YES' if status.get('synchronized') else '❌ NO'}")
-        print(f"Time Offset: {status.get('offset_ms', 'unknown'):.1f}ms")
-        print(f"Tolerance: ±{self.tolerance_ms}ms")
-        print(f"Stratum: {status.get('stratum', 'unknown')}")
-        print(f"Reference: {status.get('reference', 'unknown')}")
-        print(f"Root Delay: {status.get('root_delay_ms', 'unknown'):.1f}ms")
-        print(f"Root Dispersion: {status.get('root_dispersion_ms', 'unknown'):.1f}ms")
-        print(f"Last Update: {status.get('last_update_ago', 'unknown')}")
-        print(f"Sources: {status.get('sources_count', 0)}")
-        
-        if status.get('error'):
-            print(f"Error: {status['error']}")
-        
-        print(f"{'='*50}")
 
 class UnifiedMultiScreenClient:
     """
-    Unified Multi-Screen Client with Chrony Time Synchronization
-    Implements OpenVideoWalls synchronization methodology
+    Unified Multi-Screen Client for Video Wall Systems
+    Simple and reliable client for multi-screen video streaming
     """
     
     def __init__(self, server_url: str, hostname: str = None, display_name: str = None, 
-                 force_ffplay: bool = False, sync_tolerance_ms: float = 50.0):
+                 force_ffplay: bool = False, display: str = None):
         """
-        Initialize the unified client with chrony time sync
+        Initialize the multi-screen client
         
         Args:
             server_url: Server URL (e.g., "http://192.168.1.100:5000")
             hostname: Unique client identifier
             display_name: Friendly display name
             force_ffplay: Force use of ffplay instead of smart selection
-            sync_tolerance_ms: Time sync tolerance in milliseconds (OpenVideoWalls: 50ms)
+            display: X11 display to use (e.g., ":0.0" for first monitor, ":0.1" for second)
         """
         self.server_url = server_url.rstrip('/')
         self.hostname = hostname or socket.gethostname()
         self.display_name = display_name or f"Display-{self.hostname}"
         self.force_ffplay = force_ffplay
+        self.display = display
+        
+        # Set DISPLAY environment variable if specified
+        if self.display:
+            os.environ['DISPLAY'] = self.display
+            print(f"  Setting DISPLAY environment variable to: {self.display}")
         
         # Stream management
         self.current_stream_url = None
@@ -329,8 +59,7 @@ class UnifiedMultiScreenClient:
         self.max_retries = 60
         self._shutdown_event = threading.Event()
         
-        # Chrony time synchronization (OpenVideoWalls methodology)
-        self.time_sync = ChronyTimeSync(tolerance_ms=sync_tolerance_ms)
+        # Client state
         self.registered = False
         self.assignment_status = "waiting_for_assignment"
         
@@ -435,58 +164,12 @@ class UnifiedMultiScreenClient:
                 # Final fallback: use loopback IP
                 return "127.0.0.1"
     
-    def check_time_synchronization(self) -> bool:
-        """Check and validate chrony time synchronization"""
-        print(f"\n🕒 CHECKING CHRONY TIME SYNCHRONIZATION")
-        print(f"Following OpenVideoWalls methodology for video wall sync")
-        
-        # Check if chrony is installed
-        if not self.time_sync.check_chrony_installation():
-            print(f"\n❌ CHRONY NOT INSTALLED")
-            print(f"Please install chrony: sudo apt install chrony")
-            return False
-        
-        # Get current sync status
-        status = self.time_sync.get_sync_status()
-        
-        if status.get('synchronized'):
-            print(f"✅ CHRONY SYNCHRONIZED")
-            print(f"   Offset: {status.get('offset_ms', 'unknown'):.1f}ms")
-            print(f"   Stratum: {status.get('stratum', 'unknown')}")
-            print(f"   Reference: {status.get('reference', 'unknown')}")
-            return True
-        
-        elif status.get('error'):
-            print(f"\n⚠️  CHRONY STATUS: {status['error']}")
-            
-            if 'not running' in status['error'].lower():
-                print(f"\n🔧 CHRONY SETUP REQUIRED")
-                self.time_sync.install_chrony_config()
-                
-                print(f"\nAfter configuration, restart this client to check sync status.")
-                return False
-            
-            return False
-        
-        else:
-            print(f"\n⏱️  CHRONY SYNCHRONIZING...")
-            print(f"   Current offset: {status.get('offset_ms', 'unknown'):.1f}ms")
-            print(f"   Target: ±{self.time_sync.tolerance_ms}ms")
-            
-            # Wait for synchronization
-            if self.time_sync.wait_for_synchronization(max_wait_minutes=5):
-                return True
-            else:
-                print(f"\n⚠️  Synchronization incomplete, but proceeding...")
-                print(f"   Video sync quality may be reduced")
-                return True  # Allow to proceed with degraded sync
-    
     def detect_sei_in_stream(self, stream_url: str, timeout: int = 10) -> bool:
         """
         Detect if the stream contains SEI metadata by analyzing the first few seconds
         """
         try:
-            print(f"🔍 Analyzing stream for SEI metadata...")
+            print(f" Analyzing stream for SEI metadata...")
             print(f"   Stream URL: {stream_url}")
             
             # Use ffprobe to analyze the stream for a short duration
@@ -523,7 +206,7 @@ class UnifiedMultiScreenClient:
                     
                     for pattern in sei_patterns:
                         if pattern.lower() in stdout.lower():
-                            print(f"✅ SEI metadata detected (pattern: {pattern[:16]}...)")
+                            print(f" SEI metadata detected (pattern: {pattern[:16]}...)")
                             return True
                     
                     # Alternative: Check stderr for SEI-related messages
@@ -531,17 +214,17 @@ class UnifiedMultiScreenClient:
                         sei_indicators = ["sei", "user_data", "h264_metadata"]
                         for indicator in sei_indicators:
                             if indicator.lower() in stderr.lower():
-                                print(f"✅ SEI indicators found in stream analysis")
+                                print(f" SEI indicators found in stream analysis")
                                 return True
                     
-                    print(f"📺 No SEI metadata detected - standard stream")
+                    print(f" No SEI metadata detected - standard stream")
                     return False
                 else:
-                    print(f"⚠️  Could not analyze stream data")
+                    print(f"  Could not analyze stream data")
                     return False
                     
             except subprocess.TimeoutExpired:
-                print(f"⏱️  Stream analysis timeout - assuming no SEI")
+                print(f"  Stream analysis timeout - assuming no SEI")
                 process.kill()
                 return False
                 
@@ -571,33 +254,26 @@ class UnifiedMultiScreenClient:
             return "ffplay", "No SEI metadata - using ffplay for standard playback"
     
     def register(self) -> bool:
-        """Register client with server including chrony sync validation"""
+        """Register client with server"""
         try:
             print(f"\n{'='*80}")
-            print(f"🚀 STARTING UNIFIED CLIENT REGISTRATION")
+            print(f" STARTING MULTI-SCREEN CLIENT REGISTRATION")
             print(f"   Client: {self.hostname}")
             print(f"   Local IP: {self._get_local_ip_address()}")
             print(f"   Client ID: {self.client_id}")
             print(f"   Display Name: {self.display_name}")
             print(f"   Server: {self.server_url}")
             print(f"   Server IP: {self.server_ip}")
-            print(f"   Time Sync: Chrony/NTP (OpenVideoWalls methodology)")
-            print(f"   Tolerance: ±{self.time_sync.tolerance_ms}ms")
+            if self.display:
+                print(f"   Display: {self.display}")
             print(f"   Smart Player: {'Enabled' if not self.force_ffplay else 'Disabled (force ffplay)'}")
-            
-            # Check chrony synchronization FIRST
-            if not self.check_time_synchronization():
-                print(f"\n❌ Time synchronization check failed")
-                print(f"   Video wall sync may be degraded")
-                print(f"   Configure chrony before proceeding for best results")
-                # Still allow registration to proceed
             
             registration_start = time.time()
             registration_start_formatted = time.strftime("%Y-%m-%d %H:%M:%S.%f", time.gmtime(registration_start))[:-3]
             print(f"   Start Time: {registration_start_formatted} UTC")
             print(f"{'='*80}")
             
-            # Create platform string indicating chrony sync capability
+            # Create platform string indicating player capability
             if self.force_ffplay:
                 player_type = "ffplay_only"
             elif not self.player_executable:
@@ -605,55 +281,39 @@ class UnifiedMultiScreenClient:
             else:
                 player_type = "smart_sel"  # smart selection
             
-            # Get chrony sync status for registration
-            sync_status = self.time_sync.get_sync_status()
-            
             # Get local IP address for unique client identification
             local_ip = self._get_local_ip_address()
-            
-            # Filter out None values and convert inf values to avoid JSON serialization issues
-            filtered_sync_status = {}
-            for key, value in sync_status.items():
-                if key in ['synchronized', 'offset_ms', 'stratum', 'reference']:
-                    if value is not None:
-                        # Convert inf values to a large finite number for JSON compatibility
-                        if isinstance(value, float) and (value == float('inf') or value == float('-inf')):
-                            filtered_sync_status[key] = 999999.0  # Use a large finite number
-                        else:
-                            filtered_sync_status[key] = value
             
             registration_data = {
                 "hostname": self.hostname,
                 "ip_address": local_ip,  # Include IP address for unique client ID
                 "display_name": self.display_name,
-                "platform": f"chrony_{player_type}",  # Indicate chrony sync
-                "time_sync_method": "chrony",
-                "sync_tolerance_ms": self.time_sync.tolerance_ms,
-                "sync_status": filtered_sync_status
+                "platform": f"multiscreen_{player_type}",  # Indicate multi-screen capability
+                "display": self.display  # Include display information
             }
             
-            print(f"\n📡 Sending registration request...")
+            print(f"\n Sending registration request...")
             request_sent_time = time.time()
             
             # Try new registration endpoint first, fallback to legacy
             try:
-                print(f"🔍 Trying new endpoint: {self.server_url}/api/clients/register")
-                print(f"🔍 Registration data: {json.dumps(registration_data, indent=2)}")
+                print(f" Trying new endpoint: {self.server_url}/api/clients/register")
+                print(f" Registration data: {json.dumps(registration_data, indent=2)}")
                 response = requests.post(
                     f"{self.server_url}/api/clients/register",
                     json=registration_data,
                     timeout=10
                 )
                 endpoint_used = "new (/api/clients/register)"
-                print(f"✅ New endpoint succeeded with status: {response.status_code}")
+                print(f" New endpoint succeeded with status: {response.status_code}")
             except requests.exceptions.RequestException as e:
                 # Fallback to legacy endpoint (simplified data)
-                print(f"❌ New endpoint failed with RequestException: {e}")
+                print(f" New endpoint failed with RequestException: {e}")
                 self.logger.info("New endpoint failed, trying legacy endpoint...")
                 legacy_data = {
                     "hostname": self.hostname,
                     "display_name": self.display_name,
-                    "platform": f"chrony_{player_type}"
+                    "platform": f"multiscreen_{player_type}"
                 }
                 response = requests.post(
                     f"{self.server_url}/register_client",
@@ -663,16 +323,16 @@ class UnifiedMultiScreenClient:
                 endpoint_used = "legacy (/register_client)"
             except Exception as e:
                 # Catch any other exceptions
-                print(f"❌ New endpoint failed with unexpected error: {e}")
-                print(f"❌ Error type: {type(e).__name__}")
+                print(f" New endpoint failed with unexpected error: {e}")
+                print(f" Error type: {type(e).__name__}")
                 import traceback
-                print(f"❌ Traceback: {traceback.format_exc()}")
+                print(f" Traceback: {traceback.format_exc()}")
                 # Fallback to legacy endpoint (simplified data)
                 self.logger.info("New endpoint failed, trying legacy endpoint...")
                 legacy_data = {
                     "hostname": self.hostname,
                     "display_name": self.display_name,
-                    "platform": f"chrony_{player_type}"
+                    "platform": f"multiscreen_{player_type}"
                 }
                 response = requests.post(
                     f"{self.server_url}/register_client",
@@ -684,7 +344,7 @@ class UnifiedMultiScreenClient:
             response_received_time = time.time()
             network_delay_ms = (response_received_time - request_sent_time) * 1000
             
-            print(f"📡 Response received in {network_delay_ms:.1f}ms using {endpoint_used}")
+            print(f" Response received in {network_delay_ms:.1f}ms using {endpoint_used}")
             
             if response.status_code in [200, 202]:
                 result = response.json()
@@ -692,32 +352,14 @@ class UnifiedMultiScreenClient:
                     registration_end = time.time()
                     total_time_ms = (registration_end - registration_start) * 1000
                     
-                    print(f"\n✅ REGISTRATION SUCCESSFUL!")
+                    print(f"\n REGISTRATION SUCCESSFUL!")
                     print(f"   Client ID: {result.get('client_id', self.client_id)}")
                     print(f"   Status: {result.get('status', 'registered')}")
-                    print(f"   Time Sync: Chrony/NTP")
+                    if self.display:
+                        print(f"   Display: {self.display}")
                     if 'server_time' in result:
                         print(f"   Server Time: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(result['server_time']))}")
                     print(f"   Total Registration Time: {total_time_ms:.1f}ms")
-                    
-                    # Display chrony sync status
-                    current_status = self.time_sync.get_sync_status()
-                    print(f"\n🕒 CHRONY SYNCHRONIZATION STATUS:")
-                    print(f"   Synchronized: {'✅ YES' if current_status.get('synchronized') else '⚠️ PARTIAL'}")
-                    print(f"   Clock Offset: {current_status.get('offset_ms', 'unknown'):.1f}ms")
-                    print(f"   Tolerance: ±{self.time_sync.tolerance_ms}ms")
-                    print(f"   Stratum: {current_status.get('stratum', 'unknown')}")
-                    print(f"   Reference: {current_status.get('reference', 'unknown')}")
-                    
-                    offset = current_status.get('offset_ms', float('inf'))
-                    if abs(offset) < 10:
-                        print(f"   Quality: ✅ Excellent (< 10ms) - Optimal for video walls")
-                    elif abs(offset) < 50:
-                        print(f"   Quality: ✅ Good (< 50ms) - Suitable for video walls")
-                    elif abs(offset) < 100:
-                        print(f"   Quality: ⚠️ Fair (< 100ms) - May show minor desync")
-                    else:
-                        print(f"   Quality: ❌ Poor (> 100ms) - Significant desync expected")
                     
                     self.registered = True
                     self.assignment_status = result.get('status', 'waiting_for_assignment')
@@ -727,24 +369,24 @@ class UnifiedMultiScreenClient:
                     next_steps = result.get('next_steps', [
                         "Wait for admin to assign you to a group",
                         "Admin will use the web interface to make assignments",
-                        "Chrony will continue syncing in background for optimal timing"
+                        "Client will automatically start playing when streaming begins"
                     ])
-                    print(f"\n📋 Next Steps:")
+                    print(f"\n Next Steps:")
                     for step in next_steps:
-                        print(f"   • {step}")
+                        print(f"    {step}")
                     
                     print(f"{'='*80}")
                     return True
                 else:
-                    print(f"❌ Registration failed: {result.get('error', 'Unknown error')}")
+                    print(f" Registration failed: {result.get('error', 'Unknown error')}")
                     return False
             else:
-                print(f"❌ Registration failed with HTTP status {response.status_code}")
+                print(f" Registration failed with HTTP status {response.status_code}")
                 print(f"   Response: {response.text}")
                 return False
                 
         except Exception as e:
-            print(f"❌ Registration error: {e}")
+            print(f" Registration error: {e}")
             self.logger.error(f"Registration error: {e}")
             return False
     
@@ -752,7 +394,7 @@ class UnifiedMultiScreenClient:
         """Wait for admin to assign this client to a group and stream"""
         retry_count = 0
         
-        print(f"\n⏳ Waiting for assignment from admin...")
+        print(f"\n Waiting for assignment from admin...")
         print(f"   Admin needs to:")
         print(f"   1. Assign this client to a group")
         print(f"   2. Assign this client to a specific stream/screen")
@@ -763,11 +405,11 @@ class UnifiedMultiScreenClient:
             try:
                 # Use new endpoint if available, fallback to legacy
                 try:
-                                    response = requests.post(
-                    f"{self.server_url}/api/clients/wait_for_assignment",
-                    json={"client_id": self.client_id},
-                    timeout=10
-                )
+                    response = requests.post(
+                        f"{self.server_url}/api/clients/wait_for_assignment",
+                        json={"client_id": self.client_id},
+                        timeout=10
+                    )
                 except requests.exceptions.RequestException:
                     # Fallback to legacy endpoint
                     response = requests.post(
@@ -801,24 +443,26 @@ class UnifiedMultiScreenClient:
                     group_name = data.get('group_name', 'unknown')
                     stream_assignment = data.get('stream_assignment', 'unknown')
                     
-                    print(f"\n🎉 ASSIGNMENT COMPLETE!")
+                    print(f"\n ASSIGNMENT COMPLETE!")
                     print(f"   Group: {group_name}")
                     print(f"   Stream: {stream_assignment}")
                     print(f"   Assignment Type: {data.get('assignment_status', 'unknown')}")
                     if data.get('screen_number') is not None:
                         print(f"   Screen Number: {data.get('screen_number')}")
+                    if self.display:
+                        print(f"   Display: {self.display}")
                     print(f"   Stream URL: {self.current_stream_url}")
                     print(f"   Stream Version: {self.current_stream_version}")
                     return True
                 
                 elif status in ["waiting_for_group_assignment", "waiting_for_stream_assignment"]:
-                    print(f"⏳ {message}")
+                    print(f" {message}")
                     retry_count = 0  # Don't count as failure
                 
                 elif status == "waiting_for_streaming":
                     group_name = data.get('group_name', 'unknown')
                     stream_assignment = data.get('stream_assignment', 'unknown')
-                    print(f"⏳ {message}")
+                    print(f" {message}")
                     print(f"   Assigned to: {group_name}/{stream_assignment}")
                     print(f"   Waiting for admin to start streaming...")
                     retry_count = 0
@@ -828,7 +472,7 @@ class UnifiedMultiScreenClient:
                     # Keep waiting instead of giving up
                     group_id = data.get('group_id')
                     if retry_count % 6 == 0:
-                        print(f"⚠️  Group validation failed, but continuing (Docker discovery issue)")
+                        print(f"  Group validation failed, but continuing (Docker discovery issue)")
                         print(f"   Group ID: {group_id}")
                         print(f"   Will retry...")
                     # Don't print error every time
@@ -836,12 +480,12 @@ class UnifiedMultiScreenClient:
                     # Continue waiting instead of returning error
                 
                 elif status == "not_registered":
-                    print(f"❌ {message}")
+                    print(f" {message}")
                     print(f"   Client may have been removed from server")
                     return False
                 
                 else:
-                    print(f"⚠️  Unexpected status: {status} - {message}")
+                    print(f"  Unexpected status: {status} - {message}")
                     retry_count += 1
                 
                 # Interruptible sleep
@@ -850,14 +494,14 @@ class UnifiedMultiScreenClient:
                     return False
                 
             except Exception as e:
-                print(f"⚠️  Network error ({retry_count + 1}/{self.max_retries}): {e}")
+                print(f"  Network error ({retry_count + 1}/{self.max_retries}): {e}")
                 retry_count += 1
                 if self._shutdown_event.wait(timeout=self.retry_interval * 2):
                     print(f"   Shutdown requested during error wait")
                     return False
         
         if retry_count >= self.max_retries:
-            print(f"❌ Max retries reached, giving up")
+            print(f" Max retries reached, giving up")
             return False
         
         return False
@@ -869,11 +513,11 @@ class UnifiedMultiScreenClient:
             
         if "127.0.0.1" in stream_url:
             fixed_url = stream_url.replace("127.0.0.1", self.server_ip)
-            self.logger.info(f"Fixed stream URL: 127.0.0.1 → {self.server_ip}")
+            self.logger.info(f"Fixed stream URL: 127.0.0.1  {self.server_ip}")
             return fixed_url
         elif "localhost" in stream_url:
             fixed_url = stream_url.replace("localhost", self.server_ip)
-            self.logger.info(f"Fixed stream URL: localhost → {self.server_ip}")
+            self.logger.info(f"Fixed stream URL: localhost  {self.server_ip}")
             return fixed_url
         else:
             return stream_url
@@ -887,22 +531,16 @@ class UnifiedMultiScreenClient:
         try:
             self.stop_stream()  # Clean up any existing player
             
-            # Check chrony sync status before starting playback
-            sync_status = self.time_sync.get_sync_status()
-            if not sync_status.get('synchronized'):
-                print(f"\n⚠️  WARNING: Chrony not fully synchronized")
-                print(f"   Current offset: {sync_status.get('offset_ms', 'unknown'):.1f}ms")
-                print(f"   Video sync quality may be reduced")
-            
             # Choose the optimal player for this stream
             player_type, reason = self.choose_optimal_player(self.current_stream_url)
             self.current_player_type = player_type
             
-            print(f"\n🎬 SMART PLAYER SELECTION")
+            print(f"\n SMART PLAYER SELECTION")
             print(f"   Selected: {player_type.upper()}")
             print(f"   Reason: {reason}")
             print(f"   Stream URL: {self.current_stream_url}")
-            print(f"   Time Sync: Chrony (offset: {sync_status.get('offset_ms', 'unknown'):.1f}ms)")
+            if self.display:
+                print(f"   Display: {self.display}")
             
             if player_type == "cpp_player":
                 return self._play_with_cpp_player()
@@ -916,10 +554,12 @@ class UnifiedMultiScreenClient:
     def _play_with_cpp_player(self) -> bool:
         """Start playing with the built C++ player (for SEI streams)"""
         try:
-            print(f"\n🎯 STARTING C++ PLAYER (SEI MODE)")
+            print(f"\n STARTING C++ PLAYER (SEI MODE)")
             print(f"   Stream URL: {self.current_stream_url}")
             print(f"   Stream Version: {self.current_stream_version}")
-            print(f"   Capability: SEI timestamp processing + Chrony sync")
+            print(f"   Capability: SEI timestamp processing")
+            if self.display:
+                print(f"   Display: {self.display}")
             
             env = os.environ.copy()
             cmd = [self.player_executable, self.current_stream_url]
@@ -941,15 +581,15 @@ class UnifiedMultiScreenClient:
                         if line.strip():
                             line_clean = line.strip()
                             if "SEI" in line_clean or "timestamp" in line_clean.lower():
-                                self.logger.info(f"🎯 SEI: {line_clean}")
+                                self.logger.info(f" SEI: {line_clean}")
                             elif "TELEMETRY:" in line_clean:
-                                self.logger.info(f"📊 {line_clean}")
+                                self.logger.info(f" {line_clean}")
                             elif "ERROR" in line_clean.upper():
-                                self.logger.error(f"❌ {line_clean}")
+                                self.logger.error(f" {line_clean}")
                             elif "WARNING" in line_clean.upper():
-                                self.logger.warning(f"⚠️ {line_clean}")
+                                self.logger.warning(f" {line_clean}")
                             else:
-                                self.logger.debug(f"🎯 {line_clean}")
+                                self.logger.debug(f" {line_clean}")
                 except Exception as e:
                     self.logger.error(f"Error monitoring C++ output: {e}")
                 finally:
@@ -960,8 +600,8 @@ class UnifiedMultiScreenClient:
             output_thread.start()
             
             print(f"   Player PID: {self.player_process.pid}")
-            print(f"   Status: Playing with SEI processing + chrony time sync")
-            self.logger.info(f"C++ Player started for SEI stream with chrony sync")
+            print(f"   Status: Playing with SEI processing")
+            self.logger.info(f"C++ Player started for SEI stream")
             return True
             
         except Exception as e:
@@ -971,10 +611,12 @@ class UnifiedMultiScreenClient:
     def _play_with_ffplay(self) -> bool:
         """Start playing with ffplay (for standard streams without SEI)"""
         try:
-            print(f"\n📺 STARTING FFPLAY (STANDARD MODE)")
+            print(f"\n STARTING FFPLAY (STANDARD MODE)")
             print(f"   Stream URL: {self.current_stream_url}")
             print(f"   Stream Version: {self.current_stream_version}")
-            print(f"   Capability: Standard video playback + chrony time sync")
+            print(f"   Capability: Standard video playback")
+            if self.display:
+                print(f"   Display: {self.display}")
             
             cmd = [
                 "ffplay",
@@ -1002,11 +644,11 @@ class UnifiedMultiScreenClient:
                         if line.strip():
                             line_clean = line.strip()
                             if "error" in line_clean.lower():
-                                self.logger.error(f"📺 {line_clean}")
+                                self.logger.error(f" {line_clean}")
                             elif "warning" in line_clean.lower():
-                                self.logger.warning(f"📺 {line_clean}")
+                                self.logger.warning(f" {line_clean}")
                             else:
-                                self.logger.debug(f"📺 {line_clean}")
+                                self.logger.debug(f" {line_clean}")
                 except Exception as e:
                     self.logger.debug(f"Error monitoring ffplay output: {e}")
             
@@ -1014,8 +656,8 @@ class UnifiedMultiScreenClient:
             output_thread.start()
             
             print(f"   Player PID: {self.player_process.pid}")
-            print(f"   Status: Playing standard stream with chrony time sync")
-            self.logger.info(f"ffplay started for standard stream with chrony sync")
+            print(f"   Status: Playing standard stream")
+            self.logger.info(f"ffplay started for standard stream")
             return True
             
         except Exception as e:
@@ -1030,18 +672,17 @@ class UnifiedMultiScreenClient:
         # Determine current player type for display
         player_display_name = "C++ Player" if self.current_player_type == "cpp_player" else "ffplay"
         
-        print(f"\n📺 MONITORING {player_display_name.upper()}")
+        print(f"\n MONITORING {player_display_name.upper()}")
         print(f"   PID: {self.player_process.pid}")
         print(f"   Stream: {self.current_stream_url}")
         print(f"   Player Type: {self.current_player_type}")
-        print(f"   Time Sync: Chrony/NTP")
+        if self.display:
+            print(f"   Display: {self.display}")
         
         last_stream_check = time.time()
         stream_check_interval = 10
         last_health_report = time.time()
         health_report_interval = 30
-        last_sync_check = time.time()
-        sync_check_interval = 60  # Check chrony sync every minute
         
         while self.running and not self._shutdown_event.is_set() and self.player_process.poll() is None:
             current_time = time.time()
@@ -1049,35 +690,20 @@ class UnifiedMultiScreenClient:
             # Check for stream changes
             if current_time - last_stream_check >= stream_check_interval:
                 if self._check_for_stream_change():
-                    print(f"🔄 Stream change detected, will restart with optimal player...")
+                    print(f" Stream change detected, will restart with optimal player...")
                     self.stop_stream()
                     return 'stream_changed'
                 last_stream_check = current_time
             
-            # Check chrony sync status periodically
-            if current_time - last_sync_check >= sync_check_interval:
-                sync_status = self.time_sync.get_sync_status()
-                offset_ms = sync_status.get('offset_ms', float('inf'))
-                synchronized = sync_status.get('synchronized', False)
-                
-                print(f"🕒 Chrony status: offset={offset_ms:.1f}ms, sync={synchronized}")
-                
-                if not synchronized or abs(offset_ms) > self.time_sync.tolerance_ms:
-                    print(f"⚠️  Time sync degraded - video sync quality may be affected")
-                
-                last_sync_check = current_time
-            
             # Periodic health report
             if current_time - last_health_report >= health_report_interval:
-                sync_status = self.time_sync.get_sync_status()
-                print(f"💓 {player_display_name} health: PID={self.player_process.pid}, "
-                      f"Running {int(current_time - last_health_report)}s, "
-                      f"Sync offset: {sync_status.get('offset_ms', 'unknown'):.1f}ms")
+                print(f" {player_display_name} health: PID={self.player_process.pid}, "
+                      f"Running {int(current_time - last_health_report)}s")
                 last_health_report = current_time
             
             # Check for shutdown
             if self._shutdown_event.wait(timeout=1):
-                print(f"🛑 Shutdown requested during monitoring")
+                print(f" Shutdown requested during monitoring")
                 self.stop_stream()
                 return 'user_exit'
         
@@ -1088,13 +714,13 @@ class UnifiedMultiScreenClient:
         exit_code = self.player_process.returncode if self.player_process else -1
         
         if exit_code == 0:
-            print(f"✅ {player_display_name} ended normally")
+            print(f" {player_display_name} ended normally")
             return 'stream_ended'
         elif exit_code == 1:
-            print(f"⚠️  {player_display_name} connection lost or stream unavailable")
+            print(f"  {player_display_name} connection lost or stream unavailable")
             return 'connection_lost'
         else:
-            print(f"❌ {player_display_name} exited with error code: {exit_code}")
+            print(f" {player_display_name} exited with error code: {exit_code}")
             return 'error'
     
     def _check_for_stream_change(self) -> bool:
@@ -1135,9 +761,9 @@ class UnifiedMultiScreenClient:
                     if url_changed or version_changed:
                         self.logger.info(f"Stream change detected:")
                         if url_changed:
-                            self.logger.info(f"  URL: {self.current_stream_url} → {new_stream_url}")
+                            self.logger.info(f"  URL: {self.current_stream_url}  {new_stream_url}")
                         if version_changed:
-                            self.logger.info(f"  Version: {self.current_stream_version} → {new_stream_version}")
+                            self.logger.info(f"  Version: {self.current_stream_version}  {new_stream_version}")
                         
                         self.current_stream_url = new_stream_url
                         if new_stream_version is not None:
@@ -1180,30 +806,30 @@ class UnifiedMultiScreenClient:
             try:
                 pid = self.player_process.pid
                 player_name = "C++ Player" if self.current_player_type == "cpp_player" else "ffplay"
-                print(f"🛑 Stopping {player_name} (PID: {pid})")
+                print(f" Stopping {player_name} (PID: {pid})")
                 
                 # Graceful termination
                 self.player_process.terminate()
                 
                 try:
                     self.player_process.wait(timeout=3)
-                    print(f"✅ {player_name} stopped gracefully")
+                    print(f" {player_name} stopped gracefully")
                 except subprocess.TimeoutExpired:
-                    print(f"⚠️  Force killing {player_name}")
+                    print(f"  Force killing {player_name}")
                     self.player_process.kill()
                     
                     try:
                         self.player_process.wait(timeout=2)
-                        print(f"✅ {player_name} force-killed")
+                        print(f" {player_name} force-killed")
                     except subprocess.TimeoutExpired:
-                        print(f"❌ {player_name} unresponsive")
+                        print(f" {player_name} unresponsive")
                         try:
                             os.kill(pid, signal.SIGKILL)
                         except (OSError, ProcessLookupError):
                             pass
                 
             except (OSError, ProcessLookupError):
-                print(f"🔍 Player process already terminated")
+                print(f" Player process already terminated")
             except Exception as e:
                 self.logger.error(f"Error stopping player: {e}")
             finally:
@@ -1215,14 +841,14 @@ class UnifiedMultiScreenClient:
         if not self.running:
             return
         
-        print(f"\n🛑 INITIATING GRACEFUL SHUTDOWN")
+        print(f"\n INITIATING GRACEFUL SHUTDOWN")
         self.running = False
         self._shutdown_event.set()
         
         # Stop components
         self.stop_stream()
         
-        print(f"✅ Shutdown complete")
+        print(f" Shutdown complete")
     
     def _emergency_cleanup(self):
         """Emergency cleanup for atexit"""
@@ -1230,23 +856,23 @@ class UnifiedMultiScreenClient:
             self.shutdown()
     
     def run(self):
-        """Main execution flow with chrony time synchronization"""
+        """Main execution flow"""
         try:
             print(f"\n{'='*80}")
-            print(f"🎯 UNIFIED MULTI-SCREEN CLIENT WITH CHRONY SYNC")
-            print(f"   Following OpenVideoWalls synchronization methodology")
+            print(f" UNIFIED MULTI-SCREEN CLIENT")
             print(f"   Hostname: {self.hostname}")
             print(f"   Client ID: {self.client_id}")
             print(f"   Display Name: {self.display_name}")
             print(f"   Server: {self.server_url}")
-            print(f"   Time Sync: Chrony/NTP (tolerance: ±{self.time_sync.tolerance_ms}ms)")
+            if self.display:
+                print(f"   Display: {self.display}")
             print(f"   Smart Player: {'Enabled' if not self.force_ffplay else 'Disabled (force ffplay)'}")
             print(f"   C++ Player: {'Available' if self.player_executable else 'Not found'}")
             print(f"{'='*80}")
             
-            # Step 1: Register with server (includes chrony sync check)
+            # Step 1: Register with server
             if not self.register():
-                print(f"❌ Registration failed - exiting")
+                print(f" Registration failed - exiting")
                 return
             
             # Step 2: Main loop - wait for assignment and play streams
@@ -1262,138 +888,212 @@ class UnifiedMultiScreenClient:
                         stop_reason = self.monitor_player()
                         
                         if stop_reason == 'user_exit':
-                            print(f"👋 User requested exit")
+                            print(f" User requested exit")
                             break
                         elif stop_reason == 'stream_changed':
-                            print(f"🔄 Stream changed, restarting...")
+                            print(f" Stream changed, restarting...")
                             continue
                         elif stop_reason in ['stream_ended', 'connection_lost', 'error']:
-                            print(f"📺 Stream stopped ({stop_reason}), waiting for new assignment...")
+                            print(f" Stream stopped ({stop_reason}), waiting for new assignment...")
                             self.current_stream_url = None
                             self.current_stream_version = None
                             self.current_player_type = None
                             continue
                         else:
-                            print(f"⚠️  Unexpected stop reason: {stop_reason}")
+                            print(f"  Unexpected stop reason: {stop_reason}")
                             break
                     else:
-                        print(f"❌ Failed to start player, retrying in 10 seconds...")
+                        print(f" Failed to start player, retrying in 10 seconds...")
                         if self._shutdown_event.wait(timeout=10):
                             break
                 else:
-                    print(f"⏳ Assignment failed, retrying in 10 seconds...")
+                    print(f" Assignment failed, retrying in 10 seconds...")
                     if self._shutdown_event.wait(timeout=10):
                         break
                         
         except Exception as e:
-            print(f"❌ Fatal error: {e}")
+            print(f" Fatal error: {e}")
             self.logger.error(f"Fatal error in main loop: {e}")
         finally:
-            print(f"\n🏁 UNIFIED CLIENT SHUTDOWN")
+            print(f"\n MULTI-SCREEN CLIENT SHUTDOWN")
             self.shutdown()
 
+
 def main():
-    """Main entry point with chrony-based time synchronization"""
+    """Main entry point for the multi-screen client"""
     parser = argparse.ArgumentParser(
-        description='Unified Multi-Screen Client with Chrony Time Synchronization',
+        prog='client.py',
+        description="""
+ Unified Multi-Screen Client for Video Wall Systems
+
+A simple and reliable client for multi-screen video streaming that supports
+automatic player selection and physical display assignment.
+
+Features:
+   Automatic server registration with unique client identification
+   Smart player selection (C++ player for SEI streams, ffplay fallback)
+   Physical display assignment (--display parameter)
+   Automatic reconnection and error recovery
+   Support for multiple instances on the same device
+        """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-OpenVideoWalls Time Synchronization:
-  This client uses chrony/NTP for precise time synchronization following the
-  OpenVideoWalls methodology. All clients sync to common NTP servers, achieving
-  sub-50ms accuracy for synchronized video wall playback.
+ BASIC USAGE EXAMPLES:
 
-Examples:
-  # Standard usage with chrony sync (recommended)
-  python3 chrony_client.py --server http://192.168.1.100:5000
-  
-  # High precision mode (10ms tolerance)
-  python3 chrony_client.py --server http://192.168.1.100:5000 --sync-tolerance 10
-  
-  # Force ffplay for all streams
-  python3 chrony_client.py --server http://192.168.1.100:5000 --force-ffplay
-  
-  # Custom hostname and display name
-  python3 chrony_client.py --server http://192.168.1.100:5000 --hostname display-001 --name "Main Display"
-  
-  # Debug mode with detailed chrony and SEI logging
-  python3 chrony_client.py --server http://192.168.1.100:5000 --debug
-  
-  # Show chrony configuration and exit
-  python3 chrony_client.py --setup-chrony
+  Standard usage:
+    python3 client.py --server http://192.168.1.100:5000 \\
+      --hostname rpi-client-1 --display-name "Monitor 1" --display :0.0
 
-Chrony Setup:
-  1. Install: sudo apt install chrony
-  2. Configure: Use --setup-chrony to get configuration
-  3. Restart: sudo systemctl restart chrony
-  4. Wait 2-5 minutes for initial synchronization
+  Dual-monitor setup:
+    # Client 1 (Monitor 1):
+    python3 client.py --server http://192.168.1.100:5000 \\
+      --hostname rpi-client-1 --display-name "Left Screen" --display :0.0
+
+    # Client 2 (Monitor 2):
+    python3 client.py --server http://192.168.1.100:5000 \\
+      --hostname rpi-client-2 --display-name "Right Screen" --display :0.1
+
+  DISPLAY PARAMETER GUIDE:
+
+  :0.0    = First monitor (left screen in side-by-side setup)
+  :0.1    = Second monitor (right screen in side-by-side setup)
+  :0.2    = Third monitor (if available)
+  :0      = Default display (usually spans all monitors)
+
+  Note: The --display parameter automatically sets the DISPLAY environment
+        variable, so you don't need to configure it manually.
+
+  ADVANCED OPTIONS:
+
+  Force ffplay for all streams (disable smart selection):
+    python3 client.py --server http://192.168.1.100:5000 \\
+      --hostname client-1 --display-name "Screen 1" --display :0.0 --force-ffplay
+
+  Debug mode with detailed logging:
+    python3 client.py --server http://192.168.1.100:5000 \\
+      --hostname client-1 --display-name "Screen 1" --display :0.0 --debug
+
+ DEPLOYMENT EXAMPLES:
+
+  Systemd service for Client 1 (Monitor 1):
+    ExecStart=/usr/bin/python3 client.py \\
+      --server http://192.168.1.100:5000 \\
+      --hostname rpi-client-1 \\
+      --display-name "Monitor 1" \\
+      --display :0.0
+
+  Systemd service for Client 2 (Monitor 2):
+    ExecStart=/usr/bin/python3 client.py \\
+      --server http://192.168.1.100:5000 \\
+      --hostname rpi-client-2 \\
+      --display-name "Monitor 2" \\
+      --display :0.1
+
+ SETUP PROCESS:
+
+  1. Ensure ffmpeg/ffplay is installed:
+     sudo apt install ffmpeg
+
+  2. Configure dual monitors (if needed):
+     xrandr --output HDMI-1 --mode 1920x1080 --pos 0x0
+     xrandr --output HDMI-2 --mode 1920x1080 --pos 1920x0
+
+  3. Start clients on specific displays:
+     python3 client.py --server http://YOUR_SERVER_IP:5000 \\
+       --hostname client-1 --display-name "Screen 1" --display :0.0
+
+     python3 client.py --server http://YOUR_SERVER_IP:5000 \\
+       --hostname client-2 --display-name "Screen 2" --display :0.1
+
+  4. Use web interface to assign clients to groups and start streaming
+
+ TROUBLESHOOTING:
+
+  Check display configuration:
+    xrandr --listmonitors
+
+  Test display assignment:
+    DISPLAY=:0.0 xeyes &
+    DISPLAY=:0.1 xeyes &
+
+  View client logs:
+    python3 client.py --server http://YOUR_SERVER_IP:5000 \\
+      --hostname client-1 --display-name "Screen 1" --display :0.0 --debug
+
+For more information, visit: https://github.com/your-repo/openvideowalls
         """
     )
     
-    # Required arguments
-    parser.add_argument('--server', 
-                       help='Server URL (e.g., http://192.168.1.100:5000)')
+    # Required arguments group
+    required_group = parser.add_argument_group(' Required Arguments')
+    required_group.add_argument('--server', 
+                               required=True,
+                               metavar='URL',
+                               help='Server URL - Example: http://192.168.1.100:5000')
+    required_group.add_argument('--hostname', 
+                               required=True,
+                               metavar='NAME',
+                               help='Client hostname - Example: rpi-client-1')
+    required_group.add_argument('--display-name', 
+                               required=True,
+                               metavar='NAME',
+                               help='Display name for admin interface - Example: "Monitor 1"')
+    required_group.add_argument('--display', 
+                               required=True,
+                               metavar='DISPLAY',
+                               help='X11 display to use - Examples: :0.0 (first monitor), :0.1 (second monitor)')
     
-    # Optional arguments
-    parser.add_argument('--hostname', 
-                       help='Custom client hostname (default: system hostname)')
-    parser.add_argument('--name', dest='display_name',
-                       help='Display name for admin interface (default: Display-{hostname})')
-    parser.add_argument('--sync-tolerance', type=float, default=50.0,
-                       help='Time synchronization tolerance in milliseconds (default: 50ms)')
-    parser.add_argument('--force-ffplay', action='store_true',
-                       help='Force use of ffplay for all streams (disable smart selection)')
-    parser.add_argument('--debug', action='store_true',
-                       help='Enable debug logging including chrony and SEI detection details')
-    parser.add_argument('--setup-chrony', action='store_true',
-                       help='Show chrony configuration for video wall sync and exit')
-    parser.add_argument('--check-sync', action='store_true',
-                       help='Check chrony synchronization status and exit')
-    parser.add_argument('--version', action='version', 
-                       version='Unified Multi-Screen Client with Chrony Sync v2.2')
+    # Optional arguments group
+    optional_group = parser.add_argument_group('  Optional Arguments')
+    optional_group.add_argument('--force-ffplay', 
+                               action='store_true',
+                               help='Force use of ffplay for all streams (disable smart C++/ffplay selection)')
+    optional_group.add_argument('--debug', 
+                               action='store_true',
+                               help='Enable debug logging (includes SEI detection details)')
+    optional_group.add_argument('--version', 
+                               action='version', 
+                               version=' Unified Multi-Screen Client v3.0')
     
+    # Parse arguments
     args = parser.parse_args()
     
-    # Handle setup/check modes
-    if args.setup_chrony:
-        print(f"🕒 CHRONY SETUP FOR OPENVIDEOWALLS SYNCHRONIZATION")
-        time_sync = ChronyTimeSync(tolerance_ms=args.sync_tolerance)
-        time_sync.install_chrony_config()
-        return
+    # Validate server URL
+    if not args.server.startswith(('http://', 'https://')):
+        print(" Error: Server URL must start with http:// or https://")
+        print("   Example: --server http://192.168.1.100:5000")
+        print("   Example: --server https://videowall.example.com:5000")
+        sys.exit(1)
     
-    if args.check_sync:
-        print(f"🕒 CHECKING CHRONY SYNCHRONIZATION STATUS")
-        time_sync = ChronyTimeSync(tolerance_ms=args.sync_tolerance)
-        if not time_sync.check_chrony_installation():
-            print(f"❌ chrony not installed or not accessible")
-            print(f"   Install with: sudo apt install chrony")
-            sys.exit(1)
-        time_sync.print_detailed_status()
-        return
+    # Validate display parameter
+    if not (args.display.startswith(':') and ('.' in args.display or args.display == ':0')):
+        print(" Error: Display must be in format :0.0, :0.1, or :0")
+        print("")
+        print("  Valid display examples:")
+        print("   :0.0  = First monitor (left screen)")
+        print("   :0.1  = Second monitor (right screen)")
+        print("   :0.2  = Third monitor")
+        print("   :0    = Default display (spans all monitors)")
+        print("")
+        print(" Tip: Use 'xrandr --listmonitors' to see available displays")
+        sys.exit(1)
     
-    # Server URL is required for normal operation
-    if not args.server:
-        print(f"❌ Error: --server is required for normal operation")
-        print(f"   Use --setup-chrony to configure chrony")
-        print(f"   Use --check-sync to check synchronization status")
-        print(f"   Example: --server http://192.168.1.100:5000")
+    # Validate hostname (basic check)
+    if not args.hostname.strip():
+        print(" Error: Hostname cannot be empty")
+        print("   Example: --hostname rpi-client-1")
+        sys.exit(1)
+    
+    # Validate display name (basic check)
+    if not args.display_name.strip():
+        print(" Error: Display name cannot be empty")
+        print("   Example: --display-name \"Monitor 1\"")
         sys.exit(1)
     
     # Configure logging level
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
-        print(f"🐛 Debug logging enabled (includes chrony and SEI detection)")
-    
-    # Validate server URL
-    if not args.server.startswith(('http://', 'https://')):
-        print(f"❌ Error: Server URL must start with http:// or https://")
-        print(f"   Example: --server http://192.168.1.100:5000")
-        sys.exit(1)
-    
-    # Validate sync tolerance
-    if args.sync_tolerance <= 0 or args.sync_tolerance > 1000:
-        print(f"❌ Error: Sync tolerance must be between 0.1 and 1000 milliseconds")
-        sys.exit(1)
+        print(" Debug logging enabled")
     
     # Create and run client
     try:
@@ -1402,21 +1102,22 @@ Chrony Setup:
             hostname=args.hostname,
             display_name=args.display_name,
             force_ffplay=args.force_ffplay,
-            sync_tolerance_ms=args.sync_tolerance
+            display=args.display
         )
         
-        print(f"🎬 Starting Unified Multi-Screen Client with Chrony Synchronization...")
-        print(f"   Following OpenVideoWalls methodology for precise timing")
-        print(f"   Press Ctrl+C to stop gracefully")
+        print(" Starting Unified Multi-Screen Client...")
+        print(f"  Using display: {args.display}")
+        print("   Press Ctrl+C to stop gracefully")
         
         client.run()
         
     except KeyboardInterrupt:
-        print(f"\n⌨️  Keyboard interrupt received")
+        print("\n  Keyboard interrupt received")
     except Exception as e:
-        print(f"\n💥 Fatal error: {e}")
+        print(f"\n Fatal error: {e}")
         logging.error(f"Fatal error: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
