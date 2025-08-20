@@ -38,7 +38,7 @@ const ClientsTab = () => {
         showError({
           message: `Clients refreshed successfully. Found ${activeClients.length} active clients (${clientsData.clients?.length || 0} total)`,
           error_code: 'CLIENTS_REFRESHED',
-          error_category: '2xx',
+          error_category: 'success',
           context: {
             component: 'ClientsTab',
             operation: 'refreshClients',

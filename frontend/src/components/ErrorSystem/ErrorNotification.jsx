@@ -119,7 +119,8 @@ const ErrorNotification = () => {
             'network': 'border-gray-500 bg-gray-50',
             'validation': 'border-yellow-500 bg-yellow-50',
             'auth': 'border-red-500 bg-red-50',
-            'custom': 'border-indigo-500 bg-indigo-50'
+            'custom': 'border-indigo-500 bg-indigo-50',
+            'success': 'border-green-500 bg-green-50'
         };
         return colors[category] || 'border-red-500 bg-red-50';
     };
@@ -138,7 +139,8 @@ const ErrorNotification = () => {
             'network': 'destructive',
             'validation': 'destructive',
             'auth': 'destructive',
-            'custom': 'destructive'
+            'custom': 'destructive',
+            'success': 'default'
         };
         return variants[category] || 'destructive';
     };
@@ -159,7 +161,7 @@ const ErrorNotification = () => {
                         </span>
                         <div className="flex-1 min-w-0">
                             <h3 className="text-sm font-semibold text-gray-900 truncate">
-                                Error {currentError.error_code || 'Unknown'}
+                                {currentError.error_category === 'success' ? 'Success' : 'Error'} {currentError.error_code || 'Unknown'}
                             </h3>
                             <p className="text-xs text-gray-600 mt-1 line-clamp-2">
                                 {currentError.message || 'An error occurred'}
@@ -196,7 +198,7 @@ const ErrorNotification = () => {
                             </span>
                             <div className="flex-1 min-w-0">
                                 <h3 className="text-lg font-semibold leading-tight tracking-tight">
-                                    Error {currentError.error_code || 'Unknown'}
+                                    {currentError.error_category === 'success' ? 'Success' : 'Error'} {currentError.error_code || 'Unknown'}
                                 </h3>
                                 <p className="text-sm mt-1 text-gray-600 break-words">{currentError.message || 'An error occurred'}</p>
                             </div>

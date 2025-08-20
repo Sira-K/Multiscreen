@@ -473,7 +473,7 @@ def wait_for_assignment():
                 "status": "waiting_for_assignment",
                 "message": "Waiting for admin to assign you to a group",
                 "next_steps": get_next_steps(client)
-            }), 202
+            }), 200
         
         # Get group information - FIX THE IMPORT HERE
         group = None
@@ -510,7 +510,7 @@ def wait_for_assignment():
                 "status": "group_not_found",
                 "message": f"Group {group_id} not found or not running",
                 "group_id": group_id
-            }), 202
+            }), 404
         
         group_name = group.get("name", group_id)
         
@@ -524,7 +524,7 @@ def wait_for_assignment():
                 "group_id": group_id,
                 "group_name": group_name,
                 "next_steps": get_next_steps(client)
-            }), 202
+            }), 200
         
         # Case 3: Stream or screen assigned - check if streaming
         if assignment_status in ["stream_assigned", "screen_assigned"]:
@@ -573,7 +573,7 @@ def wait_for_assignment():
                     "screen_number": client.get("screen_number"),
                     "assignment_status": assignment_status,
                     "next_steps": get_next_steps(client)
-                }), 202
+                }), 200
             
             # Streaming is active - prepare stream URL
             stream_url = client.get("stream_url")
@@ -645,7 +645,7 @@ def wait_for_assignment():
             "status": "unknown",
             "message": f"Unknown assignment status: {assignment_status}",
             "assignment_status": assignment_status
-        }), 202
+        }), 200
         
     except Exception as e:
         logger.error(f"Error in wait_for_assignment: {e}")

@@ -88,7 +88,7 @@ export const useClientAssignment = (
         showError({
           message: "Client has been unassigned from the group",
           error_code: 'CLIENT_UNASSIGNED',
-          error_category: '2xx',
+          error_category: 'success',
           context: {
             component: 'useClientAssignment',
             operation: 'unassignClient',
@@ -104,7 +104,7 @@ export const useClientAssignment = (
         showError({
           message: "Client has been assigned to the group",
           error_code: 'CLIENT_ASSIGNED',
-          error_category: '2xx',
+          error_category: 'success',
           context: {
             component: 'useClientAssignment',
             operation: 'assignClient',
@@ -153,7 +153,7 @@ export const useClientAssignment = (
       showError({
         message: `Client assigned to screen ${screenNumber + 1}`,
         error_code: 'SCREEN_ASSIGNED',
-        error_category: '2xx',
+        error_category: 'success',
         context: {
           component: 'useClientAssignment',
           operation: 'assignClientToScreen',
@@ -198,7 +198,7 @@ export const useClientAssignment = (
       showError({
         message: "Client has been unassigned from the screen",
         error_code: 'SCREEN_UNASSIGNED',
-        error_category: '2xx',
+        error_category: 'success',
         context: {
           component: 'useClientAssignment',
           operation: 'unassignClientFromScreen',
@@ -239,7 +239,7 @@ export const useClientAssignment = (
       showError({
         message: "Clients have been automatically assigned to screens",
         error_code: 'AUTO_ASSIGNMENT_COMPLETE',
-        error_category: '2xx',
+        error_category: 'success',
         context: {
           component: 'useClientAssignment',
           operation: 'autoAssignScreens',

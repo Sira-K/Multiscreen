@@ -57,7 +57,7 @@ export const useGroupOperations = (
       showError({
         message: `Successfully created group "${newGroupForm.name}"`,
         error_code: 'GROUP_CREATED',
-        error_category: '2xx',
+        error_category: 'success',
         context: {
           component: 'useGroupOperations',
           operation: 'createGroup',
@@ -112,7 +112,7 @@ export const useGroupOperations = (
       showError({
         message: `Successfully deleted group "${groupName}"`,
         error_code: 'GROUP_DELETED',
-        error_category: '2xx',
+        error_category: 'success',
         context: {
           component: 'useGroupOperations',
           operation: 'deleteGroup',
