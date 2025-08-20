@@ -604,6 +604,300 @@ def remove_client():
             "error": str(e)
         }), 500
 
+def bulk_remove_clients():
+    """
+    Admin function: Remove multiple clients from the system
+    
+    Expected payload:
+    {
+        "client_ids": ["display-001", "display-002"],
+        "force": false
+    }
+    """
+    try:
+        logger.info("==== BULK REMOVE CLIENTS REQUEST ====")
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                "success": False,
+                "error": "No JSON data provided"
+            }), 400
+            
+        client_ids = data.get("client_ids", [])
+        force = data.get("force", False)
+        
+        if not client_ids or not isinstance(client_ids, list):
+            return jsonify({
+                "success": False,
+                "error": "client_ids must be a non-empty list"
+            }), 400
+        
+        state = get_state()
+        
+        # Check if state has clients attribute
+        if not hasattr(state, 'clients'):
+            state.clients = {}
+        
+        results = []
+        removed_count = 0
+        failed_count = 0
+        
+        for client_id in client_ids:
+            try:
+                if client_id in state.clients:
+                    client = state.clients[client_id]
+                    client_name = client.get('display_name') or client.get('hostname') or client_id
+                    
+                    # Check if client is actively streaming
+                    if not force and client.get('stream_assignment'):
+                        results.append({
+                            "client_id": client_id,
+                            "success": False,
+                            "error": f"Client is actively streaming. Use force=true to override."
+                        })
+                        failed_count += 1
+                        continue
+                    
+                    # Remove client
+                    if state.remove_client(client_id):
+                        results.append({
+                            "client_id": client_id,
+                            "success": True,
+                            "message": f"Client '{client_name}' removed successfully"
+                        })
+                        removed_count += 1
+                        logger.info(f"Successfully removed client: {client_name} ({client_id})")
+                    else:
+                        results.append({
+                            "client_id": client_id,
+                            "success": False,
+                            "error": f"Failed to remove client {client_id}"
+                        })
+                        failed_count += 1
+                else:
+                    results.append({
+                        "client_id": client_id,
+                        "success": False,
+                        "error": f"Client '{client_id}' not found"
+                    })
+                    failed_count += 1
+                    
+            except Exception as e:
+                logger.error(f"Error removing client {client_id}: {e}")
+                results.append({
+                    "client_id": client_id,
+                    "success": False,
+                    "error": str(e)
+                })
+                failed_count += 1
+        
+        return jsonify({
+            "success": True,
+            "message": f"Bulk remove completed. {removed_count} removed, {failed_count} failed",
+            "total_requested": len(client_ids),
+            "removed_count": removed_count,
+            "failed_count": failed_count,
+            "results": results
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in bulk remove clients: {e}")
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+def cleanup_disconnected_clients():
+    """
+    Admin function: Remove clients that are in 'disconnected' status (no heartbeat for 120+ seconds)
+    
+    Expected payload:
+    {
+        "force": false
+    }
+    """
+    try:
+        logger.info("==== CLEANUP DISCONNECTED CLIENTS REQUEST ====")
+        
+        data = request.get_json() or {}
+        force = data.get("force", False)
+        
+        state = get_state()
+        
+        # Check if state has clients attribute
+        if not hasattr(state, 'clients'):
+            state.clients = {}
+        
+        # First, update client statuses to identify disconnected clients
+        if hasattr(state, 'update_client_statuses'):
+            status_changes = state.update_client_statuses()
+            logger.info(f"Updated {len(status_changes)} client statuses")
+        
+        # Find disconnected clients
+        disconnected_clients = []
+        for client_id, client in state.clients.items():
+            if client.get('status') == 'disconnected':
+                disconnected_clients.append((client_id, client))
+        
+        if not disconnected_clients:
+            return jsonify({
+                "success": True,
+                "message": "No disconnected clients found",
+                "clients_checked": len(state.clients),
+                "disconnected_clients": []
+            }), 200
+        
+        removed_count = 0
+        failed_count = 0
+        results = []
+        
+        for client_id, client in disconnected_clients:
+            try:
+                client_name = client.get('display_name') or client.get('hostname') or client_id
+                
+                # Check if client is actively streaming
+                if not force and client.get('stream_assignment'):
+                    results.append({
+                        "client_id": client_id,
+                        "success": False,
+                        "error": f"Client is actively streaming. Use force=true to override."
+                    })
+                    failed_count += 1
+                    continue
+                
+                # Remove client
+                if state.remove_client(client_id):
+                    results.append({
+                        "client_id": client_id,
+                        "success": True,
+                        "message": f"Disconnected client '{client_name}' removed successfully"
+                    })
+                    removed_count += 1
+                    logger.info(f"Successfully removed disconnected client: {client_name} ({client_id})")
+                else:
+                    results.append({
+                        "client_id": client_id,
+                        "success": False,
+                        "error": f"Failed to remove disconnected client {client_id}"
+                    })
+                    failed_count += 1
+                    
+            except Exception as e:
+                logger.error(f"Error removing disconnected client {client_id}: {e}")
+                results.append({
+                    "client_id": client_id,
+                    "success": False,
+                    "error": str(e)
+                })
+                failed_count += 1
+        
+        return jsonify({
+            "success": True,
+            "message": f"Cleanup completed. {removed_count} disconnected clients removed, {failed_count} failed",
+            "clients_checked": len(state.clients),
+            "disconnected_clients_found": len(disconnected_clients),
+            "removed_count": removed_count,
+            "failed_count": failed_count,
+            "results": results
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in cleanup disconnected clients: {e}")
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+def control_auto_cleanup():
+    """
+    Admin function: Control automatic cleanup of inactive clients
+    
+    Expected payload:
+    {
+        "action": "start" | "stop" | "status",
+        "cleanup_interval_seconds": 30,  # Optional, only for start action
+        "inactive_threshold_seconds": 120  # Optional, only for start action (2 minutes default)
+    }
+    """
+    try:
+        logger.info("==== CONTROL AUTO-CLEANUP REQUEST ====")
+        
+        data = request.get_json() or {}
+        action = data.get("action", "status")
+        
+        if action not in ["start", "stop", "status"]:
+            return jsonify({
+                "success": False,
+                "error": "action must be 'start', 'stop', or 'status'"
+            }), 400
+        
+        state = get_state()
+        
+        if action == "start":
+            cleanup_interval = data.get("cleanup_interval_seconds", 30)
+            inactive_threshold = data.get("inactive_threshold_seconds", 120)
+            
+            if not isinstance(cleanup_interval, int) or cleanup_interval < 10:
+                return jsonify({
+                    "success": False,
+                    "error": "cleanup_interval_seconds must be an integer >= 10"
+                }), 400
+            
+            if not isinstance(inactive_threshold, int) or inactive_threshold < 30:
+                return jsonify({
+                    "success": False,
+                    "error": "inactive_threshold_seconds must be an integer >= 30"
+                }), 400
+            
+            # Start auto-cleanup
+            if hasattr(state, 'start_auto_cleanup'):
+                state.start_auto_cleanup(cleanup_interval, inactive_threshold)
+                return jsonify({
+                    "success": True,
+                    "message": f"Auto-cleanup started (interval: {cleanup_interval}s, threshold: {inactive_threshold}s)",
+                    "cleanup_interval_seconds": cleanup_interval,
+                    "inactive_threshold_seconds": inactive_threshold
+                }), 200
+            else:
+                return jsonify({
+                    "success": False,
+                    "error": "Auto-cleanup not available in this state"
+                }), 500
+        
+        elif action == "stop":
+            # Stop auto-cleanup
+            if hasattr(state, 'stop_auto_cleanup'):
+                state.stop_auto_cleanup()
+                return jsonify({
+                    "success": True,
+                    "message": "Auto-cleanup stopped"
+                }), 200
+            else:
+                return jsonify({
+                    "success": False,
+                    "error": "Auto-cleanup not available in this state"
+                }), 500
+        
+        else:  # status
+            # Get auto-cleanup status
+            is_running = hasattr(state, '_cleanup_thread') and state._cleanup_thread.is_alive()
+            return jsonify({
+                "success": True,
+                "auto_cleanup_running": is_running,
+                "message": "Auto-cleanup status retrieved"
+            }), 200
+        
+    except Exception as e:
+        logger.error(f"Error controlling auto-cleanup: {e}")
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+        
 def auto_assign_group_clients():
     """
     FIXED: Auto-assign all unassigned clients in a group to streams or screens

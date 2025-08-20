@@ -22,7 +22,10 @@ from .admin_endpoints import (
     assign_client_to_screen,
     auto_assign_group_clients,
     unassign_client,
-    remove_client
+    remove_client,
+    bulk_remove_clients,
+    cleanup_disconnected_clients,
+    control_auto_cleanup
 )
 # unassign_client_from_screen is now imported from the main module
 from .info_endpoints import (
@@ -251,6 +254,21 @@ def unassign_from_stream_route():
 def remove_client_route():
     """Admin function: Remove a client from the system completely"""
     return remove_client()
+
+@client_bp.route("/bulk_remove_clients", methods=["POST"])
+def bulk_remove_clients_route():
+    """Admin function: Remove multiple clients from the system"""
+    return bulk_remove_clients()
+
+@client_bp.route("/cleanup_disconnected_clients", methods=["POST"])
+def cleanup_disconnected_clients_route():
+    """Admin function: Remove disconnected clients from the system"""
+    return cleanup_disconnected_clients()
+
+@client_bp.route("/control_auto_cleanup", methods=["POST"])
+def control_auto_cleanup_route():
+    """Admin function: Control automatic cleanup of inactive clients"""
+    return control_auto_cleanup()
 
 # =====================================
 # LEGACY ENDPOINTS (for backwards compatibility)

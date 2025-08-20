@@ -108,6 +108,17 @@ def create_app():
     from blueprints.client_management.client_state import get_persistent_state
     app.config['APP_STATE'] = get_persistent_state()
     
+    # Start automatic cleanup of inactive clients (runs every 30 seconds, removes clients after 2 minutes)
+    try:
+        state = app.config['APP_STATE']
+        if hasattr(state, 'start_auto_cleanup'):
+            state.start_auto_cleanup(cleanup_interval_seconds=30, inactive_threshold_seconds=120)
+            logger.info("Auto-cleanup started: clients will be removed after 2 minutes of inactivity")
+        else:
+            logger.warning("Auto-cleanup not available in client state")
+    except Exception as e:
+        logger.error(f"Failed to start auto-cleanup: {e}")
+    
     # Create uploads directory
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     
