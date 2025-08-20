@@ -52,7 +52,9 @@ def get_next_steps(client_data: Dict[str, Any]) -> List[str]:
 def build_stream_url(group: Dict[str, Any], stream_id: str, group_name: str, srt_ip: str) -> str:
     """Build SRT stream URL for a client"""
     ports = group.get("ports", {})
-    srt_port = ports.get("srt_port", 10100)  # Default to 10100 from your logs
+    srt_port = ports.get("srt_port", 10080)  # Default to 10080 to match split-stream
+    
+
     
     logger.info(f" Building stream URL for stream_id: {stream_id}, group: {group_name}")
     logger.info(f" Group ports: {ports}")

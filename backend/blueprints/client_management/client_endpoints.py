@@ -487,7 +487,7 @@ def wait_for_assignment():
                     "name": f"Group-{group_id[:8]}",
                     "docker_running": True,
                     "container_id": f"mock-{group_id[:8]}",
-                    "ports": {"srt_port": 10100}
+                    "ports": {"srt_port": 10080}
                 }
         
         if not group:

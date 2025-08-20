@@ -1,8 +1,8 @@
 """
-Split-Screen Streaming Blueprint
-
+Split-Screen Streaming Blueprint - Based on Multi-Stream
 This module handles split-screen video streaming where a single video file
 is split into multiple screen regions and streamed individually.
+Uses the exact same reliable structure as multi-stream.
 """
 
 import os
@@ -11,11 +11,8 @@ import logging
 import threading
 import subprocess
 import select
-import socket
-from typing import Dict, Any, List, Optional
+from typing import Dict, List, Any, Optional
 from flask import Blueprint, request, jsonify
-
-import psutil
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -24,38 +21,8 @@ logger = logging.getLogger(__name__)
 split_stream_bp = Blueprint('split_stream', __name__)
 
 # ============================================================================
-# CONFIGURATION CONSTANTS
+# HELPER FUNCTIONS
 # ============================================================================
-
-# Memory optimization settings
-MAX_LOG_LINES = 1000
-MEMORY_OPTIMIZATION = {
-    "thread_queue_size": 512,
-    "max_muxing_queue_size": 1024,
-    "warning_threshold": 2000,  # MB
-    "critical_threshold": 4000,  # MB
-}
-
-# ============================================================================
-# UTILITY FUNCTIONS
-# ============================================================================
-
-def find_ffmpeg_executable() -> str:
-    """Find FFmpeg executable in system PATH"""
-    try:
-        result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True, timeout=5)
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except:
-        pass
-    
-    # Fallback to common locations
-    common_paths = ['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/opt/ffmpeg/bin/ffmpeg']
-    for path in common_paths:
-        if os.path.exists(path):
-            return path
-    
-    return 'ffmpeg'  # Hope it's in PATH
 
 def generate_stream_ids(base_stream_id: str, group_name: str, screen_count: int) -> Dict[str, str]:
     """Generate unique stream IDs for each screen"""
@@ -92,52 +59,28 @@ def calculate_position(index: int, orientation: str, output_width: int, output_h
         return col * output_width, row * output_height
 
 def build_split_screen_filter_complex(
-    canvas_width: int, canvas_height: int,
-    output_width: int, output_height: int, 
-    orientation: str, screen_count: int,
-    grid_rows: int = 2, grid_cols: int = 2
+    video_file: str, canvas_width: int, canvas_height: int,
+    output_width: int, output_height: int, orientation: str, screen_count: int,
+    grid_rows: int = 2, grid_cols: int = 2, framerate: int = 30
 ) -> str:
-    """Build filter complex for split-screen layout - proper canvas-based approach"""
+    """Build split-screen filter complex - single video split into multiple screens"""
     
-    if screen_count == 2 and orientation.lower() == "horizontal":
-        # Horizontal split: expand video to completely fill canvas, then crop portions
-        # This creates a "zoomed in" effect where each screen shows a different part
-        filter_complex = (
-            f"[0:v]scale={canvas_width}:{canvas_height}:force_original_aspect_ratio=increase[scaled];"
-            f"[scaled]split=3[combined][copy0][copy1];"
-            f"[copy0]crop={output_width}:{output_height}:0:0[screen0];"
-            f"[copy1]crop={output_width}:{output_height}:{output_width}:0[screen1]"
-        )
-    elif screen_count == 2 and orientation.lower() == "vertical":
-        # Vertical split: expand video to completely fill canvas, then crop portions
-        filter_complex = (
-            f"[0:v]scale={canvas_width}:{canvas_height}:force_original_aspect_ratio=increase[scaled];"
-            f"[scaled]split=3[combined][copy0][copy1];"
-            f"[copy0]crop={output_width}:{output_height}:0:0[screen0];"
-            f"[copy1]crop={output_width}:{output_height}:0:{output_height}[screen1]"
-        )
-    elif orientation.lower() == "grid":
-        # Grid layout: expand video to completely fill canvas, then crop portions
-        filter_parts = [
-            f"[0:v]scale={canvas_width}:{canvas_height}:force_original_aspect_ratio=increase[scaled]",
-            f"[scaled]split={screen_count + 1}[combined]" + "".join([f"[copy{i}]" for i in range(screen_count)])
-        ]
-        
-        for i in range(screen_count):
-            x_pos, y_pos = calculate_position(i, orientation, output_width, output_height, grid_cols)
-            filter_parts.append(f"[copy{i}]crop={output_width}:{output_height}:{x_pos}:{y_pos}[screen{i}]")
-        
-        filter_complex = ";".join(filter_parts)
-    else:
-        # Fallback: simple split without positioning
-        filter_parts = [f"[0:v]split={screen_count + 1}[full]" + "".join([f"[copy{i}]" for i in range(screen_count)])]
-        
-        for i in range(screen_count):
-            filter_parts.append(f"[copy{i}]scale={output_width}:{output_height}[screen{i}]")
-        
-        filter_complex = ",".join(filter_parts)
+    filter_parts = []
     
-    return filter_complex
+    # Scale the single input video to canvas size
+    filter_parts.append(f"[0:v]scale={canvas_width}:{canvas_height}:force_original_aspect_ratio=increase,fps={framerate}[scaled]")
+    
+    # Split the scaled video for multiple outputs
+    split_count = screen_count + 1  # +1 for combined
+    split_outputs = ["[combined]"] + [f"[screen{i}_pre]" for i in range(screen_count)]
+    filter_parts.append(f"[scaled]split={split_count}{''.join(split_outputs)}")
+    
+    # Create individual screen crops
+    for i in range(screen_count):
+        x_crop, y_crop = calculate_position(i, orientation, output_width, output_height, grid_cols)
+        filter_parts.append(f"[screen{i}_pre]crop={output_width}:{output_height}:{x_crop}:{y_crop}[screen{i}]")
+    
+    return ";".join(filter_parts)
 
 def build_split_screen_ffmpeg_command(
     video_file: str,
@@ -160,6 +103,10 @@ def build_split_screen_ffmpeg_command(
 ) -> List[str]:
     """Build FFmpeg command for split-screen streaming - using multi-stream structure"""
     
+    logger.info(f" Building split-screen FFmpeg command")
+    logger.info(f"   Video: {video_file}, Screens: {screen_count}")
+    logger.info(f"   Output: {output_width}x{output_height}, Orientation: {orientation}")
+    
     # Use the exact same structure as multi-stream (which works)
     ffmpeg_cmd = [
         "ffmpeg", "-y",
@@ -170,17 +117,18 @@ def build_split_screen_ffmpeg_command(
     ]
     
     # Add input (single video file)
+    file_path = os.path.join("uploads", video_file)
     ffmpeg_cmd.extend([
         "-stream_loop", "-1",
         "-re",
         "-fflags", "+genpts",
-        "-i", video_file
+        "-i", file_path
     ])
     
     # Build filter complex
     filter_complex = build_split_screen_filter_complex(
-        canvas_width, canvas_height, output_width, output_height,
-        orientation, screen_count, grid_rows, grid_cols
+        video_file, canvas_width, canvas_height, output_width, output_height,
+        orientation, screen_count, grid_rows, grid_cols, framerate
     )
     
     ffmpeg_cmd.extend(["-filter_complex", filter_complex])
@@ -308,18 +256,20 @@ def monitor_ffmpeg_startup(process, timeout: int = 10) -> bool:
     return streaming_detected
 
 def generate_client_urls(srt_ip: str, srt_port: int, group_name: str, base_stream_id: str, stream_ids: Dict[str, str], screen_count: int) -> Dict[str, str]:
-    """Generate client URLs for streams - matching multi-stream format exactly"""
-    client_urls = {
-        "combined": f"srt://{srt_ip}:{srt_port}?streamid=#!::r=live/{group_name}/{base_stream_id},m=request,latency=5000000"
-    }
+    """Generate client URLs for split-screen streaming"""
+    client_urls = {}
     
-    # Individual screen URLs - same format as multi-stream
+    # Combined stream URL
+    combined_stream_path = f"live/{group_name}/{base_stream_id}"
+    client_urls["combined"] = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={combined_stream_path},m=request,latency=5000000"
+    
+    # Individual screen URLs
     for i in range(screen_count):
         screen_key = f"test{i}"
-        stream_id = stream_ids.get(screen_key)
-        if stream_id:
-            client_urls[f"screen{i}"] = f"srt://{srt_ip}:{srt_port}?streamid=#!::r=live/{group_name}/{stream_id},m=request,latency=5000000"
-
+        individual_stream_id = stream_ids.get(screen_key, f"screen{i}_{base_stream_id}")
+        individual_stream_path = f"live/{group_name}/{individual_stream_id}"
+        client_urls[f"screen{i}"] = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={individual_stream_path},m=request,latency=5000000"
+    
     return client_urls
 
 def check_srt_port_simple(ip: str, port: int, timeout: float = 5.0) -> bool:
@@ -370,6 +320,7 @@ def stop_ffmpeg_processes(processes: List[Dict[str, Any]], group_name: str) -> i
 def get_all_ffmpeg_processes() -> List[Dict[str, Any]]:
     """Get all running FFmpeg processes"""
     try:
+        import psutil
         processes = []
         for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
             try:
@@ -382,6 +333,9 @@ def get_all_ffmpeg_processes() -> List[Dict[str, Any]]:
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
         return processes
+    except ImportError:
+        logger.warning("psutil not available, returning empty process list")
+        return []
     except Exception as e:
         logger.error(f"Error getting FFmpeg processes: {e}")
         return []
@@ -390,165 +344,91 @@ def get_all_ffmpeg_processes() -> List[Dict[str, Any]]:
 # BACKGROUND MONITORING
 # ============================================================================
 
-def stream_monitor(process, group_id, group_name, stream_config):
-    """
-    Reliable background monitor for FFmpeg streams
-    Single, consistent monitoring approach
-    """
+def stream_monitor(process, group_id: str, group_name: str, stream_config: Dict[str, Any]):
+    """Monitor streaming process in background"""
+    logger.info(f" Starting stream monitor for {group_name} (PID: {process.pid})")
+    
     try:
-        logger.info(f" Starting stream monitor for {group_name} (PID: {process.pid})")
-
-        frame_count = 0
-        last_frame_time = time.time()
-        last_resource_check = time.time()
-        stall_warnings = 0
-
-        # Single set of reliable configuration
-        STALL_TIMEOUT = 30
-        MAX_STALL_WARNINGS = 3
-        RESOURCE_CHECK_INTERVAL = 60
-        
-        # Get memory thresholds from config if available
-        try:
-            MAX_MEMORY_MB = MEMORY_OPTIMIZATION.get("warning_threshold", 2000)
-            CRITICAL_MEMORY_MB = MEMORY_OPTIMIZATION.get("critical_threshold", 4000)
-        except NameError:
-            MAX_MEMORY_MB = 2000
-            CRITICAL_MEMORY_MB = 4000
-        
         while process.poll() is None:
-            try:
-                current_time = time.time()
-
-                # Read FFmpeg output
-                if process.stdout and select.select([process.stdout], [], [], 0.1)[0]:
-                    line = process.stdout.readline()
-
-                    if line:
-                        line = line.strip()
-
-                        # Track frame progress
-                        if "frame=" in line and "fps=" in line:
-                            frame_count += 1
-                            last_frame_time = current_time
-                            stall_warnings = 0
-
-                            # Log progress every 500 frames
-                            if frame_count % 500 == 0:
-                                logger.info(f" {group_name}: {frame_count} frames processed")
-
-                        # Check for critical errors
-                        critical_errors = [
-                            "connection refused", "broken pipe", "network unreachable",
-                            "out of memory", "resource temporarily unavailable",
-                            "connection reset", "host unreachable"
-                        ]
-
-                        line_lower = line.lower()
-                        for error in critical_errors:
-                            if error in line_lower:
-                                logger.error(f" CRITICAL ERROR in {group_name}: {line}")
-                                process.terminate()
-                                return
-
-                # Check for stalled stream
-                time_since_frame = current_time - last_frame_time
-                if frame_count > 0 and time_since_frame > STALL_TIMEOUT:
-                    stall_warnings += 1
-                    logger.error(f" STREAM STALLED: {group_name} ({time_since_frame:.1f}s since last frame)")
-
-                    if stall_warnings >= MAX_STALL_WARNINGS:
-                        logger.error(f" TERMINATING STALLED STREAM: {group_name}")
-                        process.terminate()
-                        return
-
-                # Periodic resource monitoring
-                if current_time - last_resource_check >= RESOURCE_CHECK_INTERVAL:
-                    try:
-                        proc_info = psutil.Process(process.pid)
-                        memory_mb = proc_info.memory_info().rss / 1024 / 1024
-
-                        if memory_mb > MAX_MEMORY_MB:
-                            logger.error(f" HIGH MEMORY: {group_name} using {memory_mb:.1f}MB")
-                            if memory_mb > CRITICAL_MEMORY_MB:
-                                logger.error(f" TERMINATING due to memory leak")
-                                process.terminate()
-                                return
-
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        logger.error(f" Process {process.pid} no longer exists")
-                        return
-
-                    last_resource_check = current_time
-
-                time.sleep(0.1)
-
-            except Exception as e:
-                logger.error(f" Monitor error for {group_name}: {e}")
-                time.sleep(1)
-
-        # Process ended
-        exit_code = process.returncode
-        logger.warning(f" {group_name} ended with exit code {exit_code}, {frame_count} total frames")
-
+            time.sleep(10)
+            # Process is still running
+            logger.debug(f"Stream {group_name} (PID: {process.pid}) is still running")
+        
+        logger.warning(f"Stream {group_name} (PID: {process.pid}) terminated with code {process.returncode}")
+        
     except Exception as e:
-        logger.error(f" Monitor crashed for {group_name}: {e}")
+        logger.error(f"Error monitoring stream {group_name}: {e}")
+
+def discover_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
+    """Discover group information from Docker"""
+    try:
+        from ..docker_management import discover_groups
+        
+        discovery_result = discover_groups()
+        if discovery_result.get("success", False):
+            for group in discovery_result.get("groups", []):
+                if group.get("id") == group_id:
+                    logger.info(f"Found group: '{group.get('name', group_id)}'")
+                    logger.info(f"Docker container status: {'Running' if group.get('docker_running') else 'Stopped'}")
+                    return group
+        
+        logger.error(f"Group '{group_id}' not found in Docker discovery")
+        return None
+        
+    except ImportError as e:
+        logger.error(f"Docker management not available: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error discovering group: {e}")
+        return None
+
+def get_active_stream_ids(group_id: str) -> Dict[str, str]:
+    """Get active stream IDs for a group"""
+    try:
+        from .stream_management import get_active_stream_ids
+        return get_active_stream_ids(group_id)
+    except ImportError:
+        logger.warning("stream_management not available, returning empty stream IDs")
+        return {}
 
 # ============================================================================
-# FLASK ROUTES
+# FLASK ROUTE HANDLERS
 # ============================================================================
 
 @split_stream_bp.route("/start_split_screen_srt", methods=["POST"])
 def start_split_screen_srt():
-    """Take one video file and split it across multiple screens"""
+    """
+    Start split-screen SRT streaming - using multi-stream structure
+    """
     try:
         # Clean up old containers first
         cleanup_count = cleanup_old_srs_containers(max_containers=3)
         if cleanup_count > 0:
             logger.info(f" Cleaned up {cleanup_count} old containers")
         
+        # Get request data
         data = request.get_json() or {}
         
+        # Extract required parameters
         group_id = data.get("group_id")
+        if not group_id:
+            return jsonify({"error": "group_id is required"}), 400
+        
         video_file = data.get("video_file")
+        if not video_file:
+            return jsonify({"error": "video_file is required"}), 400
         
         logger.info("="*60)
         logger.info(f"STARTING SPLIT-SCREEN STREAM: {group_id} -> {video_file}")
         logger.info("="*60)
         
-        if not group_id or not video_file:
-            logger.error("Missing required parameters: group_id or video_file")
-            return jsonify({"error": "group_id and video_file are required"}), 400
-        
-        # Discover group
-        logger.info(f"Discovering group '{group_id}' from Docker...")
-        try:
-            from blueprints.docker_management import discover_groups
-            result = discover_groups()
-            if result.get("success", False):
-                groups = result.get("groups", [])
-                group = next((g for g in groups if g.get("id") == group_id), None)
-            else:
-                group = None
-        except ImportError:
-            group = None
-        
+        # Discover group from Docker
+        group = discover_group_from_docker(group_id)
         if not group:
-            logger.error(f"Group '{group_id}' not found in Docker")
             return jsonify({"error": f"Group '{group_id}' not found"}), 404
-
+        
+        # Get configuration
         group_name = group.get("name", group_id)
-        logger.info(f"Found group: '{group_name}'")
-        
-        # Check Docker status
-        docker_running = group.get("docker_running", False)
-        logger.info(f"Docker container status: {'Running' if docker_running else 'Stopped'}")
-        
-        if not docker_running:
-            logger.error(f"Docker container for group '{group_name}' is not running")
-            return jsonify({"error": f"Docker container for group '{group_name}' is not running"}), 400
-        
-        # Configuration
         screen_count = data.get("screen_count", group.get("screen_count", 2))
         orientation = data.get("orientation", group.get("orientation", "horizontal"))
         output_width = data.get("output_width", 1920)
@@ -557,65 +437,40 @@ def start_split_screen_srt():
         grid_cols = data.get("grid_cols", 2)
         
         logger.info(f"Config: {screen_count} screens, {orientation}, {output_width}x{output_height}, Grid: {grid_rows}x{grid_cols}")
-
+        
         # Get streaming parameters
         ports = group.get("ports", {})
-        srt_ip = data.get("srt_ip", "127.0.0.1")
+        srt_ip = data.get("srt_ip", "127.0.0.1")  # Use localhost for server-side
         
         logger.info(f"Using SRT IP: {srt_ip}")
         
+        # Get SRT port - use external Docker port for publishing (like multi-stream)
         srt_port = data.get("srt_port")
+        logger.info(f"SRT port from request data: {srt_port}")
+        
         if not srt_port:
             srt_port = ports.get("srt_port")
+            logger.info(f"SRT port from Docker discovery: {srt_port}")
             if not srt_port:
                 return jsonify({
                     "error": "No SRT port available for this group. Docker container may not be properly configured.",
                     "group_ports": ports
                 }), 500
-            
-            external_srt_port = srt_port
-            logger.info(f"Port mapping: {external_srt_port}->10080, Publishing: {srt_ip}:{external_srt_port}")
-            srt_port = external_srt_port
-        else:
-            logger.info(f"SRT port provided: {srt_port} (external Docker port)")
+        
+        # Force the correct port - this is the key fix!
+        logger.info(f"Final SRT port for publishing: {srt_port}")
+        logger.info(f"Group ports from Docker: {ports}")
+        
+        # Ensure we're using the external Docker port (not internal)
+        if srt_port == 10080:
+            logger.warning(f"Detected internal port 10080, forcing to external port from Docker discovery")
+            srt_port = ports.get("srt_port")
+            logger.info(f"Corrected SRT port: {srt_port}")
         
         # Get encoding parameters
         framerate = data.get("framerate", 30)
         bitrate = data.get("bitrate", "3000k")
         sei = data.get("sei", "681d5c8f-80cd-4847-930a-99b9484b4a32+000000")
-        
-        # Optimize bitrate based on screen count (matching multi_stream.py approach)
-        if isinstance(bitrate, str) and bitrate.endswith('k'):
-            base_bitrate = int(bitrate.rstrip('k'))
-            # Adjust bitrate based on screen count for better resource management
-            if screen_count > 4:
-                optimized_bitrate = max(base_bitrate // 2, 1000)  # Reduce for high screen counts
-            elif screen_count > 2:
-                optimized_bitrate = int(base_bitrate * 0.8)  # Slight reduction for medium screen counts
-            else:
-                optimized_bitrate = base_bitrate  # Keep original for low screen counts
-            
-            bitrate = f"{optimized_bitrate}k"
-            logger.info(f"Bitrate optimization: {base_bitrate}k -> {bitrate} for {screen_count} screens")
-        
-        # Optimize thread count based on screen count
-        optimal_threads = min(screen_count * 2, 8)  # 2 threads per screen, max 8
-        logger.info(f"Thread optimization: {optimal_threads} threads for {screen_count} screens")
-        
-        # Get memory optimization settings
-        try:
-            from streaming_config import MEMORY_OPTIMIZATION, get_encoding_preset, check_memory_usage
-            memory_info = check_memory_usage()
-            if memory_info:
-                available_gb = memory_info["available_gb"]
-                encoding_preset = get_encoding_preset(available_gb)
-                logger.info(f"Memory optimization: {available_gb:.1f}GB available, using {encoding_preset['preset']} preset")
-            else:
-                encoding_preset = {"preset": "faster", "tune": "zerolatency", "g": "30", "bf": "0", "refs": "2"}
-                logger.info("Using default encoding preset for memory optimization")
-        except ImportError:
-            encoding_preset = {"preset": "faster", "tune": "zerolatency", "g": "30", "bf": "0", "refs": "2"}
-            logger.info("Using fallback encoding preset (streaming_config.py not available)")
         
         # Calculate canvas dimensions
         if orientation.lower() == "horizontal":
@@ -631,7 +486,7 @@ def start_split_screen_srt():
         logger.info(f"Canvas dimensions: {canvas_width}x{canvas_height}")
         
         # Generate stream IDs
-        base_stream_id = f"{group_id}_{int(time.time())}"
+        base_stream_id = group_id  # Use full group ID like client management
         stream_ids = generate_stream_ids(base_stream_id, group_name, screen_count)
         
         # Verify video file exists and get full path
@@ -660,31 +515,8 @@ def start_split_screen_srt():
             logger.error(f"   Error testing video file with FFmpeg: {e}")
             return jsonify({"error": f"Error testing video file: {e}"}), 400
         
-        # Test a simple filter complex to isolate the issue
-        try:
-            simple_test_cmd = ["ffmpeg", "-i", abs_file_path, "-vf", "scale=1920:1080", "-frames:v", "1", "-f", "null", "-", "-v", "quiet"]
-            result = subprocess.run(simple_test_cmd, capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                logger.info("   Simple filter test passed")
-            else:
-                logger.error(f"   Simple filter test failed: {result.stderr}")
-        except Exception as e:
-            logger.error(f"   Error testing simple filter: {e}")
-        
-        # Test the exact filter complex we're going to use
-        try:
-            test_filter = "[0:v]scale=3840:1080:force_original_aspect_ratio=increase[scaled];[scaled]split=3[combined][copy0][copy1];[copy0]crop=1920:1080:0:0[screen0];[copy1]crop=1920:1080:1920:0[screen1]"
-            test_cmd = ["ffmpeg", "-i", abs_file_path, "-filter_complex", f'"{test_filter}"', "-map", "[combined]", "-frames:v", "1", "-f", "null", "-", "-v", "quiet"]
-            result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=15)
-            if result.returncode == 0:
-                logger.info("   Complex filter test passed")
-            else:
-                logger.error(f"   Complex filter test failed: {result.stderr}")
-                logger.error(f"   Command was: {' '.join(test_cmd)}")
-        except Exception as e:
-            logger.error(f"   Error testing complex filter: {e}")
-        
         # Build FFmpeg command
+        logger.info(f"Building FFmpeg command with srt_ip={srt_ip}, srt_port={srt_port}")
         ffmpeg_cmd = build_split_screen_ffmpeg_command(
             abs_file_path, canvas_width, canvas_height, output_width, output_height,
             screen_count, orientation, srt_ip, srt_port, group_name, base_stream_id,
@@ -721,12 +553,21 @@ def start_split_screen_srt():
         logger.info("Background monitoring started")
         
         # Generate client URLs
-        client_urls = generate_client_urls(srt_ip, srt_port, group_name, base_stream_id, stream_ids, screen_count)
+        # Use external port for client URLs (Docker port mapping)
+        external_srt_port = ports.get("srt_port")  # Get external port from Docker
+        
+        # Use external IP for client URLs (clients need to connect to external IP)
+        external_srt_ip = "128.205.39.64"  # External IP for client connections
+        client_urls = generate_client_urls(external_srt_ip, external_srt_port, group_name, base_stream_id, stream_ids, screen_count)
         
         # Generate client stream URLs - matching multi-stream format exactly
         client_stream_urls = {}
-        external_srt_ip = "127.0.0.1"  # Local IP for testing
-        external_srt_port = srt_port
+        
+        # Use external port for client URLs (Docker port mapping)
+        external_srt_port = ports.get("srt_port")  # Get external port from Docker
+        
+        # Use external IP for client URLs (clients need to connect to external IP)
+        external_srt_ip = "128.205.39.64"  # External IP for client connections
         
         # Combined stream URL - same format as multi-stream
         combined_stream_path = f"live/{group_name}/{base_stream_id}"
@@ -760,7 +601,11 @@ def start_split_screen_srt():
             })
         
         # Test SRT connection
-        test_result = "success" if check_srt_port_simple(srt_ip, srt_port) else "failed"
+        try:
+            from .client_utils import check_srt_port_simple
+            test_result = "success" if check_srt_port_simple(srt_ip, srt_port) else "failed"
+        except ImportError:
+            test_result = "unknown"
         
         logger.info("="*60)
         logger.info(f"SPLIT-SCREEN STREAM STARTED SUCCESSFULLY")
@@ -795,7 +640,7 @@ def start_split_screen_srt():
             "client_urls": client_urls,
             "streaming_detected": streaming_detected,
             "streams_created": screen_count + 1,
-            "encoding": f"{encoding_preset['preset']} preset, CRF 24, {encoding_preset['g']}-frame keyframes, {optimal_threads} threads",
+            "encoding": f"faster preset, CRF 24, 30-frame keyframes, 4 threads",
             "stream_ids": stream_ids
         }), 200
         
@@ -809,7 +654,7 @@ def start_split_screen_srt():
 def get_stream_urls(group_id: str):
     """Get stream URLs for a specific group"""
     try:
-        from blueprints.docker_management import discover_groups
+        from ..docker_management import discover_groups
         discovery_result = discover_groups()
         
         if not discovery_result.get("success", False):
@@ -824,16 +669,18 @@ def get_stream_urls(group_id: str):
         group_name = group.get("name", group_id)
         
         # Get active stream IDs for this group
-        from blueprints.streaming.stream_management import get_active_stream_ids
+        from .stream_management import get_active_stream_ids
         stream_ids = get_active_stream_ids(group_id)
         
         if not stream_ids:
             return jsonify({"error": "No active streams found for this group"}), 404
         
         # Generate URLs
-        srt_ip = "127.0.0.1"
-        srt_port = 10080  # Default port
-        base_stream_id = f"{group_id}_{int(time.time())}"
+        srt_ip = "127.0.0.1"  # Use localhost like multi-stream
+        srt_port = group.get("ports", {}).get("srt_port")  # Get port from Docker discovery
+        if not srt_port:
+            return jsonify({"error": "No SRT port available for this group"}), 500
+        base_stream_id = group_id  # Use full group ID like client management
         
         client_urls = generate_client_urls(srt_ip, srt_port, group_name, base_stream_id, stream_ids, len(stream_ids))
         
@@ -853,7 +700,7 @@ def get_stream_urls(group_id: str):
 def all_streaming_statuses():
     """Get streaming status for all groups"""
     try:
-        from blueprints.docker_management import discover_groups
+        from ..docker_management import discover_groups
         discovery_result = discover_groups()
 
         if not discovery_result.get("success", False):
@@ -912,3 +759,45 @@ def all_streaming_statuses():
     except Exception as e:
         logger.error(f"Error getting streaming statuses: {e}")
         return jsonify({"error": str(e)}), 500
+
+# ============================================================================
+# UTILITY FUNCTIONS FOR OTHER MODULES
+# ============================================================================
+
+def find_running_ffmpeg_for_group_strict(group_id: str, group_name: str, container_id: str) -> List[Dict[str, Any]]:
+    """Find running FFmpeg processes for a specific group"""
+    try:
+        all_processes = get_all_ffmpeg_processes()
+        group_processes = []
+        
+        for proc in all_processes:
+            cmdline = ' '.join(proc.get('cmdline', []))
+            if group_name in cmdline or group_id in cmdline:
+                group_processes.append(proc)
+        
+        return group_processes
+    except Exception as e:
+        logger.error(f"Error finding FFmpeg processes for group {group_name}: {e}")
+        return []
+
+def stop_group_streams(group_id: str, group_name: str) -> bool:
+    """Stop all streaming processes for a group"""
+    try:
+        processes = find_running_ffmpeg_for_group_strict(group_id, group_name, None)
+        stopped_count = 0
+        
+        for proc in processes:
+            try:
+                pid = proc["pid"]
+                logger.info(f"Stopping FFmpeg process {pid} for group {group_name}")
+                os.kill(pid, 15)  # SIGTERM
+                stopped_count += 1
+            except Exception as e:
+                logger.error(f"Error stopping process {proc.get('pid')}: {e}")
+        
+        logger.info(f"Stopped {stopped_count} streaming processes for group {group_name}")
+        return stopped_count > 0
+        
+    except Exception as e:
+        logger.error(f"Error stopping group streams: {e}")
+        return False

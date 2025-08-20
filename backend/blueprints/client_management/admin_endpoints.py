@@ -827,7 +827,7 @@ def get_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
             "name": f"Group-{group_id[:8]}",
             "docker_running": True,
             "container_id": f"mock-{group_id[:8]}",
-            "ports": {"srt_port": 10100}  # Use the port from your logs
+            "ports": {"srt_port": 10080}  # Use the port from your logs
         }
         
     except ImportError as e:
@@ -838,7 +838,7 @@ def get_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
             "name": f"Group-{group_id[:8]}",
             "docker_running": True,
             "container_id": f"mock-{group_id[:8]}",
-            "ports": {"srt_port": 10100}
+            "ports": {"srt_port": 10080}
         }
     except Exception as e:
         logger.error(f"Error getting group from Docker: {e}")
@@ -848,5 +848,5 @@ def get_group_from_docker(group_id: str) -> Optional[Dict[str, Any]]:
             "name": f"Group-{group_id[:8]}",
             "docker_running": True,
             "container_id": f"mock-{group_id[:8]}",
-            "ports": {"srt_port": 10100}
+            "ports": {"srt_port": 10080}
         }
