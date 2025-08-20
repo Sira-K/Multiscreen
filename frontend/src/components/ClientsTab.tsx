@@ -239,32 +239,7 @@ const ClientsTab: React.FC<ClientsTabProps> = ({ onClientsRefreshed }) => {
                 Connected clients only. Disconnected clients are automatically removed after 2 minutes of inactivity. No manual removal needed. Auto-refreshes every 5 seconds.
               </CardDescription>
 
-              {/* Auto-cleanup control */}
-              <div className="flex items-center gap-4 mt-4 p-3 bg-gray-50 rounded-lg border">
-                <div className="flex items-center gap-2">
-                  <Settings className="w-4 h-4 text-gray-600" />
-                  <span className="text-sm font-medium text-gray-700">Auto-cleanup:</span>
-                  <Badge variant={autoCleanupStatus.running ? "default" : "secondary"}>
-                    {autoCleanupStatus.running ? "Active" : "Inactive"}
-                  </Badge>
-                </div>
 
-                <Button
-                  variant={autoCleanupStatus.running ? "destructive" : "default"}
-                  size="sm"
-                  onClick={toggleAutoCleanup}
-                  disabled={loading}
-                  className="ml-auto"
-                >
-                  {autoCleanupStatus.running ? "Stop" : "Start"} Auto-cleanup
-                </Button>
-
-                {autoCleanupStatus.running && (
-                  <div className="text-xs text-gray-500">
-                    Client lifecycle: Active (30s) → Inactive (30-120s) → Disconnected (120s+) → Removed
-                  </div>
-                )}
-              </div>
             </div>
             <Button
               variant="outline"
