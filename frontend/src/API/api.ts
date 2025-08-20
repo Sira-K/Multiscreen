@@ -371,6 +371,24 @@ export const clientApi = {
     return await handleApiResponse(response, 'POST /api/clients/unregister');
   },
 
+  async sendHeartbeat(clientId: string) {
+    console.log(`Sending heartbeat for client: ${clientId}`);
+
+    const response = await fetch(`${API_BASE_URL}/api/clients/heartbeat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: clientId
+      }),
+    });
+
+    const result = await handleApiResponse(response, 'POST /api/clients/heartbeat');
+    console.log('Heartbeat sent successfully:', result);
+    return result;
+  },
+
   // ===================================
   // CLIENT INFORMATION & STATUS
   // ===================================

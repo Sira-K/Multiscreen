@@ -13,7 +13,8 @@ from .client_endpoints import (
     unregister_client,
     wait_for_assignment,
     register_client_legacy,
-    wait_for_stream_legacy
+    wait_for_stream_legacy,
+    client_heartbeat
 )
 from .admin_endpoints import (
     assign_client_to_group,
@@ -79,6 +80,11 @@ def get_client_details_route(client_id: str):
 def health_check_route():
     """Health check endpoint"""
     return health_check()
+
+@client_bp.route("/heartbeat", methods=["POST"])
+def heartbeat_route():
+    """Client heartbeat endpoint to keep connection alive"""
+    return client_heartbeat()
 
 @client_bp.route("/debug/state", methods=["GET"])
 def debug_state_route():

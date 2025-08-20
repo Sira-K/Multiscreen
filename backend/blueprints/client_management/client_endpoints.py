@@ -442,13 +442,27 @@ def wait_for_assignment():
                 "message": "Client not found. Please register first."
             }), 404
         
+        # Update client heartbeat to show it's still active
+        current_time = time.time()
+        client["last_seen"] = current_time
+        client["status"] = "active"
+        
+        # Save the updated client data
+        if hasattr(state, 'add_client'):
+            state.add_client(client_id, client)
+        elif hasattr(state, 'add_or_update_client'):
+            state.add_or_update_client(client_id, client)
+        else:
+            state.clients[client_id] = client
+        
         # Get assignment status
         assignment_status = client.get("assignment_status", "waiting_for_assignment")
         group_id = client.get("group_id")
         
-        logger.info(f" Client {client_id} checking assignment:")
+        logger.info(f" Client {client_id} checking assignment (heartbeat updated):")
         logger.info(f"   - Assignment status: {assignment_status}")
         logger.info(f"   - Group ID: {group_id}")
+        logger.info(f"   - Last seen updated to: {current_time}")
         logger.info(f"   - Full client data: {client}")
         
         # Case 1: Waiting for group assignment
@@ -641,6 +655,66 @@ def wait_for_assignment():
             "success": False,
             "status": "error",
             "message": f"Internal server error: {str(e)}"
+        }), 500
+
+
+@log_function_call
+def client_heartbeat():
+    """
+    Client heartbeat endpoint to keep connection alive
+    Updates last_seen timestamp for the client
+    """
+    try:
+        logger.info("==== CLIENT HEARTBEAT REQUEST ====")
+        
+        data = request.get_json() or {}
+        client_id = data.get("client_id")
+        
+        if not client_id:
+            return jsonify({
+                "success": False,
+                "error": "client_id is required"
+            }), 400
+        
+        state = get_state()
+        client = state.get_client(client_id) if hasattr(state, 'get_client') else state.clients.get(client_id)
+        
+        if not client:
+            return jsonify({
+                "success": False,
+                "error": "Client not found. Please register first."
+            }), 404
+        
+        # Update heartbeat
+        current_time = time.time()
+        client["last_seen"] = current_time
+        client["status"] = "active"
+        
+        # Save updated client data
+        if hasattr(state, 'add_client'):
+            state.add_client(client_id, client)
+        elif hasattr(state, 'add_or_update_client'):
+            state.add_or_update_client(client_id, client)
+        else:
+            state.clients[client_id] = client
+        
+        logger.info(f"Client {client_id} heartbeat updated: {current_time}")
+        
+        return jsonify({
+            "success": True,
+            "message": "Heartbeat received",
+            "client_id": client_id,
+            "timestamp": current_time,
+            "status": "active"
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in client_heartbeat: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({
+            "success": False,
+            "error": f"Internal server error: {str(e)}"
         }), 500
 
 

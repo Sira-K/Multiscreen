@@ -464,6 +464,9 @@ Note: Make sure the client window has focus for hotkeys to work.
                     self.assignment_status = result.get('status', 'waiting_for_assignment')
                     self._server_client_id = result.get('client_id') # Store server-assigned ID
                     
+                    # Initialize heartbeat tracking
+                    self.last_heartbeat = time.time()
+                    
                     # Show next steps
                     next_steps = result.get('next_steps', [
                         "Wait for admin to assign you to a group",
@@ -523,6 +526,9 @@ Note: Make sure the client window has focus for hotkeys to work.
                 data = response.json()
                 status = data.get('status')
                 message = data.get('message', '')
+                
+                # Update heartbeat since we're actively communicating with server
+                self.last_heartbeat = time.time()
                 
                 self.logger.debug(f"Server response: status={status}")
                 
@@ -602,6 +608,29 @@ Note: Make sure the client window has focus for hotkeys to work.
             return False
         
         return False
+
+    def send_heartbeat(self) -> bool:
+        """Send heartbeat to server to keep connection alive"""
+        try:
+            response = requests.post(
+                f"{self.server_url}/api/clients/heartbeat",
+                json={
+                    "client_id": self.client_id
+                },
+                timeout=10
+            )
+            data = response.json()
+            
+            if data.get("success", False):
+                print(f" Heartbeat sent successfully")
+                return True
+            else:
+                print(f" Heartbeat failed: {data.get('error', 'Unknown error')}")
+                return False
+                
+        except Exception as e:
+                print(f" Heartbeat request failed: {e}")
+                return False
     
     def fix_stream_url(self, stream_url: str) -> str:
         """Fix stream URL to use server IP instead of localhost"""
@@ -984,6 +1013,13 @@ Note: Make sure the client window has focus for hotkeys to work.
             
             # Step 2: Main loop - wait for assignment and play streams
             while self.running and not self._shutdown_event.is_set():
+                # Send periodic heartbeat to keep connection alive
+                if hasattr(self, 'last_heartbeat') and (time.time() - self.last_heartbeat) > 30:
+                    self.send_heartbeat()
+                    self.last_heartbeat = time.time()
+                elif not hasattr(self, 'last_heartbeat'):
+                    self.last_heartbeat = time.time()
+                
                 # Wait for stream assignment
                 if self.wait_for_assignment():
                     if self._shutdown_event.is_set():
