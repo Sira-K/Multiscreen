@@ -9,6 +9,63 @@ import os
 import sys
 from datetime import datetime
 
+# Configuration constants
+MAX_LOG_LINES = 1000  # Maximum lines to keep in each log file
+
+class LineRotatingFileHandler(logging.FileHandler):
+    """Custom file handler that keeps only the newest N lines"""
+    
+    def __init__(self, filename, max_lines=1000, mode='a', encoding=None, delay=False):
+        super().__init__(filename, mode, encoding, delay)
+        self.max_lines = max_lines
+        self.filename = filename
+        self._rotate_if_needed()
+    
+    def _rotate_if_needed(self):
+        """Rotate the log file if it has more than max_lines"""
+        try:
+            if os.path.exists(self.filename):
+                with open(self.filename, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                
+                if len(lines) > self.max_lines:
+                    # Keep only the newest lines
+                    new_lines = lines[-self.max_lines:]
+                    
+                    # Write back the truncated content
+                    with open(self.filename, 'w', encoding='utf-8') as f:
+                        f.writelines(new_lines)
+                    
+                    # Log the rotation
+                    print(f"Log file {self.filename} rotated: kept {len(new_lines)} newest lines")
+        except Exception as e:
+            print(f"Warning: Could not rotate log file {self.filename}: {e}")
+    
+    def emit(self, record):
+        """Emit a log record and check if rotation is needed"""
+        super().emit(record)
+        
+        # Check if we need to rotate after each log entry
+        try:
+            if os.path.exists(self.filename):
+                with open(self.filename, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                
+                if len(lines) > self.max_lines:
+                    # Keep only the newest lines
+                    new_lines = lines[-self.max_lines:]
+                    
+                    # Write back the truncated content
+                    with open(self.filename, 'w', encoding='utf-8') as f:
+                        f.writelines(new_lines)
+                    
+                    # Add rotation notice
+                    with open(self.filename, 'a', encoding='utf-8') as f:
+                        f.write(f"\n# Log file rotated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - kept newest {len(new_lines)} lines\n")
+        except Exception as e:
+            # Don't let rotation errors break logging
+            pass
+
 def setup_comprehensive_logging():
     """Setup comprehensive logging for the streaming system"""
     
@@ -41,27 +98,21 @@ def setup_comprehensive_logging():
     
     # File handler for all logs (DEBUG level)
     all_logs_file = os.path.join(logs_dir, 'all.log')
-    all_handler = logging.handlers.RotatingFileHandler(
-        all_logs_file, maxBytes=10*1024*1024, backupCount=5
-    )
+    all_handler = LineRotatingFileHandler(all_logs_file, max_lines=MAX_LOG_LINES)
     all_handler.setLevel(logging.DEBUG)
     all_handler.setFormatter(detailed_formatter)
     root_logger.addHandler(all_handler)
     
     # File handler for errors only (ERROR level)
     error_logs_file = os.path.join(logs_dir, 'errors.log')
-    error_handler = logging.handlers.RotatingFileHandler(
-        error_logs_file, maxBytes=5*1024*1024, backupCount=3
-    )
+    error_handler = LineRotatingFileHandler(error_logs_file, max_lines=MAX_LOG_LINES)
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(detailed_formatter)
     root_logger.addHandler(error_handler)
     
     # File handler for FFmpeg-specific logs (INFO level)
     ffmpeg_logs_file = os.path.join(logs_dir, 'ffmpeg.log')
-    ffmpeg_handler = logging.handlers.RotatingFileHandler(
-        ffmpeg_logs_file, maxBytes=5*1024*1024, backupCount=3
-    )
+    ffmpeg_handler = LineRotatingFileHandler(ffmpeg_logs_file, max_lines=MAX_LOG_LINES)
     ffmpeg_handler.setLevel(logging.INFO)
     ffmpeg_handler.setFormatter(detailed_formatter)
     
@@ -72,9 +123,7 @@ def setup_comprehensive_logging():
     
     # File handler for client management logs (INFO level)
     client_logs_file = os.path.join(logs_dir, 'clients.log')
-    client_handler = logging.handlers.RotatingFileHandler(
-        client_logs_file, maxBytes=5*1024*1024, backupCount=3
-    )
+    client_handler = LineRotatingFileHandler(client_logs_file, max_lines=MAX_LOG_LINES)
     client_handler.setLevel(logging.INFO)
     client_handler.setFormatter(detailed_formatter)
     
@@ -85,9 +134,7 @@ def setup_comprehensive_logging():
     
     # File handler for streaming logs (INFO level)
     streaming_logs_file = os.path.join(logs_dir, 'streaming.log')
-    streaming_handler = logging.handlers.RotatingFileHandler(
-        streaming_logs_file, maxBytes=5*1024*1024, backupCount=3
-    )
+    streaming_handler = LineRotatingFileHandler(streaming_logs_file, max_lines=MAX_LOG_LINES)
     streaming_handler.setLevel(logging.INFO)
     streaming_handler.setFormatter(detailed_formatter)
     
@@ -98,9 +145,7 @@ def setup_comprehensive_logging():
     
     # File handler for system resource logs (INFO level)
     system_logs_file = os.path.join(logs_dir, 'system.log')
-    system_handler = logging.handlers.RotatingFileHandler(
-        system_logs_file, maxBytes=2*1024*1024, backupCount=2
-    )
+    system_handler = LineRotatingFileHandler(system_logs_file, max_lines=MAX_LOG_LINES)
     system_handler.setLevel(logging.INFO)
     system_handler.setFormatter(detailed_formatter)
     
@@ -113,7 +158,7 @@ def setup_comprehensive_logging():
     root_logger.info("=" * 80)
     root_logger.info("COMPREHENSIVE LOGGING SYSTEM STARTED")
     root_logger.info(f"Logs directory: {logs_dir}")
-    root_logger.info(f"Log files:")
+    root_logger.info(f"Log files (line-based rotation, max {MAX_LOG_LINES} lines):")
     root_logger.info(f"   - All logs: {all_logs_file}")
     root_logger.info(f"   - Errors only: {error_logs_file}")
     root_logger.info(f"   - FFmpeg: {ffmpeg_logs_file}")
@@ -123,6 +168,51 @@ def setup_comprehensive_logging():
     root_logger.info("=" * 80)
     
     return root_logger
+
+def rotate_existing_logs(logs_dir, max_lines=MAX_LOG_LINES):
+    """Manually rotate existing log files to keep only the newest N lines"""
+    try:
+        log_files = [
+            'all.log',
+            'errors.log', 
+            'ffmpeg.log',
+            'clients.log',
+            'streaming.log',
+            'system.log'
+        ]
+        
+        rotated_count = 0
+        for log_file in log_files:
+            log_path = os.path.join(logs_dir, log_file)
+            if os.path.exists(log_path):
+                try:
+                    with open(log_path, 'r', encoding='utf-8') as f:
+                        lines = f.readlines()
+                    
+                    if len(lines) > max_lines:
+                        # Keep only the newest lines
+                        new_lines = lines[-max_lines:]
+                        
+                        # Write back the truncated content
+                        with open(log_path, 'w', encoding='utf-8') as f:
+                            f.writelines(new_lines)
+                        
+                        # Add rotation notice
+                        with open(log_path, 'a', encoding='utf-8') as f:
+                            f.write(f"\n# Log file manually rotated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - kept newest {len(new_lines)} lines\n")
+                        
+                        rotated_count += 1
+                        print(f"Rotated log file: {log_file} ({len(lines)} -> {len(new_lines)} lines)")
+                except Exception as e:
+                    print(f"Warning: Could not rotate log file {log_file}: {e}")
+        
+        if rotated_count > 0:
+            print(f"Successfully rotated {rotated_count} log files to {max_lines} lines each")
+        else:
+            print("No log files needed rotation")
+            
+    except Exception as e:
+        print(f"Warning: Could not rotate log files: {e}")
 
 def log_system_resources():
     """Log current system resource usage"""

@@ -34,7 +34,7 @@ def monitor_log_file(log_file_path, filter_pattern=None, lines=50):
     try:
         # Show last N lines
         if lines > 0:
-            print(f"\n📄 Last {lines} lines of {log_file_path.name}:")
+            print(f"\n Last {lines} lines of {log_file_path.name}:")
             print("=" * 80)
             
             try:
@@ -47,7 +47,7 @@ def monitor_log_file(log_file_path, filter_pattern=None, lines=50):
                 else:
                     print(f"Error reading log file: {result.stderr}")
             except subprocess.TimeoutExpired:
-                print("⏰ Timeout reading log file")
+                print(" Timeout reading log file")
         
         # Start tail -f monitoring
         print(f"\nStarting real-time monitoring of {log_file_path.name}")
@@ -103,7 +103,7 @@ def show_recent_errors(log_file_path, count=20):
             print(f"No errors found in {log_file_path.name}")
             
     except subprocess.TimeoutExpired:
-        print("⏰ Timeout searching for errors")
+        print(" Timeout searching for errors")
     except Exception as e:
         print(f"Error searching for errors: {e}")
 

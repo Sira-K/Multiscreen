@@ -6,26 +6,26 @@ import { useErrorHandler } from '../../ErrorSystem/useErrorHandler';
 import type { Client } from '../../../types';
 
 export const useClientAssignment = (
-  clients: Client[], 
+  clients: Client[],
   loadInitialData: () => Promise<void>
 ) => {
   const { showError } = useErrorHandler();
 
   // Get unassigned clients - use useCallback to prevent recreation
   const getUnassignedClients = useCallback(() => {
-    const unassigned = clients.filter(client => 
-      !client.group_id || 
-      client.group_id === null || 
+    const unassigned = clients.filter(client =>
+      !client.group_id ||
+      client.group_id === null ||
       client.group_id === "" ||
       client.group_id === undefined
     );
-    console.log(`📊 Unassigned clients calculation:`, {
+    console.log(` Unassigned clients calculation:`, {
       totalClients: clients.length,
       unassignedCount: unassigned.length,
-      unassignedList: unassigned.map(c => ({ 
-        id: c.client_id, 
+      unassignedList: unassigned.map(c => ({
+        id: c.client_id,
         name: c.display_name || c.hostname,
-        group_id: c.group_id 
+        group_id: c.group_id
       }))
     });
     return unassigned;
@@ -34,10 +34,10 @@ export const useClientAssignment = (
   // Get clients for a specific group - use useCallback to prevent recreation
   const getClientsForGroup = useCallback((groupId: string) => {
     const groupClients = clients.filter(client => client.group_id === groupId);
-    console.log(`📊 Clients for group ${groupId}:`, {
+    console.log(` Clients for group ${groupId}:`, {
       count: groupClients.length,
-      clients: groupClients.map(c => ({ 
-        id: c.client_id, 
+      clients: groupClients.map(c => ({
+        id: c.client_id,
         name: c.display_name || c.hostname,
         group_id: c.group_id,
         screen_number: c.screen_number
@@ -49,16 +49,16 @@ export const useClientAssignment = (
   // Get clients assigned to specific screens in a group
   const getClientsWithScreenAssignments = useCallback((groupId: string) => {
     const groupClients = clients.filter(client => client.group_id === groupId);
-    const assignedToScreens = groupClients.filter(client => 
-      client.screen_number !== null && 
+    const assignedToScreens = groupClients.filter(client =>
+      client.screen_number !== null &&
       client.screen_number !== undefined
     );
-    const unassignedToScreens = groupClients.filter(client => 
-      client.screen_number === null || 
+    const unassignedToScreens = groupClients.filter(client =>
+      client.screen_number === null ||
       client.screen_number === undefined
     );
-    
-    console.log(`📺 Screen assignments for group ${groupId}:`, {
+
+    console.log(` Screen assignments for group ${groupId}:`, {
       totalInGroup: groupClients.length,
       assignedToScreens: assignedToScreens.length,
       unassignedToScreens: unassignedToScreens.length,
@@ -67,7 +67,7 @@ export const useClientAssignment = (
         screen: c.screen_number
       }))
     });
-    
+
     return {
       allGroupClients: groupClients,
       assignedToScreens,
@@ -78,13 +78,13 @@ export const useClientAssignment = (
   // Handle client assignment to group - use useCallback to prevent recreation
   const handleAssignClient = useCallback(async (clientId: string, groupId: string) => {
     try {
-      console.log(`🎯 Assigning client ${clientId} to group ${groupId}`);
-      
+      console.log(` Assigning client ${clientId} to group ${groupId}`);
+
       if (groupId === "" || groupId === null || groupId === undefined) {
         // Unassign client
         await clientApi.unassignClientFromGroup(clientId);
-        console.log(`✅ Client ${clientId} unassigned`);
-        
+        console.log(` Client ${clientId} unassigned`);
+
         showError({
           message: "Client has been unassigned from the group",
           error_code: 'CLIENT_UNASSIGNED',
@@ -99,8 +99,8 @@ export const useClientAssignment = (
       } else {
         // Assign client to group
         await clientApi.assignClientToGroup(clientId, groupId);
-        console.log(`✅ Client ${clientId} assigned to group ${groupId}`);
-        
+        console.log(` Client ${clientId} assigned to group ${groupId}`);
+
         showError({
           message: "Client has been assigned to the group",
           error_code: 'CLIENT_ASSIGNED',
@@ -114,13 +114,13 @@ export const useClientAssignment = (
           }
         });
       }
-      
+
       // Reload data to reflect changes
       await loadInitialData();
-      
+
     } catch (error: any) {
-      console.error(`❌ Error assigning client ${clientId}:`, error);
-      
+      console.error(` Error assigning client ${clientId}:`, error);
+
       showError({
         message: error?.message || "Failed to assign client",
         error_code: 'CLIENT_ASSIGNMENT_FAILED',
@@ -138,18 +138,18 @@ export const useClientAssignment = (
     }
   }, [clients, loadInitialData, showError]);
 
-  // 🆕 Handle client assignment to specific screen within a group
+  //  Handle client assignment to specific screen within a group
   const handleAssignClientToScreen = useCallback(async (
-    clientId: string, 
-    groupId: string, 
+    clientId: string,
+    groupId: string,
     screenNumber: number
   ) => {
     try {
-      console.log(`🖥️ Assigning client ${clientId} to screen ${screenNumber} in group ${groupId}`);
-      
+      console.log(` Assigning client ${clientId} to screen ${screenNumber} in group ${groupId}`);
+
       await clientApi.assignClientToScreen(clientId, groupId, screenNumber);
-      console.log(`✅ Client ${clientId} assigned to screen ${screenNumber}`);
-      
+      console.log(` Client ${clientId} assigned to screen ${screenNumber}`);
+
       showError({
         message: `Client assigned to screen ${screenNumber + 1}`,
         error_code: 'SCREEN_ASSIGNED',
@@ -163,12 +163,12 @@ export const useClientAssignment = (
           timestamp: new Date().toISOString()
         }
       });
-      
+
       // Reload data to show changes immediately
       await loadInitialData();
-      
+
     } catch (error: any) {
-      console.error('❌ Error assigning client to screen:', error);
+      console.error(' Error assigning client to screen:', error);
       showError({
         message: error?.message || 'Failed to assign client to screen',
         error_code: 'SCREEN_ASSIGNMENT_FAILED',
@@ -187,14 +187,14 @@ export const useClientAssignment = (
     }
   }, [loadInitialData, showError]);
 
-  // 🆕 Handle client unassignment from screen (but keep in group)
+  //  Handle client unassignment from screen (but keep in group)
   const handleUnassignClientFromScreen = useCallback(async (clientId: string) => {
     try {
-      console.log(`🖥️ Unassigning client ${clientId} from screen`);
-      
+      console.log(` Unassigning client ${clientId} from screen`);
+
       await clientApi.unassignClientFromScreen(clientId);
-      console.log(`✅ Client ${clientId} unassigned from screen`);
-      
+      console.log(` Client ${clientId} unassigned from screen`);
+
       showError({
         message: "Client has been unassigned from the screen",
         error_code: 'SCREEN_UNASSIGNED',
@@ -206,12 +206,12 @@ export const useClientAssignment = (
           timestamp: new Date().toISOString()
         }
       });
-      
+
       // Reload data to show changes immediately
       await loadInitialData();
-      
+
     } catch (error: any) {
-      console.error('❌ Error unassigning client from screen:', error);
+      console.error(' Error unassigning client from screen:', error);
       showError({
         message: error?.message || 'Failed to unassign client from screen',
         error_code: 'SCREEN_UNASSIGNMENT_FAILED',
@@ -228,14 +228,14 @@ export const useClientAssignment = (
     }
   }, [loadInitialData, showError]);
 
-  // 🆕 Auto-assign screens to clients in a group
+  //  Auto-assign screens to clients in a group
   const handleAutoAssignScreens = useCallback(async (groupId: string) => {
     try {
-      console.log(`🤖 Auto-assigning screens for group ${groupId}`);
-      
+      console.log(` Auto-assigning screens for group ${groupId}`);
+
       await clientApi.autoAssignScreens(groupId);
-      console.log(`✅ Screens auto-assigned for group ${groupId}`);
-      
+      console.log(` Screens auto-assigned for group ${groupId}`);
+
       showError({
         message: "Clients have been automatically assigned to screens",
         error_code: 'AUTO_ASSIGNMENT_COMPLETE',
@@ -247,12 +247,12 @@ export const useClientAssignment = (
           timestamp: new Date().toISOString()
         }
       });
-      
+
       // Reload data to show changes immediately
       await loadInitialData();
-      
+
     } catch (error: any) {
-      console.error('❌ Error auto-assigning screens:', error);
+      console.error(' Error auto-assigning screens:', error);
       showError({
         message: error?.message || 'Failed to auto-assign screens',
         error_code: 'AUTO_ASSIGNMENT_FAILED',
@@ -269,18 +269,18 @@ export const useClientAssignment = (
     }
   }, [loadInitialData, showError]);
 
-  // 🆕 Get screen assignments for a group
+  //  Get screen assignments for a group
   const getScreenAssignments = useCallback(async (groupId: string) => {
     try {
-      console.log(`📋 Getting screen assignments for group ${groupId}`);
-      
+      console.log(` Getting screen assignments for group ${groupId}`);
+
       const assignments = await clientApi.getScreenAssignments(groupId);
-      console.log(`✅ Retrieved screen assignments:`, assignments);
-      
+      console.log(` Retrieved screen assignments:`, assignments);
+
       return assignments;
-      
+
     } catch (error: any) {
-      console.error('❌ Error getting screen assignments:', error);
+      console.error(' Error getting screen assignments:', error);
       showError({
         message: error?.message || 'Failed to load screen assignments',
         error_code: 'FAILED_TO_LOAD_ASSIGNMENTS',
@@ -303,8 +303,8 @@ export const useClientAssignment = (
     getUnassignedClients,
     getClientsForGroup,
     handleAssignClient,
-    
-    // 🆕 Screen assignment functions
+
+    //  Screen assignment functions
     getClientsWithScreenAssignments,
     handleAssignClientToScreen,
     handleUnassignClientFromScreen,

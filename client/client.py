@@ -190,7 +190,7 @@ class UnifiedMultiScreenClient:
             self.window_manager.attributes('-topmost', True)
             self.window_manager.focus_force()
             
-            print(f"🎮 Window Manager Started")
+            print(f"Window Manager Started")
             print(f"   Hotkeys:")
             print(f"     Ctrl+M or Ctrl+Right: Move to next monitor")
             print(f"     Ctrl+Left: Move to previous monitor")
@@ -208,7 +208,7 @@ class UnifiedMultiScreenClient:
             return
         
         if monitor_index >= len(self.monitor_positions):
-            print(f"❌ Monitor {monitor_index + 1} not available")
+            print(f"Monitor {monitor_index + 1} not available")
             return
         
         x, y = self.monitor_positions[monitor_index]
@@ -226,15 +226,15 @@ class UnifiedMultiScreenClient:
                         window_id = line.split()[0]
                         # Move window to new position
                         subprocess.run(['wmctrl', '-ir', window_id, '-e', f'0,{x},{y},-1,-1'])
-                        print(f"🖥️  Moved to Monitor {monitor_index + 1} (x={x}, y={y})")
+                        print(f"Moved to Monitor {monitor_index + 1} (x={x}, y={y})")
                         return
             
             # Fallback: try xdotool if wmctrl doesn't work
             subprocess.run(['xdotool', 'search', '--name', window_title, 'windowmove', str(x), str(y)])
-            print(f"🖥️  Moved to Monitor {monitor_index + 1} (x={x}, y={y})")
+            print(f"Moved to Monitor {monitor_index + 1} (x={x}, y={y})")
             
         except FileNotFoundError:
-            print(f"❌ Window management tools not found. Install with:")
+            print(f"Window management tools not found. Install with:")
             print(f"   sudo apt install wmctrl xdotool")
         except Exception as e:
             self.logger.error(f"Failed to move window: {e}")
@@ -252,7 +252,7 @@ class UnifiedMultiScreenClient:
     def show_help(self, event=None):
         """Show hotkey help"""
         help_text = """
-🎮 Multi-Screen Client Hotkeys:
+Multi-Screen Client Hotkeys:
 
 Ctrl+M or Ctrl+Right: Move to next monitor
 Ctrl+Left: Move to previous monitor

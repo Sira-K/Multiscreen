@@ -25,8 +25,8 @@ interface GroupCardProps {
   onStreamingStatusChange?: (groupId: string, isStreaming: boolean) => void;
   onRefresh?: () => void;
   onAssignClient?: (clientId: string, groupId: string) => void;
-  
-  // 🆕 Screen assignment props
+
+  //  Screen assignment props
   onAssignClientToScreen?: (clientId: string, groupId: string, screenNumber: number) => Promise<void>;
   onUnassignClientFromScreen?: (clientId: string) => Promise<void>;
   onAutoAssignScreens?: (groupId: string) => Promise<void>;
@@ -48,7 +48,7 @@ const GroupCard: React.FC<GroupCardProps> = ({
   onStreamingStatusChange,
   onRefresh,
   onAssignClient,
-  // 🆕 Screen assignment props
+  //  Screen assignment props
   onAssignClientToScreen,
   onUnassignClientFromScreen,
   onAutoAssignScreens,
@@ -63,8 +63,8 @@ const GroupCard: React.FC<GroupCardProps> = ({
     actualIsStreaming = (isStreaming as any).is_streaming || false;
   }
 
-  // 🔍 DEBUG: Log what screen assignment props we received
-  console.log(`🔍 GroupCard DEBUG - Group "${group.name}" screen assignment props:`, {
+  //  DEBUG: Log what screen assignment props we received
+  console.log(` GroupCard DEBUG - Group "${group.name}" screen assignment props:`, {
     groupId: group.id,
     hasOnAssignClientToScreen: !!onAssignClientToScreen,
     hasOnUnassignClientFromScreen: !!onUnassignClientFromScreen,
@@ -89,11 +89,11 @@ const GroupCard: React.FC<GroupCardProps> = ({
   }
 
   // Custom hooks for state management
-  const { 
-    isExpanded, 
+  const {
+    isExpanded,
     setIsExpanded,
     operationInProgress,
-    setOperationInProgress 
+    setOperationInProgress
   } = useGroupCardState();
 
   const {
@@ -171,7 +171,7 @@ const GroupCard: React.FC<GroupCardProps> = ({
               hasAnyAssignments={hasAnyAssignments}
               onDelete={onDelete}
               onAssignClient={onAssignClient}
-              
+
               // Pass screen assignment props
               onAssignClientToScreen={onAssignClientToScreen}
               onUnassignClientFromScreen={onUnassignClientFromScreen}

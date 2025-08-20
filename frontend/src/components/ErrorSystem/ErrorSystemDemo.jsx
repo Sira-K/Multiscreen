@@ -10,16 +10,16 @@ const ErrorSystemDemo = () => {
     return (
         <div className="error-system-demo">
             <div className="demo-header">
-                <h1>🚨 Error System Demo</h1>
+                <h1> Error System Demo</h1>
                 <p>Welcome to the comprehensive error handling and testing system</p>
             </div>
-            
+
             <div className="demo-content">
                 <ErrorSystemTabs />
             </div>
-            
+
             <div className="demo-footer">
-                <h3>🎯 How to Use This Component</h3>
+                <h3> How to Use This Component</h3>
                 <div className="usage-steps">
                     <div className="step">
                         <span className="step-number">1</span>
@@ -28,7 +28,7 @@ const ErrorSystemDemo = () => {
                             <code>import ErrorSystemTabs from './ErrorSystemTabs';</code>
                         </div>
                     </div>
-                    
+
                     <div className="step">
                         <span className="step-number">2</span>
                         <div className="step-content">
@@ -36,7 +36,7 @@ const ErrorSystemDemo = () => {
                             <code>{'<ErrorSystemTabs />'}</code>
                         </div>
                     </div>
-                    
+
                     <div className="step">
                         <span className="step-number">3</span>
                         <div className="step-content">

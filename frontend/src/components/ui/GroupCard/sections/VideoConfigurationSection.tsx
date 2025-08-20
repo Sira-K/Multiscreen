@@ -39,7 +39,7 @@ const VideoConfigurationSection: React.FC<VideoConfigurationSectionProps> = ({
   if (group.streaming_mode === 'multi_video') {
     return (
       <div className="border rounded-lg overflow-hidden">
-        <div 
+        <div
           className="bg-gray-50 px-3 py-2 flex items-center justify-between cursor-pointer hover:bg-gray-100 transition-colors"
           onClick={() => setShowVideoConfig(!showVideoConfig)}
         >
@@ -74,13 +74,13 @@ const VideoConfigurationSection: React.FC<VideoConfigurationSectionProps> = ({
             )}
           </div>
         </div>
-        
+
         {showVideoConfig && (
           <div className="p-3 border-t bg-white space-y-3">
             <div className="text-xs text-gray-600">
               Assign one video file to each screen. Each screen will display its assigned video.
             </div>
-            
+
             <div className="grid gap-2">
               {videoAssignments.map((assignment, index) => (
                 <div key={index} className="flex items-center gap-2">
@@ -106,19 +106,19 @@ const VideoConfigurationSection: React.FC<VideoConfigurationSectionProps> = ({
                 </div>
               ))}
             </div>
-            
+
             <div className="text-xs text-gray-500">
               Layout: {group.screen_count} screens in {group.orientation} orientation
             </div>
-            
+
             {hasAnyAssignments && (
               <div className="bg-green-50 border border-green-200 rounded p-2">
                 <div className="text-xs text-green-800 font-medium">
-                  ✅ {videoAssignments.filter(a => a.file).length} of {group.screen_count} screens configured
+                  {videoAssignments.filter(a => a.file).length} of {group.screen_count} screens configured
                 </div>
                 {!hasCompleteAssignments && (
                   <div className="text-xs text-green-600 mt-1">
-                    ⚠️ {group.screen_count - videoAssignments.filter(a => a.file).length} screens still need video assignments
+                    {group.screen_count - videoAssignments.filter(a => a.file).length} screens still need video assignments
                   </div>
                 )}
               </div>
@@ -132,7 +132,7 @@ const VideoConfigurationSection: React.FC<VideoConfigurationSectionProps> = ({
   // Single Video Split Mode
   return (
     <div className="border rounded-lg overflow-hidden">
-      <div 
+      <div
         className="bg-gray-50 px-3 py-2 flex items-center justify-between cursor-pointer hover:bg-gray-100 transition-colors"
         onClick={() => setShowVideoConfig(!showVideoConfig)}
       >
@@ -167,14 +167,14 @@ const VideoConfigurationSection: React.FC<VideoConfigurationSectionProps> = ({
           )}
         </div>
       </div>
-      
+
       {showVideoConfig && (
         <div className="p-3 border-t bg-white space-y-3">
           <div className="text-xs text-gray-600">
-            Select one video file that will be automatically split into {group.screen_count} equal sections 
+            Select one video file that will be automatically split into {group.screen_count} equal sections
             and distributed {group.orientation === 'horizontal' ? 'side-by-side' : 'top-to-bottom'} across all screens.
           </div>
-          
+
           <div className="space-y-2">
             <Label className="text-sm font-medium">Video File:</Label>
             <Select
@@ -200,12 +200,12 @@ const VideoConfigurationSection: React.FC<VideoConfigurationSectionProps> = ({
           {selectedVideoFile && (
             <div className="bg-blue-50 p-2 rounded border-l-4 border-blue-400">
               <p className="text-xs text-blue-800">
-                <strong>{selectedVideoFile}</strong> will be automatically cropped into {group.screen_count} equal {group.orientation} sections. 
+                <strong>{selectedVideoFile}</strong> will be automatically cropped into {group.screen_count} equal {group.orientation} sections.
                 Each client will receive their designated section.
               </p>
             </div>
           )}
-          
+
           {selectedVideoFile && (
             <div className="flex gap-2">
               <Button

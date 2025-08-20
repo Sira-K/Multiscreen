@@ -22,18 +22,18 @@ const ClientsTab = () => {
   const loadClients = async (showRefreshing = false) => {
     try {
       if (showRefreshing) setRefreshing(true);
-      console.log('🔄 Loading clients data...');
-      
+      console.log(' Loading clients data...');
+
       const clientsData = await clientApi.getClients();
-      console.log('📋 Raw API response:', clientsData);
-      console.log('📊 All clients:', clientsData.clients);
-      
+      console.log(' Raw API response:', clientsData);
+      console.log(' All clients:', clientsData.clients);
+
       // Filter to only show active/connected clients
       const activeClients = (clientsData.clients || []).filter(client => client.status === 'active');
-      console.log('✅ Active clients only:', activeClients);
-      
+      console.log(' Active clients only:', activeClients);
+
       setClients(activeClients);
-      
+
       if (showRefreshing) {
         showError({
           message: `Clients refreshed successfully. Found ${activeClients.length} active clients (${clientsData.clients?.length || 0} total)`,
@@ -49,7 +49,7 @@ const ClientsTab = () => {
         });
       }
     } catch (error: any) {
-      console.error('❌ Error loading clients:', error);
+      console.error(' Error loading clients:', error);
       showError({
         message: "Failed to load clients",
         error_code: 'CLIENTS_LOAD_FAILED',
@@ -91,14 +91,14 @@ const ClientsTab = () => {
 
     const newClients = [...clients];
     const targetIndex = direction === 'up' ? clientIndex - 1 : clientIndex + 1;
-    
+
     [newClients[clientIndex], newClients[targetIndex]] = [newClients[targetIndex], newClients[clientIndex]];
     setClients(newClients);
   };
 
   const filteredClients = clients.filter(client => {
     if (!searchTerm) return true;
-    
+
     const searchLower = searchTerm.toLowerCase();
     return (
       (client.display_name?.toLowerCase().includes(searchLower)) ||
@@ -110,7 +110,7 @@ const ClientsTab = () => {
 
   // Debug logging
   useEffect(() => {
-    console.log('🔍 ClientsTab state:', {
+    console.log(' ClientsTab state:', {
       loading,
       clientsCount: clients.length,
       filteredCount: filteredClients.length,
@@ -155,7 +155,7 @@ const ClientsTab = () => {
             </Button>
           </div>
         </CardHeader>
-        
+
         <CardContent>
           {/* Search */}
           <div className="mb-6">
@@ -184,16 +184,16 @@ const ClientsTab = () => {
                   {clients.length === 0 ? 'No Active Clients' : 'No Clients Found'}
                 </h3>
                 <p className="text-gray-500">
-                  {searchTerm 
-                    ? 'No active clients match your search criteria.' 
-                    : clients.length === 0 
+                  {searchTerm
+                    ? 'No active clients match your search criteria.'
+                    : clients.length === 0
                       ? 'No clients are currently connected to the server. When clients connect, they will appear here automatically.'
                       : 'All clients are filtered out.'
                   }
                 </p>
                 {clients.length === 0 && (
-                  <Button 
-                    variant="outline" 
+                  <Button
+                    variant="outline"
                     onClick={() => loadClients(true)}
                     className="mt-4"
                   >
@@ -211,7 +211,7 @@ const ClientsTab = () => {
                   <div className="flex items-center gap-4">
                     {/* Always green since we only show connected clients */}
                     <div className="w-3 h-3 rounded-full bg-green-500" />
-                    
+
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <h3 className="font-medium text-gray-900">
@@ -222,7 +222,7 @@ const ClientsTab = () => {
                           Connected
                         </Badge>
                       </div>
-                      
+
                       <div className="flex items-center gap-4 text-sm text-gray-600 mt-1">
                         <span>IP: {client.ip_address}</span>
                         <span>ID: {client.client_id}</span>
@@ -260,7 +260,7 @@ const ClientsTab = () => {
                     >
                       <ArrowUp className="w-4 h-4" />
                     </Button>
-                    
+
                     <Button
                       variant="outline"
                       size="sm"

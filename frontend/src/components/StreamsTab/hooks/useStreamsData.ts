@@ -14,21 +14,21 @@ export const useStreamsData = () => {
   // Load initial data - use useCallback to prevent recreation on every render
   const loadInitialData = useCallback(async () => {
     try {
-      console.log(`🔄 LOADING INITIAL DATA...`);
-      
+      console.log(` LOADING INITIAL DATA...`);
+
       const [groupsData, videosData, clientsData] = await Promise.all([
         groupApi.getGroups(),
         videoApi.getVideos(),
         clientApi.getClients()
       ]);
 
-      console.log(`📊 LOADED DATA:`, {
+      console.log(` LOADED DATA:`, {
         groups: groupsData.groups.length,
         videos: videosData.videos.length,
         clients: clientsData.clients.length
       });
 
-      console.log(`📊 LOADED GROUPS:`, groupsData.groups.map(g => ({
+      console.log(` LOADED GROUPS:`, groupsData.groups.map(g => ({
         id: g.id,
         name: g.name,
         docker_running: g.docker_running,
@@ -36,7 +36,7 @@ export const useStreamsData = () => {
         status: g.status
       })));
 
-      console.log(`📊 LOADED CLIENTS:`, clientsData.clients.map(c => ({
+      console.log(` LOADED CLIENTS:`, clientsData.clients.map(c => ({
         id: c.client_id,
         name: c.display_name || c.hostname,
         group_id: c.group_id,
@@ -48,8 +48,8 @@ export const useStreamsData = () => {
       setClients(clientsData.clients);
 
     } catch (error: any) {
-      console.error('❌ Error loading data:', error);
-      
+      console.error(' Error loading data:', error);
+
       // Enhanced error logging for the error system
       const enhancedError = {
         message: error?.message || 'Failed to load application data',
@@ -63,7 +63,7 @@ export const useStreamsData = () => {
           stack: error?.stack
         }
       };
-      
+
       // Re-throw enhanced error to let parent handle it
       throw enhancedError;
     } finally {
@@ -77,7 +77,7 @@ export const useStreamsData = () => {
     try {
       await loadInitialData();
     } catch (error: any) {
-      console.error('❌ Error refreshing data:', error);
+      console.error(' Error refreshing data:', error);
       // Enhanced error logging for refresh operations
       const enhancedError = {
         message: error?.message || 'Failed to refresh application data',

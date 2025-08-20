@@ -489,7 +489,7 @@ def unassign_client():
             else:
                 # No group, back to waiting
                 client["assignment_status"] = "waiting_for_assignment"
-                logger.info(f"🗑️ Cleared stream assignment for client {client_id}, now waiting_for_assignment")
+                logger.info(f" Cleared stream assignment for client {client_id}, now waiting_for_assignment")
             
             logger.info(f"Cleared stream assignment for client {client_id} (was: {old_stream})")
         elif unassign_type == "screen":
@@ -506,7 +506,7 @@ def unassign_client():
         # Save the updated client
         if hasattr(state, 'add_client'):
             state.add_client(client_id, client)
-            logger.info(f"💾 Client {client_id} updated in state")
+            logger.info(f" Client {client_id} updated in state")
         else:
             logger.warning(f"State object doesn't have add_client method, using direct assignment")
             if hasattr(state, 'clients'):

@@ -480,6 +480,16 @@ def start_multi_video_srt():
         # Generate client URLs
         client_urls = generate_client_urls(srt_ip, srt_port, group_name, base_stream_id, stream_ids, screen_count)
         
+        # Log the stream URLs for easy access
+        logger.info("="*60)
+        logger.info("STREAM URLs:")
+        logger.info(f"Combined Stream: {client_urls['combined']}")
+        for i in range(screen_count):
+            screen_key = f"screen{i}"
+            if screen_key in client_urls:
+                logger.info(f"Screen {i}: {client_urls[screen_key]}")
+        logger.info("="*60)
+        
         # Resolve stream URLs for clients
         try:
             from blueprints.client_management.client_endpoints import resolve_stream_urls_for_group
@@ -504,6 +514,50 @@ def start_multi_video_srt():
         logger.error(f"Error starting reliable streaming: {e}")
         if 'group_id' in locals():
             clear_active_stream_ids(group_id)
+        return jsonify({"error": str(e)}), 500
+
+@multi_stream_bp.route("/get_stream_urls/<group_id>", methods=["GET"])
+def get_stream_urls(group_id: str):
+    """Get stream URLs for a specific group"""
+    try:
+        from blueprints.docker_management import discover_groups
+        discovery_result = discover_groups()
+        
+        if not discovery_result.get("success", False):
+            return jsonify({"error": "Failed to discover groups"}), 500
+        
+        groups = discovery_result.get("groups", [])
+        group = next((g for g in groups if g.get("id") == group_id), None)
+        
+        if not group:
+            return jsonify({"error": f"Group '{group_id}' not found"}), 404
+        
+        group_name = group.get("name", group_id)
+        
+        # Get active stream IDs for this group
+        from blueprints.streaming.stream_management import get_active_stream_ids
+        stream_ids = get_active_stream_ids(group_id)
+        
+        if not stream_ids:
+            return jsonify({"error": "No active streams found for this group"}), 404
+        
+        # Generate URLs
+        srt_ip = "127.0.0.1"
+        srt_port = 10080  # Default port
+        base_stream_id = f"{group_id}_{int(time.time())}"
+        
+        client_urls = generate_client_urls(srt_ip, srt_port, group_name, base_stream_id, stream_ids, len(stream_ids))
+        
+        return jsonify({
+            "success": True,
+            "group_id": group_id,
+            "group_name": group_name,
+            "stream_urls": client_urls,
+            "stream_ids": stream_ids
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting stream URLs: {e}")
         return jsonify({"error": str(e)}), 500
 
 @multi_stream_bp.route("/all_streaming_statuses", methods=["GET"])

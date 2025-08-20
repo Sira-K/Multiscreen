@@ -88,21 +88,21 @@ const ErrorNotification = () => {
 
     const getErrorIcon = (category) => {
         const icons = {
-            '1xx': 'ℹ️',
-            '2xx': '✅',
-            '3xx': '🔄',
-            '4xx': '⚠️',
-            '5xx': '❌',
-            'ffmpeg': '🎬',
-            'srt': '📡',
-            'docker': '🐳',
-            'video': '🎥',
-            'network': '🌐',
-            'validation': '📝',
-            'auth': '🔐',
-            'custom': '💡'
+            '1xx': '',
+            '2xx': '',
+            '3xx': '',
+            '4xx': '',
+            '5xx': '',
+            'ffmpeg': '',
+            'srt': '',
+            'docker': '',
+            'video': '',
+            'network': '',
+            'validation': '',
+            'auth': '',
+            'custom': ''
         };
-        return icons[category] || '❌';
+        return icons[category] || '';
     };
 
     const getErrorColor = (category) => {
@@ -149,7 +149,7 @@ const ErrorNotification = () => {
     if (!isExpanded) {
         return (
             <div className="fixed bottom-4 right-4 z-50 max-w-sm">
-                <div 
+                <div
                     className={`${getErrorColor(currentError.error_category || '5xx')} border rounded-lg shadow-lg p-3 cursor-pointer hover:shadow-xl transition-all duration-200 transform hover:scale-105`}
                     onClick={() => setIsExpanded(true)}
                 >
@@ -175,7 +175,7 @@ const ErrorNotification = () => {
                                 clearError();
                             }}
                         >
-                            ✕
+
                         </button>
                     </div>
                 </div>
@@ -212,7 +212,7 @@ const ErrorNotification = () => {
                                 className="inline-flex items-center justify-center gap-1 whitespace-nowrap rounded text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 h-8 w-8 rounded border border-input bg-background hover:bg-accent hover:text-accent-foreground"
                                 onClick={clearError}
                             >
-                                ✕
+
                             </button>
                         </div>
                     </div>
@@ -321,7 +321,7 @@ const ErrorNotification = () => {
                                         <ul className="text-sm text-gray-600 bg-gray-50 rounded-lg p-3 space-y-2">
                                             {errorDetails.common_causes.map((cause, index) => (
                                                 <li key={index} className="flex items-start">
-                                                    <span className="text-red-500 mr-2 text-sm flex-shrink-0">•</span>
+                                                    <span className="text-red-500 mr-2 text-sm flex-shrink-0"></span>
                                                     <span className="text-sm break-words">{cause}</span>
                                                 </li>
                                             ))}
@@ -344,7 +344,7 @@ const ErrorNotification = () => {
                                         <ul className="text-sm text-gray-600 bg-gray-50 rounded-lg p-3 space-y-2">
                                             {errorDetails.detailed_solutions.map((solution, index) => (
                                                 <li key={index} className="flex items-start">
-                                                    <span className="text-blue-500 mr-2 text-sm flex-shrink-0">•</span>
+                                                    <span className="text-blue-500 mr-2 text-sm flex-shrink-0"></span>
                                                     <span className="text-sm break-words">{solution}</span>
                                                 </li>
                                             ))}

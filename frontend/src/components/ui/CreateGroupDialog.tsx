@@ -48,7 +48,7 @@ const CreateGroupDialog: React.FC<CreateGroupDialogProps> = ({
             Set up a new multi-screen streaming group with Docker container management.
           </DialogDescription>
         </DialogHeader>
-        
+
         <div className="flex-1 overflow-auto px-6 py-4">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-full">
             {/* Left Column */}
@@ -66,7 +66,7 @@ const CreateGroupDialog: React.FC<CreateGroupDialogProps> = ({
                     className="mt-2 text-base h-12"
                   />
                 </div>
-                
+
                 <div>
                   <Label htmlFor="group-description" className="text-base">Description (Optional)</Label>
                   <Input
@@ -82,7 +82,7 @@ const CreateGroupDialog: React.FC<CreateGroupDialogProps> = ({
               {/* Screen Configuration */}
               <div className="space-y-4 border-t pt-6">
                 <h3 className="text-lg font-semibold">Screen Configuration</h3>
-                
+
                 <div>
                   <Label htmlFor="screen-count" className="text-base">Number of Screens</Label>
                   <Select
@@ -101,12 +101,12 @@ const CreateGroupDialog: React.FC<CreateGroupDialogProps> = ({
                     </SelectContent>
                   </Select>
                 </div>
-                
+
                 <div>
                   <Label htmlFor="orientation" className="text-base">Screen Orientation</Label>
                   <Select
                     value={newGroupForm.orientation}
-                    onValueChange={(value: 'horizontal' | 'vertical' | 'grid') => 
+                    onValueChange={(value: 'horizontal' | 'vertical' | 'grid') =>
                       setNewGroupForm(prev => ({ ...prev, orientation: value }))
                     }
                   >
@@ -148,20 +148,19 @@ const CreateGroupDialog: React.FC<CreateGroupDialogProps> = ({
                     Choose how video content will be distributed across screens
                   </p>
                 </div>
-                
+
                 <div className="space-y-4">
                   {/* Multi-Video Mode */}
-                  <div 
-                    className={`p-6 border-2 rounded-xl cursor-pointer transition-all ${
-                      newGroupForm.streaming_mode === 'multi_video' 
-                        ? 'border-blue-500 bg-blue-50 shadow-md' 
-                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                    }`}
+                  <div
+                    className={`p-6 border-2 rounded-xl cursor-pointer transition-all ${newGroupForm.streaming_mode === 'multi_video'
+                      ? 'border-blue-500 bg-blue-50 shadow-md'
+                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                      }`}
                     onClick={() => setNewGroupForm(prev => ({ ...prev, streaming_mode: 'multi_video' }))}
                   >
                     <div className="flex items-start gap-4">
-                      <input 
-                        type="radio" 
+                      <input
+                        type="radio"
                         className="mt-1.5 w-4 h-4"
                         checked={newGroupForm.streaming_mode === 'multi_video'}
                         onChange={() => setNewGroupForm(prev => ({ ...prev, streaming_mode: 'multi_video' }))}
@@ -175,26 +174,25 @@ const CreateGroupDialog: React.FC<CreateGroupDialogProps> = ({
                           Each screen displays different video content. You'll assign a separate video file to each screen.
                         </p>
                         <div className="text-sm text-gray-500 mt-3 space-y-1">
-                          <div>✓ Different content per screen</div>
-                          <div>✓ Maximum flexibility</div>
-                          <div>✓ Independent video files</div>
+                          <div> Different content per screen</div>
+                          <div> Maximum flexibility</div>
+                          <div> Independent video files</div>
                         </div>
                       </div>
                     </div>
                   </div>
 
                   {/* Single Video Split Mode */}
-                  <div 
-                    className={`p-6 border-2 rounded-xl cursor-pointer transition-all ${
-                      newGroupForm.streaming_mode === 'single_video_split' 
-                        ? 'border-blue-500 bg-blue-50 shadow-md' 
-                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                    }`}
+                  <div
+                    className={`p-6 border-2 rounded-xl cursor-pointer transition-all ${newGroupForm.streaming_mode === 'single_video_split'
+                      ? 'border-blue-500 bg-blue-50 shadow-md'
+                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                      }`}
                     onClick={() => setNewGroupForm(prev => ({ ...prev, streaming_mode: 'single_video_split' }))}
                   >
                     <div className="flex items-start gap-4">
-                      <input 
-                        type="radio" 
+                      <input
+                        type="radio"
                         className="mt-1.5 w-4 h-4"
                         checked={newGroupForm.streaming_mode === 'single_video_split'}
                         onChange={() => setNewGroupForm(prev => ({ ...prev, streaming_mode: 'single_video_split' }))}
@@ -208,9 +206,9 @@ const CreateGroupDialog: React.FC<CreateGroupDialogProps> = ({
                           One video is automatically divided into {newGroupForm.screen_count} equal sections across all screens.
                         </p>
                         <div className="text-sm text-gray-500 mt-3 space-y-1">
-                          <div>✓ Single video source</div>
-                          <div>✓ Automatic {newGroupForm.orientation} division</div>
-                          <div>✓ Synchronized playback</div>
+                          <div> Single video source</div>
+                          <div> Automatic {newGroupForm.orientation} division</div>
+                          <div> Synchronized playback</div>
                         </div>
                       </div>
                     </div>
@@ -222,10 +220,10 @@ const CreateGroupDialog: React.FC<CreateGroupDialogProps> = ({
               <div className="bg-gray-50 p-6 rounded-xl border-t-4 border-blue-200">
                 <h4 className="font-semibold mb-3 text-gray-900 text-base">Configuration Preview</h4>
                 <div className="text-base text-gray-600 space-y-2">
-                  <div>• {newGroupForm.screen_count} screens in {newGroupForm.orientation} layout</div>
+                  <div> {newGroupForm.screen_count} screens in {newGroupForm.orientation} layout</div>
                   <div>
-                    • {newGroupForm.streaming_mode === 'multi_video' 
-                      ? `${newGroupForm.screen_count} different videos (one per screen)` 
+                    {newGroupForm.streaming_mode === 'multi_video'
+                      ? `${newGroupForm.screen_count} different videos (one per screen)`
                       : `1 video split into ${newGroupForm.screen_count} sections`}
                   </div>
                 </div>
@@ -233,12 +231,12 @@ const CreateGroupDialog: React.FC<CreateGroupDialogProps> = ({
             </div>
           </div>
         </div>
-        
+
         <DialogFooter className="flex-shrink-0 px-6 py-4 border-t bg-gray-50">"
           <Button variant="outline" size="lg" onClick={() => setShowCreateForm(false)} className="text-base px-8">
             Cancel
           </Button>
-          <Button 
+          <Button
             size="lg"
             onClick={createGroup}
             disabled={operationInProgress === 'create' || !newGroupForm.name.trim()}

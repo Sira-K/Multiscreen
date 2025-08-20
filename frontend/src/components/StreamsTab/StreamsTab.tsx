@@ -20,7 +20,7 @@ import { useClientAssignment } from './hooks/useClientAssignment';
 const StreamsTab = () => {
   const { showError, showErrorByCode, handleApiError } = useErrorHandler();
   const hasInitialized = useRef(false); // Prevent multiple initializations
-  
+
   // State management using custom hooks
   const {
     groups,
@@ -51,7 +51,7 @@ const StreamsTab = () => {
     getUnassignedClients,
     getClientsForGroup,
     handleAssignClient,
-    // 🆕 Screen assignment functions
+    //  Screen assignment functions
     getClientsWithScreenAssignments,
     handleAssignClientToScreen,
     handleUnassignClientFromScreen,
@@ -62,14 +62,14 @@ const StreamsTab = () => {
   // Initial load with proper error handling - ONLY ONCE
   useEffect(() => {
     if (hasInitialized.current) return; // Prevent multiple calls
-    
+
     const initializeData = async () => {
       try {
         hasInitialized.current = true;
         await loadInitialData();
       } catch (error: any) {
-        console.error('❌ Error loading initial data:', error);
-        
+        console.error(' Error loading initial data:', error);
+
         // Use the enhanced error system with showErrorByCode
         showErrorByCode('DATA_LOAD_FAILED', {
           component: 'StreamsTab',
@@ -87,8 +87,8 @@ const StreamsTab = () => {
   // Debug effect to monitor streaming status changes - THROTTLED
   useEffect(() => {
     const timer = setTimeout(() => {
-      console.log('🔍 Current streaming status:', streamingStatus);
-      console.log('🔍 Groups and their status:', groups.map(g => ({
+      console.log(' Current streaming status:', streamingStatus);
+      console.log(' Groups and their status:', groups.map(g => ({
         id: g.id,
         name: g.name,
         status: streamingStatus[g.id]
@@ -101,9 +101,9 @@ const StreamsTab = () => {
   // Debug effect for client data - THROTTLED
   useEffect(() => {
     const timer = setTimeout(() => {
-      console.log('🔍 Current clients state:', clients);
-      console.log('🔍 Unassigned clients:', getUnassignedClients());
-      console.log('🔍 Client group assignments:', clients.map(c => ({
+      console.log(' Current clients state:', clients);
+      console.log(' Unassigned clients:', getUnassignedClients());
+      console.log(' Client group assignments:', clients.map(c => ({
         id: c.client_id,
         name: c.display_name || c.hostname,
         group_id: c.group_id,
@@ -158,14 +158,14 @@ const StreamsTab = () => {
         getUnassignedClients={getUnassignedClients}
         getClientsForGroup={getClientsForGroup}
         handleAssignClient={handleAssignClient}
-        
-        // 🆕 Screen assignment functions
+
+        //  Screen assignment functions
         getClientsWithScreenAssignments={getClientsWithScreenAssignments}
         handleAssignClientToScreen={handleAssignClientToScreen}
         handleUnassignClientFromScreen={handleUnassignClientFromScreen}
         handleAutoAssignScreens={handleAutoAssignScreens}
         getScreenAssignments={getScreenAssignments}
-        
+
         deleteGroup={deleteGroup}
         handleStreamingStatusChange={handleStreamingStatusChange}
         refreshData={refreshData}

@@ -355,7 +355,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🔍 Error Lookup System</h1>
+            <h1>Error Lookup System</h1>
             <p>Comprehensive error handling for Multi-Screen SRT Streaming System</p>
         </div>
 
@@ -424,7 +424,7 @@
         function displayQuickReference(errors) {
             const container = document.getElementById('quickReference');
             let html = '<div class="quick-reference">';
-            html += '<h3>📋 Error Code Quick Reference</h3>';
+            html += '<h3>Error Code Quick Reference</h3>';
 
             for (const [category, categoryErrors] of Object.entries(errors)) {
                 if (currentCategory === 'all' || category === currentCategory) {
@@ -505,7 +505,7 @@
             }
 
             let html = '<div class="error-display">';
-            html += `<h2>🔍 Search Results for "${data.search_query}"</h2>`;
+            html += `<h2>Search Results for "${data.search_query}"</h2>`;
             html += `<p>Found ${data.total_matches} matching error(s)</p>`;
 
             for (const [category, categoryErrors] of Object.entries(data.matching_errors)) {
@@ -560,7 +560,7 @@
 
             // Common causes
             html += '<div class="detail-card">';
-            html += '<h3>🚨 Common Causes</h3>';
+            html += '<h3>Common Causes</h3>';
             html += '<ul>';
             errorDetails.common_causes.forEach(cause => {
                 html += `<li>${cause}</li>`;
@@ -569,14 +569,14 @@
 
             // Primary solution
             html += '<div class="detail-card">';
-            html += '<h3>✅ Primary Solution</h3>';
+            html += '<h3>Primary Solution</h3>';
             html += `<p>${errorDetails.primary_solution}</p>`;
             html += '</div>';
 
             // Detailed solutions
             if (errorDetails.detailed_solutions) {
                 html += '<div class="detail-card">';
-                html += '<h3>🔧 Detailed Solutions</h3>';
+                html += '<h3>Detailed Solutions</h3>';
                 html += '<ul>';
                 errorDetails.detailed_solutions.forEach(solution => {
                     html += `<li>${solution}</li>`;
@@ -589,7 +589,7 @@
             // Troubleshooting steps
             if (errorDetails.troubleshooting_steps) {
                 html += '<div class="troubleshooting">';
-                html += '<h3>🛠️ Troubleshooting Steps</h3>';
+                html += '<h3>Troubleshooting Steps</h3>';
                 html += '<div class="troubleshooting-steps">';
 
                 for (const [stepType, steps] of Object.entries(errorDetails.troubleshooting_steps)) {
@@ -642,13 +642,13 @@
             const container = document.getElementById('quickReference');
             const helpHtml = `
                 <div class="help-section">
-                    <h3>💡 How to Use This System</h3>
+                    <h3>How to Use This System</h3>
                     <ul class="help-tips">
-                        <li>🔍 <strong>Search:</strong> Use the search box to find errors by keywords</li>
-                        <li>📋 <strong>Browse:</strong> Click on category buttons to filter errors</li>
-                        <li>ℹ️ <strong>Details:</strong> Click on any error code to get detailed information</li>
-                        <li>🛠️ <strong>Troubleshooting:</strong> Follow the step-by-step solutions provided</li>
-                        <li>📞 <strong>Support:</strong> Contact support with the error code if issues persist</li>
+                        <li>Search: Use the search box to find errors by keywords</li>
+                        <li>Browse: Click on category buttons to filter errors</li>
+                        <li>Details: Click on any error code to get detailed information</li>
+                        <li>Troubleshooting: Follow the step-by-step solutions provided</li>
+                        <li>Support: Contact support with the error code if issues persist</li>
                     </ul>
                 </div>
             `;

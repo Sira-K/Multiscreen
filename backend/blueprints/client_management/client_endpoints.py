@@ -25,24 +25,24 @@ def log_function_call(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         func_name = func.__name__
-        logger.info(f"🚀 {func_name} called with args={args}, kwargs={kwargs}")
+        logger.info(f" {func_name} called with args={args}, kwargs={kwargs}")
         
         start_time = time.time()
         try:
             result = func(*args, **kwargs)
             execution_time = (time.time() - start_time) * 1000
-            logger.info(f"✅ {func_name} completed successfully in {execution_time:.1f}ms")
+            logger.info(f" {func_name} completed successfully in {execution_time:.1f}ms")
             return result
         except Exception as e:
             execution_time = (time.time() - start_time) * 1000
-            logger.error(f"❌ {func_name} failed after {execution_time:.1f}ms with error: {e}")
-            logger.error(f"📊 Error type: {type(e).__name__}")
-            logger.error(f"🔍 Full traceback:\n{traceback.format_exc()}")
+            logger.error(f" {func_name} failed after {execution_time:.1f}ms with error: {e}")
+            logger.error(f" Error type: {type(e).__name__}")
+            logger.error(f" Full traceback:\n{traceback.format_exc()}")
             
             # Log system state for debugging
             try:
                 import psutil
-                logger.error(f"💻 System state at error in {func_name}:")
+                logger.error(f" System state at error in {func_name}:")
                 logger.error(f"   CPU: {psutil.cpu_percent(interval=1):.1f}%")
                 logger.error(f"   Memory: {psutil.virtual_memory().percent:.1f}%")
                 logger.error(f"   Disk: {psutil.disk_usage('/').percent:.1f}%")
@@ -446,14 +446,14 @@ def wait_for_assignment():
         assignment_status = client.get("assignment_status", "waiting_for_assignment")
         group_id = client.get("group_id")
         
-        logger.info(f"🔍 Client {client_id} checking assignment:")
+        logger.info(f" Client {client_id} checking assignment:")
         logger.info(f"   - Assignment status: {assignment_status}")
         logger.info(f"   - Group ID: {group_id}")
         logger.info(f"   - Full client data: {client}")
         
         # Case 1: Waiting for group assignment
         if assignment_status == "waiting_for_assignment" or not group_id:
-            logger.info(f"❌ Client {client_id} is waiting for group assignment or has no group")
+            logger.info(f" Client {client_id} is waiting for group assignment or has no group")
             return jsonify({
                 "success": False,
                 "status": "waiting_for_assignment",
@@ -502,7 +502,7 @@ def wait_for_assignment():
         
         # Case 2: Group assigned but no stream assignment
         if assignment_status == "group_assigned":
-            logger.info(f"❌ Client {client_id} has group but no stream/screen assignment")
+            logger.info(f" Client {client_id} has group but no stream/screen assignment")
             return jsonify({
                 "success": False,
                 "status": "waiting_for_stream_assignment",
@@ -514,7 +514,7 @@ def wait_for_assignment():
         
         # Case 3: Stream or screen assigned - check if streaming
         if assignment_status in ["stream_assigned", "screen_assigned"]:
-            logger.info(f"✅ Client {client_id} has stream/screen assignment, checking streaming status")
+            logger.info(f" Client {client_id} has stream/screen assignment, checking streaming status")
             # Check if group is streaming
             container_id = group.get("container_id")
             
@@ -526,7 +526,7 @@ def wait_for_assignment():
                 from ..streaming.split_stream import find_running_ffmpeg_for_group_strict
                 processes = find_running_ffmpeg_for_group_strict(group_id, group_name, group.get("container_id"))
                 is_streaming = len(processes) > 0
-                logger.info(f"🔍 FFmpeg check for group {group_name}: {len(processes)} processes found, is_streaming={is_streaming}")
+                logger.info(f" FFmpeg check for group {group_name}: {len(processes)} processes found, is_streaming={is_streaming}")
             except ImportError as e:
                 logger.warning(f"Import error checking streaming status: {e}")
                 # Try alternative import path
@@ -534,7 +534,7 @@ def wait_for_assignment():
                     from ..streaming.multi_stream import find_running_ffmpeg_for_group_strict
                     processes = find_running_ffmpeg_for_group_strict(group_id, group_name, group.get("container_id"))
                     is_streaming = len(processes) > 0
-                    logger.info(f"🔍 FFmpeg check (alt import) for group {group_name}: {len(processes)} processes found, is_streaming={is_streaming}")
+                    logger.info(f" FFmpeg check (alt import) for group {group_name}: {len(processes)} processes found, is_streaming={is_streaming}")
                 except ImportError as e2:
                     logger.warning(f"Both streaming imports failed, using fallback: {e2}")
                     # Fallback function if import fails
@@ -543,7 +543,7 @@ def wait_for_assignment():
                         return []
                     processes = find_running_ffmpeg_for_group_strict(group_id, group_name, group.get("container_id"))
                     is_streaming = len(processes) > 0
-                    logger.info(f"🔍 FFmpeg check (fallback) for group {group_name}: {len(processes)} processes found, is_streaming={is_streaming}")
+                    logger.info(f" FFmpeg check (fallback) for group {group_name}: {len(processes)} processes found, is_streaming={is_streaming}")
             except Exception as e:
                 logger.error(f"Error checking streaming status: {e}")
                 is_streaming = False
@@ -569,12 +569,12 @@ def wait_for_assignment():
             try:
                 from ..streaming.multi_stream import get_active_stream_ids
                 current_stream_ids = get_active_stream_ids(group_id)
-                logger.info(f"🔍 Current active stream IDs: {current_stream_ids}")
+                logger.info(f" Current active stream IDs: {current_stream_ids}")
             except ImportError:
                 try:
                     from ..streaming.split_stream import get_active_stream_ids
                     current_stream_ids = get_active_stream_ids(group_id)
-                    logger.info(f"🔍 Current active stream IDs (split): {current_stream_ids}")
+                    logger.info(f" Current active stream IDs (split): {current_stream_ids}")
                 except ImportError:
                     logger.warning("Could not import streaming modules to get active stream IDs")
                     current_stream_ids = {}
@@ -587,11 +587,11 @@ def wait_for_assignment():
                     if current_stream_ids and f"test{screen_number}" in current_stream_ids:
                         # Use the actual current stream ID from FFmpeg
                         actual_stream_id = current_stream_ids[f"test{screen_number}"]
-                        logger.info(f"✅ Using current active stream ID for screen {screen_number}: {actual_stream_id}")
+                        logger.info(f" Using current active stream ID for screen {screen_number}: {actual_stream_id}")
                     else:
                         # Fallback to screen-based ID
                         actual_stream_id = f"screen{screen_number}"
-                        logger.warning(f"⚠️ No current stream ID found, using fallback: {actual_stream_id}")
+                        logger.warning(f" No current stream ID found, using fallback: {actual_stream_id}")
                 else:
                     # For stream assignment, use the assigned stream
                     actual_stream_id = client.get("stream_assignment", "default")
@@ -625,7 +625,7 @@ def wait_for_assignment():
             }), 200
         
         # Unknown status
-        logger.warning(f"⚠️ Client {client_id} has unknown assignment status: {assignment_status}")
+        logger.warning(f" Client {client_id} has unknown assignment status: {assignment_status}")
         return jsonify({
             "success": False,
             "status": "unknown",
@@ -704,7 +704,7 @@ def unassign_client_from_screen():
                 "unassigned_at": time.time()
             })
         
-        logger.info(f"✅ Unassigned client {client_id} from screen {old_screen_number} in group {old_group_id}")
+        logger.info(f" Unassigned client {client_id} from screen {old_screen_number} in group {old_group_id}")
         
         return jsonify({
             "success": True,
@@ -784,7 +784,7 @@ def unassign_client_from_stream():
                 "unassigned_at": time.time()
             })
         
-        logger.info(f"✅ Unassigned client {client_id} from stream {old_stream} in group {old_group_id}")
+        logger.info(f" Unassigned client {client_id} from stream {old_stream} in group {old_group_id}")
         
         return jsonify({
             "success": True,
@@ -812,7 +812,7 @@ def resolve_stream_urls_for_group(group_id: str, group_name: str):
     Ensures all clients get properly formatted stream URLs
     """
     try:
-        logger.info(f"🔄 Resolving stream URLs for all clients assigned to group {group_name}")
+        logger.info(f" Resolving stream URLs for all clients assigned to group {group_name}")
         
         state = get_state()
         all_clients = state.get_all_clients() if hasattr(state, 'get_all_clients') else state.clients
@@ -848,12 +848,12 @@ def resolve_stream_urls_for_group(group_id: str, group_name: str):
             
             active_stream_ids = get_active_stream_ids(group_id)
             if active_stream_ids:
-                logger.info(f"✅ Using active stream IDs: {active_stream_ids}")
+                logger.info(f" Using active stream IDs: {active_stream_ids}")
             else:
                 # Fallback: try group metadata
                 active_stream_ids = group.get("stream_ids", {})
                 if active_stream_ids:
-                    logger.info(f"⚠️ Using group metadata stream IDs: {active_stream_ids}")
+                    logger.info(f" Using group metadata stream IDs: {active_stream_ids}")
                 else:
                     # Last resort: generate stream IDs
                     try:
@@ -877,7 +877,7 @@ def resolve_stream_urls_for_group(group_id: str, group_name: str):
                                 return stream_ids
                     screen_count = group.get("screen_count", 2)
                     active_stream_ids = generate_stream_ids(group_id, group_name, screen_count)
-                    logger.info(f"⚠️ Generated fallback stream IDs: {active_stream_ids}")
+                    logger.info(f" Generated fallback stream IDs: {active_stream_ids}")
         except Exception as e:
             logger.error(f"Error getting active stream IDs: {e}")
             return
@@ -903,11 +903,11 @@ def resolve_stream_urls_for_group(group_id: str, group_name: str):
                     else:
                         state.clients[client_id] = client
                     
-                    logger.info(f"✅ Resolved URL for client {client_id} → screen {screen_number} → {stream_id}")
+                    logger.info(f" Resolved URL for client {client_id}  screen {screen_number}  {stream_id}")
                     logger.info(f"   Full URL: {stream_url}")
                     updated_count += 1
         
-        logger.info(f"🎯 Resolved stream URLs for {updated_count}/{len(group_clients)} clients in group {group_name}")
+        logger.info(f" Resolved stream URLs for {updated_count}/{len(group_clients)} clients in group {group_name}")
         
     except Exception as e:
         logger.error(f"Error resolving stream URLs for group {group_name}: {e}")

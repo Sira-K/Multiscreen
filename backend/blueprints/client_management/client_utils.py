@@ -54,8 +54,8 @@ def build_stream_url(group: Dict[str, Any], stream_id: str, group_name: str, srt
     ports = group.get("ports", {})
     srt_port = ports.get("srt_port", 10100)  # Default to 10100 from your logs
     
-    logger.info(f"🔍 Building stream URL for stream_id: {stream_id}, group: {group_name}")
-    logger.info(f"🔍 Group ports: {ports}")
+    logger.info(f" Building stream URL for stream_id: {stream_id}, group: {group_name}")
+    logger.info(f" Group ports: {ports}")
     
     # Try to get active stream IDs first
     try:
@@ -71,16 +71,16 @@ def build_stream_url(group: Dict[str, Any], stream_id: str, group_name: str, srt
                     return {}
         active_stream_ids = get_active_stream_ids(group.get("id", "unknown"))
         if active_stream_ids:
-            logger.info(f"✅ Found active stream IDs: {active_stream_ids}")
+            logger.info(f" Found active stream IDs: {active_stream_ids}")
             actual_stream_ids = active_stream_ids
         else:
-            logger.info(f"⚠️ No active stream IDs found, trying group metadata")
+            logger.info(f" No active stream IDs found, trying group metadata")
             actual_stream_ids = group.get("stream_ids", {})
     except Exception as e:
         logger.warning(f"Could not get active stream IDs: {e}")
         actual_stream_ids = group.get("stream_ids", {})
     
-    logger.info(f"🔍 Available stream IDs: {actual_stream_ids}")
+    logger.info(f" Available stream IDs: {actual_stream_ids}")
     
     # For screen assignments, map to the correct stream ID
     if stream_id.startswith("screen"):
@@ -90,7 +90,7 @@ def build_stream_url(group: Dict[str, Any], stream_id: str, group_name: str, srt
         if screen_key in actual_stream_ids:
             # Use the actual stream ID from active streaming or group metadata
             actual_stream_id = actual_stream_ids[screen_key]
-            logger.info(f"✅ Using actual stream ID for screen {screen_num}: {actual_stream_id}")
+            logger.info(f" Using actual stream ID for screen {screen_num}: {actual_stream_id}")
         else:
             # Fallback: try to generate stream IDs if not available
             try:
@@ -117,15 +117,15 @@ def build_stream_url(group: Dict[str, Any], stream_id: str, group_name: str, srt
                 fallback_ids = generate_stream_ids(group.get("id", "unknown"), group_name, screen_count)
                 if screen_key in fallback_ids:
                     actual_stream_id = fallback_ids[screen_key]
-                    logger.info(f"⚠️ Using generated stream ID for screen {screen_num}: {actual_stream_id}")
+                    logger.info(f" Using generated stream ID for screen {screen_num}: {actual_stream_id}")
                 else:
                     # Last resort: use a predictable fallback
                     actual_stream_id = f"screen{screen_num}_{group_name}"
-                    logger.warning(f"⚠️ Using fallback stream ID for screen {screen_num}: {actual_stream_id}")
+                    logger.warning(f" Using fallback stream ID for screen {screen_num}: {actual_stream_id}")
             except Exception as e:
                 logger.error(f"Error generating fallback stream IDs: {e}")
                 actual_stream_id = f"screen{screen_num}_{group_name}"
-                logger.warning(f"⚠️ Using emergency fallback stream ID: {actual_stream_id}")
+                logger.warning(f" Using emergency fallback stream ID: {actual_stream_id}")
     else:
         # For direct stream assignments, use the stream_id as is
         actual_stream_id = stream_id
@@ -133,7 +133,7 @@ def build_stream_url(group: Dict[str, Any], stream_id: str, group_name: str, srt
     stream_path = f"live/{group_name}/{actual_stream_id}"
     stream_url = f"srt://{srt_ip}:{srt_port}?streamid=#!::r={stream_path},m=request,latency=5000000"
     
-    logger.info(f"✅ Built stream URL: {stream_url}")
+    logger.info(f" Built stream URL: {stream_url}")
     return stream_url
 
 def check_screen_availability(
@@ -259,7 +259,7 @@ def get_persistent_streams_for_group(group_id: str, group_name: str, split_count
         stream_ids = group.get("stream_ids", {})
         
         if stream_ids:
-            logger.info(f"✅ Using pre-generated stream IDs from group creation: {stream_ids}")
+            logger.info(f" Using pre-generated stream IDs from group creation: {stream_ids}")
             return stream_ids
         else:
             logger.warning(f"No pre-generated stream IDs found for group {group_name}")

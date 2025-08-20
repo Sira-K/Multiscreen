@@ -10,29 +10,29 @@ export const useStreamingStatus = (groups: Group[]) => {
   // Load streaming statuses for all groups
   const loadStreamingStatuses = async (groupsList: Group[]) => {
     try {
-      console.log(`🔄 LOADING STREAMING STATUSES for ${groupsList.length} groups...`);
-      
+      console.log(` LOADING STREAMING STATUSES for ${groupsList.length} groups...`);
+
       // Initialize all groups with false status first
       const initialStatuses: { [groupId: string]: boolean } = {};
       groupsList.forEach(group => {
         initialStatuses[group.id] = false;
       });
-      
-      console.log(`📊 INITIAL STREAMING STATUS:`, initialStatuses);
+
+      console.log(` INITIAL STREAMING STATUS:`, initialStatuses);
       setStreamingStatus(initialStatuses);
-      
+
       // Try to get all statuses at once
       try {
         const statusData = await groupApi.getAllStreamingStatuses();
-        console.log(`📊 API getAllStreamingStatuses response:`, statusData);
-        
+        console.log(` API getAllStreamingStatuses response:`, statusData);
+
         const statuses: { [groupId: string]: boolean } = {};
         const rawStatuses = statusData.streaming_statuses || {};
-        
+
         // Process each group's status
         groupsList.forEach(group => {
           const rawStatus = rawStatuses[group.id];
-          
+
           // IMPORTANT: Extract boolean from object if needed
           let isStreaming = false;
           if (typeof rawStatus === 'boolean') {
@@ -40,30 +40,30 @@ export const useStreamingStatus = (groups: Group[]) => {
           } else if (typeof rawStatus === 'object' && rawStatus !== null) {
             isStreaming = (rawStatus as any).is_streaming || false; // Type assertion for API objects
           }
-          
+
           statuses[group.id] = isStreaming;
-          
-          console.log(`📊 Group ${group.name} status processing:`, {
+
+          console.log(` Group ${group.name} status processing:`, {
             groupId: group.id,
             rawStatus: rawStatus,
             extractedBoolean: isStreaming
           });
         });
-        
-        console.log(`📊 FINAL BOOLEAN STREAMING STATUSES:`, statuses);
+
+        console.log(` FINAL BOOLEAN STREAMING STATUSES:`, statuses);
         setStreamingStatus(statuses);
-        
+
       } catch (getAllError) {
-        console.log(`⚠️ getAllStreamingStatuses failed, checking individually:`, getAllError);
-        
+        console.log(` getAllStreamingStatuses failed, checking individually:`, getAllError);
+
         // Fallback: check each group individually
         const statuses: { [groupId: string]: boolean } = {};
-        
+
         for (const group of groupsList) {
           try {
             const status = await groupApi.getStreamingStatus(group.id);
-            console.log(`📊 Individual status for ${group.name}:`, status);
-            
+            console.log(` Individual status for ${group.name}:`, status);
+
             // IMPORTANT: Extract boolean from response
             let isStreaming = false;
             if (typeof status === 'boolean') {
@@ -71,21 +71,21 @@ export const useStreamingStatus = (groups: Group[]) => {
             } else if (typeof status === 'object' && status !== null) {
               isStreaming = (status as any).is_streaming || false; // Type assertion for API objects
             }
-            
+
             statuses[group.id] = isStreaming;
-            
+
           } catch (error) {
-            console.log(`⚠️ Failed to get status for ${group.name}, defaulting to false`);
+            console.log(` Failed to get status for ${group.name}, defaulting to false`);
             statuses[group.id] = false;
           }
         }
-        
-        console.log(`📊 FALLBACK BOOLEAN STREAMING STATUSES:`, statuses);
+
+        console.log(` FALLBACK BOOLEAN STREAMING STATUSES:`, statuses);
         setStreamingStatus(statuses);
       }
-      
+
     } catch (error) {
-      console.error('❌ Error loading streaming statuses:', error);
+      console.error(' Error loading streaming statuses:', error);
       // Set all to false as fallback
       const fallbackStatuses: { [groupId: string]: boolean } = {};
       groupsList.forEach(group => {
@@ -97,23 +97,23 @@ export const useStreamingStatus = (groups: Group[]) => {
 
   // Handle streaming status change (called by GroupCard)
   const handleStreamingStatusChange = (groupId: string, isStreaming: boolean) => {
-    console.log(`📡 STREAMING STATUS CHANGE:`, {
+    console.log(` STREAMING STATUS CHANGE:`, {
       groupId,
       isStreaming,
       type: typeof isStreaming,
       oldStatus: streamingStatus[groupId]
     });
-    
+
     // Ensure we always store a boolean
     const booleanStatus = Boolean(isStreaming);
-    
+
     setStreamingStatus(prev => {
       const newStatus = {
         ...prev,
         [groupId]: booleanStatus  // Force boolean
       };
-      
-      console.log(`📊 UPDATED STREAMING STATUS:`, newStatus);
+
+      console.log(` UPDATED STREAMING STATUS:`, newStatus);
       return newStatus;
     });
   };

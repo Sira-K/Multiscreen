@@ -112,22 +112,22 @@ const VideoFilesTab = () => {
     const supportedFormats = ['mp4', 'avi', 'mov', 'mkv', 'webm'];
     const maxSize = 2 * 1024 * 1024 * 1024; // 2GB
     const fileExtension = file.name.split('.').pop()?.toLowerCase();
-    
+
     if (!fileExtension || !supportedFormats.includes(fileExtension)) {
       return { valid: false, error: 'Unsupported format' };
     }
-    
+
     if (file.size > maxSize) {
       return { valid: false, error: 'File too large (max 2GB)' };
     }
-    
+
     return { valid: true };
   };
 
   const handleSequentialUpload = async (validFiles: File[]) => {
     try {
-      console.log(`⬆️ Starting sequential upload of ${validFiles.length} files`);
-      
+      console.log(` Starting sequential upload of ${validFiles.length} files`);
+
       // Check if videoApi exists
       if (!videoApi?.uploadVideo) {
         throw new Error("Video upload API not available");
@@ -146,12 +146,12 @@ const VideoFilesTab = () => {
         // Find the current file being uploaded
         const currentFile = validFiles[progress.currentFileIndex];
         const currentFileId = fileUploadMapRef.current.get(currentFile);
-        
+
         if (currentFileId) {
           // Update upload progress
           setUploadingFiles(prev => {
             const newState = { ...prev };
-            
+
             // Reset all files to not current
             Object.keys(newState).forEach(fileId => {
               newState[fileId] = {
@@ -159,7 +159,7 @@ const VideoFilesTab = () => {
                 isCurrentFile: false
               };
             });
-            
+
             // Update current file
             newState[currentFileId] = {
               ...newState[currentFileId],
@@ -167,15 +167,15 @@ const VideoFilesTab = () => {
               status: progress.currentFileProgress === 100 ? 'processing' : 'uploading',
               isCurrentFile: true
             };
-            
+
             return newState;
           });
         }
 
-        console.log(`📊 Overall: ${progress.overallProgress.toFixed(1)}% | Current: ${progress.currentFile} (${progress.currentFileProgress.toFixed(1)}%)`);
+        console.log(` Overall: ${progress.overallProgress.toFixed(1)}% | Current: ${progress.currentFile} (${progress.currentFileProgress.toFixed(1)}%)`);
       }) as UploadResponse;
 
-      console.log(`✅ Sequential upload complete:`, response);
+      console.log(` Sequential upload complete:`, response);
 
       // Process successful uploads
       if (response.successful && response.successful.length > 0) {
@@ -206,7 +206,7 @@ const VideoFilesTab = () => {
               uploadDate: new Date().toISOString().split('T')[0],
               status: 'ready'
             };
-            
+
             setVideoFiles(prev => [newVideo, ...prev]);
 
             // Remove from upload tracking after delay
@@ -252,7 +252,7 @@ const VideoFilesTab = () => {
 
       // Summary toast and cleanup
       const { successful, failed, total } = response.summary;
-      
+
       if (total > 1) {
         showError({
           message: `Upload Complete: ${successful}/${total} files uploaded successfully${failed > 0 ? `, ${failed} failed` : ''} in ${response.timing.total_time_seconds}s`,
@@ -282,15 +282,15 @@ const VideoFilesTab = () => {
         });
       }
 
-      console.log(`📊 Upload Summary: ${successful}/${total} successful in ${response.timing.total_time_seconds}s`);
+      console.log(` Upload Summary: ${successful}/${total} successful in ${response.timing.total_time_seconds}s`);
 
       // Reset progress tracking
       setOverallProgress(0);
       setCurrentUploadInfo(null);
 
     } catch (error: any) {
-      console.error(`❌ Sequential upload failed:`, error);
-      
+      console.error(` Sequential upload failed:`, error);
+
       // Mark all files as failed
       validFiles.forEach(file => {
         const fileId = fileUploadMapRef.current.get(file);
@@ -329,7 +329,7 @@ const VideoFilesTab = () => {
           stack: error.stack
         }
       });
-      
+
       handleApiError({
         message: error.message || "All uploads failed",
         error_code: 'FILE_UPLOAD_FAILED',
@@ -353,7 +353,7 @@ const VideoFilesTab = () => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
 
-    console.log(`📁 Starting upload of ${files.length} file(s)`);
+    console.log(` Starting upload of ${files.length} file(s)`);
 
     // Validate files
     const validFiles: File[] = [];
@@ -388,7 +388,7 @@ const VideoFilesTab = () => {
     // Initialize upload tracking
     fileUploadMapRef.current.clear();
     const initialUploadStates: Record<string, UploadingFile> = {};
-    
+
     validFiles.forEach((file, index) => {
       const fileId = generateFileId(file, index);
       fileUploadMapRef.current.set(file, fileId);
@@ -425,8 +425,8 @@ const VideoFilesTab = () => {
   };
 
   const removeVideo = async (videoId: string, videoName: string) => {
-    console.log(`🗑️ Attempting to delete video: ${videoName}`);
-    
+    console.log(` Attempting to delete video: ${videoName}`);
+
     try {
       if (!videoApi?.deleteVideo) {
         throw new Error("Delete API not available");
@@ -434,11 +434,11 @@ const VideoFilesTab = () => {
 
       const response = await videoApi.deleteVideo(videoName);
       console.log('Delete response:', response);
-      
+
       if (response?.success) {
         // Remove from local state
         setVideoFiles(prev => prev.filter(v => v.id !== videoId));
-        
+
         showError({
           message: `${videoName} has been deleted successfully.`,
           error_code: 'VIDEO_DELETED',
@@ -451,16 +451,16 @@ const VideoFilesTab = () => {
             timestamp: new Date().toISOString()
           }
         });
-        
+
       } else {
         throw new Error(response?.message || 'Failed to delete video - unknown error');
       }
-      
+
     } catch (error: any) {
-      console.error(`❌ Delete failed for ${videoName}:`, error);
-      
+      console.error(` Delete failed for ${videoName}:`, error);
+
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      
+
       // Use error system for better error handling
       showError({
         message: `Failed to delete ${videoName}: ${errorMessage}`,
@@ -476,7 +476,7 @@ const VideoFilesTab = () => {
           stack: error?.stack
         }
       });
-      
+
       handleApiError({
         message: `Failed to delete ${videoName}: ${errorMessage}`,
         error_code: 'VIDEO_DELETION_FAILED',
@@ -496,16 +496,16 @@ const VideoFilesTab = () => {
 
   const fetchVideos = async () => {
     try {
-      console.log('📋 Fetching videos from server...');
-      
+      console.log(' Fetching videos from server...');
+
       if (!videoApi?.getVideos) {
-        console.warn('⚠️ videoApi.getVideos not available');
+        console.warn(' videoApi.getVideos not available');
         setVideoFiles([]);
         return;
       }
 
       const response = await videoApi.getVideos() as VideosResponse;
-      
+
       if (Array.isArray(response.videos)) {
         const transformedVideos: VideoFile[] = response.videos.map((video: any, index: number) => ({
           id: video.id || `${video.name}-${index}`,
@@ -517,16 +517,16 @@ const VideoFilesTab = () => {
           uploadDate: video.upload_date || new Date().toISOString().split('T')[0],
           status: 'ready' as const
         }));
-        
+
         setVideoFiles(transformedVideos);
-        console.log(`✅ Loaded ${transformedVideos.length} videos`);
+        console.log(` Loaded ${transformedVideos.length} videos`);
       } else {
-        console.log('📭 No videos found or invalid response structure');
+        console.log(' No videos found or invalid response structure');
         setVideoFiles([]);
       }
     } catch (error: any) {
-      console.error('❌ Error fetching videos:', error);
-      
+      console.error(' Error fetching videos:', error);
+
       // Use error system for better error handling
       showError({
         message: "Failed to load videos. Please check your connection.",
@@ -540,7 +540,7 @@ const VideoFilesTab = () => {
           stack: error?.stack
         }
       });
-      
+
       handleApiError({
         message: "Failed to load videos. Please check your connection.",
         error_code: 'VIDEO_FETCH_FAILED',
@@ -580,7 +580,7 @@ const VideoFilesTab = () => {
 
   const getStatusBadge = (status: VideoFile['status']) => {
     const baseClasses = "flex items-center gap-1";
-    
+
     switch (status) {
       case 'ready':
         return (
@@ -619,7 +619,7 @@ const VideoFilesTab = () => {
       await fetchVideos();
       setIsLoadingVideos(false);
     };
-    
+
     loadInitialVideos();
   }, []);
 
@@ -679,7 +679,7 @@ const VideoFilesTab = () => {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            <div 
+            <div
               className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-gray-400 transition-colors cursor-pointer"
               onClick={triggerFileUpload}
             >
@@ -716,18 +716,17 @@ const VideoFilesTab = () => {
             {activeUploads > 0 && (
               <div className="space-y-3">
                 <div className="text-sm font-medium text-gray-700">
-                  {currentUploadInfo && currentUploadInfo.totalFiles > 1 
+                  {currentUploadInfo && currentUploadInfo.totalFiles > 1
                     ? `Sequential Upload: ${activeUploads} file(s) in queue`
                     : `Uploading ${activeUploads} file(s):`
                   }
                 </div>
-                
+
                 {Object.entries(uploadingFiles).map(([fileId, fileInfo]) => (
-                  <div key={fileId} className={`space-y-2 p-3 rounded-lg border ${
-                    fileInfo.isCurrentFile 
-                      ? 'border-blue-500 bg-blue-50 shadow-sm' 
-                      : 'bg-gray-50 border-gray-200'
-                  }`}>
+                  <div key={fileId} className={`space-y-2 p-3 rounded-lg border ${fileInfo.isCurrentFile
+                    ? 'border-blue-500 bg-blue-50 shadow-sm'
+                    : 'bg-gray-50 border-gray-200'
+                    }`}>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <FileVideo className={`w-4 h-4 ${fileInfo.isCurrentFile ? 'text-blue-500' : 'text-gray-500'}`} />
@@ -745,7 +744,7 @@ const VideoFilesTab = () => {
                           </Badge>
                         )}
                       </div>
-                      
+
                       <div className="flex items-center gap-2">
                         {fileInfo.status === 'uploading' && fileInfo.isCurrentFile && (
                           <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
@@ -759,25 +758,25 @@ const VideoFilesTab = () => {
                         {fileInfo.status === 'failed' && (
                           <AlertCircle className="w-4 h-4 text-red-600" />
                         )}
-                        
+
                         <span className="text-xs text-gray-500 min-w-[3rem] text-right">
                           {Math.round(fileInfo.progress)}%
                         </span>
                       </div>
                     </div>
-                    
-                    <Progress 
-                      value={fileInfo.progress} 
+
+                    <Progress
+                      value={fileInfo.progress}
                       className="h-2"
                     />
-                    
+
                     <div className="flex justify-between text-xs text-gray-500">
                       <span>
                         {fileInfo.status === 'uploading' && fileInfo.isCurrentFile ? 'Uploading...' :
-                         fileInfo.status === 'uploading' && !fileInfo.isCurrentFile ? 'Waiting in queue...' :
-                         fileInfo.status === 'processing' ? 'Processing...' :
-                         fileInfo.status === 'completed' ? 'Completed!' :
-                         fileInfo.status === 'failed' ? `Failed: ${fileInfo.error || 'Unknown error'}` : 'Unknown'}
+                          fileInfo.status === 'uploading' && !fileInfo.isCurrentFile ? 'Waiting in queue...' :
+                            fileInfo.status === 'processing' ? 'Processing...' :
+                              fileInfo.status === 'completed' ? 'Completed!' :
+                                fileInfo.status === 'failed' ? `Failed: ${fileInfo.error || 'Unknown error'}` : 'Unknown'}
                       </span>
                       <span>{formatFileSize(fileInfo.size)}</span>
                     </div>
@@ -799,8 +798,8 @@ const VideoFilesTab = () => {
                 All video files available for streaming
               </CardDescription>
             </div>
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               size="sm"
               onClick={refreshVideos}
               disabled={isRefreshing}
@@ -839,8 +838,8 @@ const VideoFilesTab = () => {
                         {getStatusBadge(video.status)}
                       </div>
                       <div className="text-sm text-gray-600">
-                        {formatFileSize(video.size)} • {video.duration} • {video.format}
-                        {video.resolution && ` • ${video.resolution}`}
+                        {formatFileSize(video.size)}  {video.duration}  {video.format}
+                        {video.resolution && `  ${video.resolution}`}
                       </div>
                       <div className="text-xs text-gray-500 mt-1">
                         Uploaded: {video.uploadDate}

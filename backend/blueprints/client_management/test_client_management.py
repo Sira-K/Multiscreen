@@ -39,17 +39,17 @@ try:
         build_stream_url,
         check_screen_availability
     )
-    print("✅ Successfully imported client management modules")
+    print(" Successfully imported client management modules")
 except ImportError as e:
-    print(f"❌ Import error: {e}")
-    print("📁 Available directories:")
+    print(f" Import error: {e}")
+    print(" Available directories:")
     for item in os.listdir(backend_endpoints_dir):
         item_path = os.path.join(backend_endpoints_dir, item)
         if os.path.isdir(item_path):
-            print(f"   📂 {item}")
+            print(f"    {item}")
     
     # Try alternative import path
-    print("\n🔄 Trying alternative import paths...")
+    print("\n Trying alternative import paths...")
     
     # Check if client_management.py exists as single file
     single_file_path = os.path.join(backend_endpoints_dir, 'blueprints', 'client_management.py')
@@ -562,24 +562,24 @@ def run_tests():
 
 if __name__ == "__main__":
     # Run tests if this file is executed directly
-    print("🧪 Running Client Management Tests...")
+    print(" Running Client Management Tests...")
     print("=" * 60)
     
     # You can run specific test classes
-    print("\n📊 Testing Client State Management...")
+    print("\n Testing Client State Management...")
     pytest.main([__file__ + "::TestClientState", "-v"])
     
-    print("\n🔍 Testing Validators...")
+    print("\n Testing Validators...")
     pytest.main([__file__ + "::TestClientValidators", "-v"])
     
-    print("\n🛠️  Testing Utilities...")
+    print("\n  Testing Utilities...")
     pytest.main([__file__ + "::TestClientUtils", "-v"])
     
-    print("\n🌐 Testing API Endpoints...")
+    print("\n Testing API Endpoints...")
     pytest.main([__file__ + "::TestClientManagementAPI", "-v"])
     
-    print("\n🔗 Testing Integration...")
+    print("\n Testing Integration...")
     pytest.main([__file__ + "::TestIntegration", "-v"])
     
     print("\n" + "=" * 60)
-    print("✅ All tests completed!")
+    print(" All tests completed!")

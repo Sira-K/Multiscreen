@@ -390,40 +390,40 @@
     .error-system-tabs {
         padding: 15px;
     }
-    
+
     .tabs-header {
         padding: 20px 15px;
     }
-    
+
     .tabs-header h1 {
         font-size: 2rem;
     }
-    
+
     .tabs-navigation {
         flex-direction: column;
         align-items: center;
     }
-    
+
     .tab-button {
         min-width: 280px;
     }
-    
+
     .examples-grid {
         grid-template-columns: 1fr;
     }
-    
+
     .categories-grid {
         grid-template-columns: 1fr;
     }
-    
+
     .troubleshooting-grid {
         grid-template-columns: 1fr;
     }
-    
+
     .custom-errors-table {
         overflow-x: auto;
     }
-    
+
     .custom-errors-table table {
         min-width: 600px;
     }
@@ -433,20 +433,20 @@
     .tabs-header h1 {
         font-size: 1.8rem;
     }
-    
+
     .tab-button {
         min-width: 250px;
         padding: 15px 20px;
     }
-    
+
     .tab-icon {
         font-size: 1.5rem;
     }
-    
+
     .tab-label {
         font-size: 1rem;
     }
-    
+
     .tab-description {
         font-size: 0.8rem;
     }

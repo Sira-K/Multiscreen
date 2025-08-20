@@ -12,20 +12,20 @@ const ErrorSystemTabs = () => {
     const tabs = [
         {
             id: 'testing',
-            label: '🧪 Error Testing',
-            icon: '🧪',
+            label: ' Error Testing',
+            icon: '',
             description: 'Comprehensive error testing and simulation'
         },
         {
             id: 'examples',
-            label: '📚 Examples',
-            icon: '📚',
+            label: ' Examples',
+            icon: '',
             description: 'Error system usage examples and demonstrations'
         },
         {
             id: 'documentation',
-            label: '📖 Documentation',
-            icon: '📖',
+            label: ' Documentation',
+            icon: '',
             description: 'Error codes, categories, and troubleshooting'
         }
     ];
@@ -46,7 +46,7 @@ const ErrorSystemTabs = () => {
     return (
         <div className="error-system-tabs">
             <div className="tabs-header">
-                <h1>🚨 Error System Dashboard</h1>
+                <h1> Error System Dashboard</h1>
                 <p>Comprehensive error handling, testing, and documentation system</p>
             </div>
 
@@ -76,13 +76,13 @@ const ErrorExamplesTab = () => {
     return (
         <div className="error-examples-tab">
             <div className="tab-header">
-                <h2>📚 Error System Examples</h2>
+                <h2> Error System Examples</h2>
                 <p>Learn how to use the error system in your components</p>
             </div>
 
             <div className="examples-grid">
                 <div className="example-card">
-                    <h3>🔧 Basic Error Handling</h3>
+                    <h3> Basic Error Handling</h3>
                     <p>Simple error display and toast notifications</p>
                     <div className="code-example">
                         <pre>{`import { useErrorHandler } from './useErrorHandler';
@@ -98,7 +98,7 @@ showToastError('Operation failed', 3000);`}</pre>
                 </div>
 
                 <div className="example-card">
-                    <h3>🎬 FFmpeg Error Handling</h3>
+                    <h3> FFmpeg Error Handling</h3>
                     <p>Handle video processing errors with context</p>
                     <div className="code-example">
                         <pre>{`const { showFFmpegError } = useErrorHandler();
@@ -112,7 +112,7 @@ showFFmpegError('process_failed', {
                 </div>
 
                 <div className="example-card">
-                    <h3>📡 SRT Error Handling</h3>
+                    <h3> SRT Error Handling</h3>
                     <p>Handle streaming protocol errors</p>
                     <div className="code-example">
                         <pre>{`const { showSRTError } = useErrorHandler();
@@ -126,7 +126,7 @@ showSRTError('connection_timeout', {
                 </div>
 
                 <div className="example-card">
-                    <h3>🐳 Docker Error Handling</h3>
+                    <h3> Docker Error Handling</h3>
                     <p>Handle container and service errors</p>
                     <div className="code-example">
                         <pre>{`const { showDockerError } = useErrorHandler();
@@ -139,7 +139,7 @@ showDockerError('service_not_running', {
                 </div>
 
                 <div className="example-card">
-                    <h3>🎥 Video Error Handling</h3>
+                    <h3> Video Error Handling</h3>
                     <p>Handle video file and streaming errors</p>
                     <div className="code-example">
                         <pre>{`const { showVideoError } = useErrorHandler();
@@ -152,7 +152,7 @@ showVideoError('file_not_found', {
                 </div>
 
                 <div className="example-card">
-                    <h3>🌐 API Error Handling</h3>
+                    <h3> API Error Handling</h3>
                     <p>Handle network and API errors automatically</p>
                     <div className="code-example">
                         <pre>{`const { handleApiCall } = useErrorHandler();
@@ -230,13 +230,13 @@ const ErrorDocumentationTab = () => {
     return (
         <div className="error-documentation-tab">
             <div className="tab-header">
-                <h2>📖 Error System Documentation</h2>
+                <h2> Error System Documentation</h2>
                 <p>Comprehensive guide to error codes, categories, and troubleshooting</p>
             </div>
 
             <div className="documentation-sections">
                 <div className="section">
-                    <h3>🔍 Error Categories</h3>
+                    <h3> Error Categories</h3>
                     <div className="categories-grid">
                         {errorCategories.map((cat, index) => (
                             <div key={index} className="category-card">
@@ -257,7 +257,7 @@ const ErrorDocumentationTab = () => {
                 </div>
 
                 <div className="section">
-                    <h3>🔧 Custom Error Codes</h3>
+                    <h3> Custom Error Codes</h3>
                     <p>Application-specific error codes and their solutions</p>
                     <div className="custom-errors-table">
                         <table>
@@ -284,10 +284,10 @@ const ErrorDocumentationTab = () => {
                 </div>
 
                 <div className="section">
-                    <h3>🚨 Troubleshooting Guide</h3>
+                    <h3> Troubleshooting Guide</h3>
                     <div className="troubleshooting-grid">
                         <div className="troubleshooting-card">
-                            <h4>🐳 Docker Issues</h4>
+                            <h4> Docker Issues</h4>
                             <ul>
                                 <li>Check Docker service status: <code>sudo systemctl status docker</code></li>
                                 <li>Verify container exists: <code>docker ps -a</code></li>
@@ -297,7 +297,7 @@ const ErrorDocumentationTab = () => {
                         </div>
 
                         <div className="troubleshooting-card">
-                            <h4>📡 SRT Issues</h4>
+                            <h4> SRT Issues</h4>
                             <ul>
                                 <li>Verify SRT server is running</li>
                                 <li>Check firewall settings and port accessibility</li>
@@ -307,7 +307,7 @@ const ErrorDocumentationTab = () => {
                         </div>
 
                         <div className="troubleshooting-card">
-                            <h4>🎬 FFmpeg Issues</h4>
+                            <h4> FFmpeg Issues</h4>
                             <ul>
                                 <li>Verify FFmpeg installation: <code>ffmpeg -version</code></li>
                                 <li>Check input file format and codec support</li>
@@ -317,7 +317,7 @@ const ErrorDocumentationTab = () => {
                         </div>
 
                         <div className="troubleshooting-card">
-                            <h4>🌐 Network Issues</h4>
+                            <h4> Network Issues</h4>
                             <ul>
                                 <li>Check network connectivity</li>
                                 <li>Verify API endpoint accessibility</li>

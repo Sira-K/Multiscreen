@@ -10,7 +10,7 @@ export const useGroupOperations = (
   const { showError, showFFmpegError, showDockerError } = useErrorHandler();
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [operationInProgress, setOperationInProgress] = useState<string | null>(null);
-  
+
   // Form state for creating new groups
   const [newGroupForm, setNewGroupForm] = useState({
     name: '',
@@ -25,7 +25,7 @@ export const useGroupOperations = (
     try {
       setOperationInProgress('create');
 
-      console.log(`🔄 CREATING GROUP:`, newGroupForm);
+      console.log(` CREATING GROUP:`, newGroupForm);
 
       if (!newGroupForm.name.trim()) {
         // Use error system for validation errors
@@ -51,7 +51,7 @@ export const useGroupOperations = (
         streaming_mode: newGroupForm.streaming_mode
       });
 
-      console.log(`✅ GROUP CREATED:`, result);
+      console.log(` GROUP CREATED:`, result);
 
       // Show success message using error system (info category)
       showError({
@@ -80,8 +80,8 @@ export const useGroupOperations = (
       await loadInitialData();
 
     } catch (error: any) {
-      console.error('❌ Error creating group:', error);
-      
+      console.error(' Error creating group:', error);
+
       // Use error system for better error handling
       showError({
         message: error?.message || "Failed to create group",
@@ -105,9 +105,9 @@ export const useGroupOperations = (
   const deleteGroup = async (groupId: string, groupName: string) => {
     try {
       setOperationInProgress(groupId);
-      
+
       const response = await groupApi.deleteGroup(groupId);
-      
+
       // Show success message using error system (info category)
       showError({
         message: `Successfully deleted group "${groupName}"`,
@@ -123,10 +123,10 @@ export const useGroupOperations = (
 
       // Reload data to refresh the list
       await loadInitialData();
-      
+
     } catch (error: any) {
       console.error('Error deleting group:', error);
-      
+
       // Use error system for better error handling
       showError({
         message: error?.message || "Failed to delete group",

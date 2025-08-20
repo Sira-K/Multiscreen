@@ -17,9 +17,9 @@ const saveVideoAssignments = (groupId: string, assignments: VideoAssignment[], s
       version: '1.0'
     };
     localStorage.setItem(key, JSON.stringify(data));
-    console.log(`💾 Saved video assignments for group ${groupId}:`, assignments, 'selectedVideo:', selectedVideo);
+    console.log(` Saved video assignments for group ${groupId}:`, assignments, 'selectedVideo:', selectedVideo);
   } catch (error) {
-    console.warn('⚠️ Failed to save video assignments to localStorage:', error);
+    console.warn(' Failed to save video assignments to localStorage:', error);
   }
 };
 
@@ -28,32 +28,32 @@ const loadVideoAssignments = (groupId: string, screenCount: number): { assignmen
   try {
     const key = getStorageKey(groupId);
     const stored = localStorage.getItem(key);
-    
+
     if (stored) {
       const data = JSON.parse(stored);
       const assignments = data.assignments || [];
       const selectedVideo = data.selectedVideo || '';
-      
+
       // Validate that we have the right number of screens and structure
       if (Array.isArray(assignments) && assignments.length === screenCount) {
         // Validate each assignment has the correct structure
-        const validAssignments = assignments.every((assignment, index) => 
-          assignment && 
-          typeof assignment === 'object' && 
+        const validAssignments = assignments.every((assignment, index) =>
+          assignment &&
+          typeof assignment === 'object' &&
           assignment.screen === index &&
           typeof assignment.file === 'string'
         );
-        
+
         if (validAssignments) {
-          console.log(`📂 Loaded video assignments for group ${groupId}:`, assignments, 'selectedVideo:', selectedVideo);
+          console.log(` Loaded video assignments for group ${groupId}:`, assignments, 'selectedVideo:', selectedVideo);
           return { assignments, selectedVideo };
         }
       }
     }
   } catch (error) {
-    console.warn('⚠️ Failed to load video assignments from localStorage:', error);
+    console.warn(' Failed to load video assignments from localStorage:', error);
   }
-  
+
   // Return empty assignments if loading failed or data is invalid
   return {
     assignments: Array.from({ length: screenCount }, (_, index) => ({
@@ -74,7 +74,7 @@ export const useVideoAssignments = (groupId: string, screenCount: number) => {
     const savedData = loadVideoAssignments(groupId, screenCount);
     setVideoAssignments(savedData.assignments);
     setSelectedVideoFile(savedData.selectedVideo);
-    
+
     // Auto-expand video config if assignments exist
     const hasAssignments = savedData.assignments.some(assignment => assignment.file);
     setShowVideoConfig(hasAssignments);
@@ -84,13 +84,13 @@ export const useVideoAssignments = (groupId: string, screenCount: number) => {
   const handleVideoAssignmentChange = (screenIndex: number, fileName: string) => {
     // Convert special clear value to empty string
     const actualFileName = fileName === "__CLEAR__" ? "" : fileName;
-    
-    const newAssignments = videoAssignments.map((assignment, index) => 
+
+    const newAssignments = videoAssignments.map((assignment, index) =>
       index === screenIndex ? { ...assignment, file: actualFileName } : assignment
     );
-    
+
     setVideoAssignments(newAssignments);
-    
+
     // Save to localStorage immediately when user makes changes
     saveVideoAssignments(groupId, newAssignments, selectedVideoFile);
   };
@@ -114,7 +114,7 @@ export const useVideoAssignments = (groupId: string, screenCount: number) => {
 
   // Check if all screens have video assignments
   const hasCompleteAssignments = videoAssignments.every(assignment => assignment.file);
-  
+
   // Check if any assignments exist
   const hasAnyAssignments = videoAssignments.some(assignment => assignment.file);
 

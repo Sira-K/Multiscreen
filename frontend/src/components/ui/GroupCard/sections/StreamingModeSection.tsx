@@ -39,7 +39,7 @@ const StreamingModeSection: React.FC<StreamingModeSectionProps> = ({
 
   const getStreamingModeDescription = () => {
     const mode = group.streaming_mode || 'multi_video';
-    
+
     if (mode === 'multi_video') {
       return {
         title: "Multi-Video Mode",
@@ -53,7 +53,7 @@ const StreamingModeSection: React.FC<StreamingModeSectionProps> = ({
       };
     } else {
       return {
-        title: "Single Video Split Mode", 
+        title: "Single Video Split Mode",
         description: "One video is automatically divided into equal sections across all screens. You must assign one video file to the group.",
         requirements: [
           "Assign 1 video file to the group",
@@ -69,8 +69,8 @@ const StreamingModeSection: React.FC<StreamingModeSectionProps> = ({
     <>
       {/* Dropdown overlay */}
       {showStreamingModeDropdown && (
-        <div 
-          className="fixed inset-0 z-40" 
+        <div
+          className="fixed inset-0 z-40"
           onClick={() => setShowStreamingModeDropdown(false)}
         />
       )}
@@ -87,7 +87,7 @@ const StreamingModeSection: React.FC<StreamingModeSectionProps> = ({
             >
               <MoreVertical className="h-3 w-3" />
             </Button>
-            
+
             {showStreamingModeDropdown && (
               <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-lg shadow-lg min-w-80 p-4">
                 <div className="space-y-3">
@@ -101,10 +101,10 @@ const StreamingModeSection: React.FC<StreamingModeSectionProps> = ({
                       onClick={() => setShowStreamingModeDropdown(false)}
                       className="ml-auto h-5 w-5 p-0"
                     >
-                      ×
+
                     </Button>
                   </div>
-                  
+
                   {/* Current Mode Info */}
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
@@ -117,12 +117,12 @@ const StreamingModeSection: React.FC<StreamingModeSectionProps> = ({
                         </div>
                       )}
                     </div>
-                    
+
                     <p className="text-sm text-gray-600">
                       {getStreamingModeDescription().description}
                     </p>
                   </div>
-                  
+
                   {/* Requirements */}
                   <div className="space-y-2">
                     <h6 className="text-sm font-medium text-gray-700 flex items-center gap-1">
@@ -132,34 +132,33 @@ const StreamingModeSection: React.FC<StreamingModeSectionProps> = ({
                     <ul className="text-xs text-gray-600 space-y-1">
                       {getStreamingModeDescription().requirements.map((req, index) => (
                         <li key={index} className="flex items-start gap-2">
-                          <span className="text-blue-600">•</span>
+                          <span className="text-blue-600"></span>
                           <span>{req}</span>
                         </li>
                       ))}
                     </ul>
                   </div>
-                  
+
                   {/* Status */}
-                  <div className={`p-2 rounded text-sm ${
-                    getStreamingModeDescription().canStart 
-                      ? 'bg-green-50 border border-green-200 text-green-800' 
+                  <div className={`p-2 rounded text-sm ${getStreamingModeDescription().canStart
+                      ? 'bg-green-50 border border-green-200 text-green-800'
                       : 'bg-yellow-50 border border-yellow-200 text-yellow-800'
-                  }`}>
+                    }`}>
                     {getStreamingModeDescription().canStart ? (
                       <div className="flex items-center gap-2">
-                        <span className="text-green-600">✓</span>
+                        <span className="text-green-600"></span>
                         Ready to start streaming
                       </div>
                     ) : (
                       <div className="flex items-center gap-2">
-                        <span className="text-yellow-600">⚠</span>
-                        {group.streaming_mode === 'multi_video' 
+                        <span className="text-yellow-600"></span>
+                        {group.streaming_mode === 'multi_video'
                           ? `Need ${group.screen_count - videoAssignments.filter(a => a.file).length} more video assignments`
                           : 'Need to select a video file'}
                       </div>
                     )}
                   </div>
-                  
+
                   {/* Quick Actions */}
                   {!localIsStreaming && (
                     <div className="pt-2 border-t space-y-2">
@@ -173,8 +172,8 @@ const StreamingModeSection: React.FC<StreamingModeSectionProps> = ({
                         }}
                         className="w-full text-xs"
                       >
-                        {group.streaming_mode === 'multi_video' 
-                          ? 'Configure Video Assignments' 
+                        {group.streaming_mode === 'multi_video'
+                          ? 'Configure Video Assignments'
                           : 'Select Video File'}
                       </Button>
                     </div>
@@ -184,7 +183,7 @@ const StreamingModeSection: React.FC<StreamingModeSectionProps> = ({
             )}
           </div>
         </div>
-        
+
         <div className="flex items-center gap-2 text-sm">
           {getStreamingModeIcon()}
           <span>{group.streaming_mode === 'multi_video' ? 'Multi-Video Mode' : 'Single Video Split Mode'}</span>

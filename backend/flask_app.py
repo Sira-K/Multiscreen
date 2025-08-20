@@ -30,41 +30,47 @@ except ImportError:
 
 
 def clear_all_logs():
-    """Clear all log files when server starts"""
+    """Rotate all log files to keep only the newest 1000 lines when server starts"""
     try:
         logs_dir = os.path.join(os.path.dirname(__file__), 'logs')
         if os.path.exists(logs_dir):
-            log_files = [
-                'all.log',
-                'errors.log', 
-                'ffmpeg.log',
-                'clients.log',
-                'streaming.log',
-                'system.log'
-            ]
-            
-            for log_file in log_files:
-                log_path = os.path.join(logs_dir, log_file)
-                if os.path.exists(log_path):
-                    # Clear the file content
-                    with open(log_path, 'w') as f:
-                        f.write(f"# Log file cleared at server startup: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                        f.write(f"# Server session started\n")
-                        f.write("=" * 80 + "\n\n")
-                    print(f"Cleared log file: {log_file}")
+            try:
+                from logging_config import rotate_existing_logs, MAX_LOG_LINES
+                rotate_existing_logs(logs_dir, max_lines=MAX_LOG_LINES)
+                print(f"All log files rotated to keep newest {MAX_LOG_LINES} lines")
+            except ImportError:
+                # Fallback to clearing logs if logging_config not available
+                log_files = [
+                    'all.log',
+                    'errors.log', 
+                    'ffmpeg.log',
+                    'clients.log',
+                    'streaming.log',
+                    'system.log'
+                ]
+                
+                for log_file in log_files:
+                    log_path = os.path.join(logs_dir, log_file)
+                    if os.path.exists(log_path):
+                        # Clear the file content
+                        with open(log_path, 'w') as f:
+                            f.write(f"# Log file cleared at server startup: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                            f.write(f"# Server session started\n")
+                            f.write("=" * 80 + "\n\n")
+                        print(f"Cleared log file: {log_file}")
     except Exception as e:
-        print(f"Warning: Could not clear log files: {e}")
+        print(f"Warning: Could not rotate log files: {e}")
 
 # Configure comprehensive logging
 try:
-    from logging_config import setup_comprehensive_logging
+    from logging_config import setup_comprehensive_logging, MAX_LOG_LINES
     logger = setup_comprehensive_logging()
     
     # Clear all logs at startup
     clear_all_logs()
     
     logger.info("Enhanced logging system initialized")
-    logger.info("All previous log files cleared for new server session")
+    logger.info(f"All log files rotated to keep newest {MAX_LOG_LINES} lines for new server session")
 except ImportError:
     # Fallback to basic logging
     logging.basicConfig(level=logging.INFO)

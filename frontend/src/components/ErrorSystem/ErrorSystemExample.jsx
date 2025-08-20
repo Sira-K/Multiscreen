@@ -31,7 +31,7 @@ const ErrorSystemExample = () => {
   // Example: Handle form validation errors
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     // Simulate validation
     const errors = {};
     if (!formData.groupId.trim()) {
@@ -40,12 +40,12 @@ const ErrorSystemExample = () => {
     if (formData.videoFiles.length === 0) {
       errors.videoFiles = 'At least one video file is required';
     }
-    
+
     if (Object.keys(errors).length > 0) {
       handleValidationErrors(errors);
       return;
     }
-    
+
     // Simulate API call
     await simulateStreamingStart();
   };
@@ -53,7 +53,7 @@ const ErrorSystemExample = () => {
   // Example: Simulate streaming start with error handling
   const simulateStreamingStart = async () => {
     setIsLoading(true);
-    
+
     try {
       // Simulate API call
       const response = await handleApiCall(
@@ -71,7 +71,7 @@ const ErrorSystemExample = () => {
           throwOnError: true
         }
       );
-      
+
       if (response) {
         showToastError('Streaming started successfully!', 3000);
       }
@@ -87,24 +87,24 @@ const ErrorSystemExample = () => {
   const showExampleErrors = () => {
     return (
       <div className="error-examples">
-        <h3>🔍 Error System Examples</h3>
-        
+        <h3> Error System Examples</h3>
+
         <div className="example-buttons">
-          <button 
+          <button
             onClick={() => showSimpleError('This is a simple error message')}
             className="example-btn simple"
           >
             Simple Error
           </button>
-          
-          <button 
+
+          <button
             onClick={() => showToastError('This is a toast error that auto-hides', 3000)}
             className="example-btn toast"
           >
             Toast Error
           </button>
-          
-          <button 
+
+          <button
             onClick={() => showFFmpegError('process_failed', {
               command: 'ffmpeg -i input.mp4 output.mp4',
               group_id: 'example_group'
@@ -113,8 +113,8 @@ const ErrorSystemExample = () => {
           >
             FFmpeg Error
           </button>
-          
-          <button 
+
+          <button
             onClick={() => showSRTError('connection_timeout', {
               srt_ip: '192.168.1.100',
               srt_port: 9000,
@@ -124,8 +124,8 @@ const ErrorSystemExample = () => {
           >
             SRT Error
           </button>
-          
-          <button 
+
+          <button
             onClick={() => showDockerError('service_not_running', {
               service_name: 'docker',
               check_command: 'sudo systemctl status docker'
@@ -134,8 +134,8 @@ const ErrorSystemExample = () => {
           >
             Docker Error
           </button>
-          
-          <button 
+
+          <button
             onClick={() => showVideoError('file_not_found', {
               file_path: '/path/to/video.mp4',
               requested_by: 'streaming_component'
@@ -152,9 +152,9 @@ const ErrorSystemExample = () => {
   // Example: Simulate file upload with error handling
   const handleFileUpload = async (e) => {
     const files = Array.from(e.target.files);
-    
+
     if (files.length === 0) return;
-    
+
     // Simulate file validation
     for (const file of files) {
       if (file.size > 100 * 1024 * 1024) { // 100MB limit
@@ -165,7 +165,7 @@ const ErrorSystemExample = () => {
         });
         return;
       }
-      
+
       if (!file.type.startsWith('video/')) {
         handleFileUploadError(new Error('Invalid file format'), {
           file_name: file.name,
@@ -175,12 +175,12 @@ const ErrorSystemExample = () => {
         return;
       }
     }
-    
+
     setFormData(prev => ({
       ...prev,
       videoFiles: [...prev.videoFiles, ...files]
     }));
-    
+
     showToastError(`${files.length} file(s) uploaded successfully!`, 2000);
   };
 
@@ -210,7 +210,7 @@ const ErrorSystemExample = () => {
   return (
     <div className="error-system-example">
       <div className="example-header">
-        <h2>🚀 Error System Integration Examples</h2>
+        <h2> Error System Integration Examples</h2>
         <p>This component demonstrates how to use the comprehensive error handling system</p>
       </div>
 
@@ -219,7 +219,7 @@ const ErrorSystemExample = () => {
 
       {/* Form Example Section */}
       <div className="form-example">
-        <h3>📝 Form with Error Handling</h3>
+        <h3> Form with Error Handling</h3>
         <form onSubmit={handleSubmit}>
           <div className="form-group">
             <label htmlFor="groupId">Group ID:</label>
@@ -231,7 +231,7 @@ const ErrorSystemExample = () => {
               placeholder="Enter group ID"
             />
           </div>
-          
+
           <div className="form-group">
             <label htmlFor="videoFiles">Video Files:</label>
             <input
@@ -252,9 +252,9 @@ const ErrorSystemExample = () => {
               </div>
             )}
           </div>
-          
-          <button 
-            type="submit" 
+
+          <button
+            type="submit"
             disabled={isLoading}
             className="submit-btn"
           >
@@ -265,24 +265,24 @@ const ErrorSystemExample = () => {
 
       {/* Additional Examples Section */}
       <div className="additional-examples">
-        <h3>🔧 Additional Error Scenarios</h3>
-        
+        <h3> Additional Error Scenarios</h3>
+
         <div className="example-buttons">
-          <button 
+          <button
             onClick={simulateNetworkError}
             className="example-btn network"
           >
             Simulate Network Error
           </button>
-          
-          <button 
+
+          <button
             onClick={simulateStreamingError}
             className="example-btn streaming"
           >
             Simulate Streaming Error
           </button>
-          
-          <button 
+
+          <button
             onClick={() => showErrorByCode(143, {
               group_id: 'example_group',
               operation: 'docker_check'
@@ -296,8 +296,8 @@ const ErrorSystemExample = () => {
 
       {/* Usage Instructions */}
       <div className="usage-instructions">
-        <h3>📚 How to Use This Error System</h3>
-        
+        <h3> How to Use This Error System</h3>
+
         <div className="instructions-grid">
           <div className="instruction-card">
             <h4>1. Setup</h4>
@@ -306,13 +306,13 @@ const ErrorSystemExample = () => {
   <App />
 </ErrorProvider>`}</pre>
           </div>
-          
+
           <div className="instruction-card">
             <h4>2. Use Hook</h4>
             <p>Import and use the <code>useErrorHandler</code> hook in your components</p>
             <pre>{`const { showError, handleApiCall } = useErrorHandler();`}</pre>
           </div>
-          
+
           <div className="instruction-card">
             <h4>3. Handle Errors</h4>
             <p>Use the provided methods to handle different types of errors</p>
@@ -322,7 +322,7 @@ const ErrorSystemExample = () => {
   // Error is automatically handled and displayed
 }`}</pre>
           </div>
-          
+
           <div className="instruction-card">
             <h4>4. Custom Errors</h4>
             <p>Show specific error types with context information</p>
