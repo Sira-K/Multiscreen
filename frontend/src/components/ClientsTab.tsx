@@ -5,18 +5,28 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { ArrowUp, ArrowDown, Monitor, Wifi, WifiOff, Search, Users, RefreshCw } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ArrowUp, ArrowDown, Monitor, Wifi, WifiOff, Search, Users, RefreshCw, Settings } from "lucide-react";
 import { useErrorHandler } from "@/components/ErrorSystem/useErrorHandler";
 import { clientApi } from '@/API/api';
 import type { Client } from '@/types';
 
-// Make ClientsTab self-loading (remove props dependency)
-const ClientsTab = () => {
+// Make ClientsTab self-loading with optional refresh callback
+interface ClientsTabProps {
+  onClientsRefreshed?: () => void; // Callback when clients are refreshed
+}
+
+const ClientsTab: React.FC<ClientsTabProps> = ({ onClientsRefreshed }) => {
   const { showError } = useErrorHandler();
   const [searchTerm, setSearchTerm] = useState('');
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [autoCleanupStatus, setAutoCleanupStatus] = useState<{
+    running: boolean;
+    interval?: number;
+    threshold?: number;
+  }>({ running: false });
 
   // Load clients data
   const loadClients = async (showRefreshing = false) => {
@@ -28,25 +38,29 @@ const ClientsTab = () => {
       console.log(' Raw API response:', clientsData);
       console.log(' All clients:', clientsData.clients);
 
-      // Filter to only show active/connected clients
-      const activeClients = (clientsData.clients || []).filter(client => client.status === 'active');
-      console.log(' Active clients only:', activeClients);
+      // Show all clients with their current status
+      const allClients = clientsData.clients || [];
+      console.log(' All clients with statuses:', allClients);
 
-      setClients(activeClients);
+      setClients(allClients);
 
       if (showRefreshing) {
         showError({
-          message: `Clients refreshed successfully. Found ${activeClients.length} active clients (${clientsData.clients?.length || 0} total)`,
+          message: `Clients refreshed successfully. Found ${clientsData.clients?.length || 0} total clients`,
           error_code: 'CLIENTS_REFRESHED',
           error_category: 'success',
           context: {
             component: 'ClientsTab',
             operation: 'refreshClients',
-            active_clients: activeClients.length,
             total_clients: clientsData.clients?.length || 0,
             timestamp: new Date().toISOString()
           }
         });
+
+        // Notify parent component that clients were refreshed
+        if (onClientsRefreshed) {
+          onClientsRefreshed();
+        }
       }
     } catch (error: any) {
       console.error(' Error loading clients:', error);
@@ -71,14 +85,94 @@ const ClientsTab = () => {
   // Load initial data and set up refresh interval
   useEffect(() => {
     loadClients();
+    checkAutoCleanupStatus();
 
     // Refresh clients every 5 seconds
     const interval = setInterval(() => {
       loadClients();
     }, 5000);
 
-    return () => clearInterval(interval);
+    // Check auto-cleanup status every 30 seconds
+    const cleanupStatusInterval = setInterval(() => {
+      checkAutoCleanupStatus();
+    }, 30000);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(cleanupStatusInterval);
+    };
   }, []);
+
+  const checkAutoCleanupStatus = async () => {
+    try {
+      const result = await clientApi.controlAutoCleanup('status');
+      if (result.success) {
+        setAutoCleanupStatus({
+          running: result.auto_cleanup_running || false
+        });
+      }
+    } catch (error) {
+      console.error('Failed to check auto-cleanup status:', error);
+    }
+  };
+
+  const toggleAutoCleanup = async () => {
+    try {
+      if (autoCleanupStatus.running) {
+        // Stop auto-cleanup
+        const result = await clientApi.controlAutoCleanup('stop');
+        if (result.success) {
+          setAutoCleanupStatus({ running: false });
+          showError({
+            message: "Auto-cleanup stopped",
+            error_code: 'AUTO_CLEANUP_STOPPED',
+            error_category: 'success',
+            context: {
+              component: 'ClientsTab',
+              operation: 'stopAutoCleanup',
+              timestamp: new Date().toISOString()
+            }
+          });
+        }
+      } else {
+        // Start auto-cleanup with 2-minute threshold
+        const result = await clientApi.controlAutoCleanup('start', {
+          cleanupIntervalSeconds: 30,
+          inactiveThresholdSeconds: 120
+        });
+        if (result.success) {
+          setAutoCleanupStatus({
+            running: true,
+            interval: 30,
+            threshold: 120
+          });
+          showError({
+            message: "Auto-cleanup started - clients will be removed after 2 minutes of inactivity",
+            error_code: 'AUTO_CLEANUP_STARTED',
+            error_category: 'success',
+            context: {
+              component: 'ClientsTab',
+              operation: 'startAutoCleanup',
+              timestamp: new Date().toISOString()
+            }
+          });
+        }
+      }
+    } catch (error: any) {
+      console.error('Failed to toggle auto-cleanup:', error);
+      showError({
+        message: `Failed to ${autoCleanupStatus.running ? 'stop' : 'start'} auto-cleanup: ${error.message}`,
+        error_code: 'AUTO_CLEANUP_TOGGLE_FAILED',
+        error_category: '5xx',
+        context: {
+          component: 'ClientsTab',
+          operation: 'toggleAutoCleanup',
+          timestamp: new Date().toISOString(),
+          original_error: error?.message
+        }
+      });
+    }
+  };
 
   const moveClient = (clientId: string, direction: 'up' | 'down') => {
     const clientIndex = clients.findIndex(c => c.client_id === clientId);
@@ -95,6 +189,8 @@ const ClientsTab = () => {
     [newClients[clientIndex], newClients[targetIndex]] = [newClients[targetIndex], newClients[clientIndex]];
     setClients(newClients);
   };
+
+
 
   const filteredClients = clients.filter(client => {
     if (!searchTerm) return true;
@@ -140,8 +236,35 @@ const ClientsTab = () => {
                 Active Clients ({clients.length})
               </CardTitle>
               <CardDescription>
-                Connected clients only. Disconnected clients are automatically removed. Auto-refreshes every 5 seconds.
+                Connected clients only. Disconnected clients are automatically removed after 2 minutes of inactivity. No manual removal needed. Auto-refreshes every 5 seconds.
               </CardDescription>
+
+              {/* Auto-cleanup control */}
+              <div className="flex items-center gap-4 mt-4 p-3 bg-gray-50 rounded-lg border">
+                <div className="flex items-center gap-2">
+                  <Settings className="w-4 h-4 text-gray-600" />
+                  <span className="text-sm font-medium text-gray-700">Auto-cleanup:</span>
+                  <Badge variant={autoCleanupStatus.running ? "default" : "secondary"}>
+                    {autoCleanupStatus.running ? "Active" : "Inactive"}
+                  </Badge>
+                </div>
+
+                <Button
+                  variant={autoCleanupStatus.running ? "destructive" : "default"}
+                  size="sm"
+                  onClick={toggleAutoCleanup}
+                  disabled={loading}
+                  className="ml-auto"
+                >
+                  {autoCleanupStatus.running ? "Stop" : "Start"} Auto-cleanup
+                </Button>
+
+                {autoCleanupStatus.running && (
+                  <div className="text-xs text-gray-500">
+                    Client lifecycle: Active (30s) → Inactive (30-120s) → Disconnected (120s+) → Removed
+                  </div>
+                )}
+              </div>
             </div>
             <Button
               variant="outline"
@@ -172,7 +295,7 @@ const ClientsTab = () => {
 
           {/* Debug Info */}
           <div className="mb-4 p-3 bg-gray-100 rounded text-sm text-gray-600">
-            Debug: {clients.length} active clients connected, {filteredClients.length} shown after filtering
+            Debug: {clients.filter(c => c.status === 'active').length} active, {clients.filter(c => c.status === 'inactive').length} inactive, {clients.filter(c => c.status === 'disconnected').length} disconnected clients. {filteredClients.length} shown after filtering.
           </div>
 
           {/* Clients List */}
@@ -209,17 +332,26 @@ const ClientsTab = () => {
                   className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors"
                 >
                   <div className="flex items-center gap-4">
-                    {/* Always green since we only show connected clients */}
-                    <div className="w-3 h-3 rounded-full bg-green-500" />
+                    {/* Status indicator based on client status */}
+                    <div className={`w-3 h-3 rounded-full ${client.status === 'active' ? 'bg-green-500' :
+                      client.status === 'inactive' ? 'bg-yellow-500' :
+                        'bg-red-500'
+                      }`} />
 
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <h3 className="font-medium text-gray-900">
                           {client.display_name || client.hostname || client.client_id}
                         </h3>
-                        {/* Always show as connected since we only display active clients */}
-                        <Badge variant="default" className="bg-green-100 text-green-800 border-green-200">
-                          Connected
+                        {/* Status badge based on client status */}
+                        <Badge variant="default" className={
+                          client.status === 'active' ? 'bg-green-100 text-green-800 border-green-200' :
+                            client.status === 'inactive' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
+                              'bg-red-100 text-red-800 border-red-200'
+                        }>
+                          {client.status === 'active' ? 'Active' :
+                            client.status === 'inactive' ? 'Inactive' :
+                              'Disconnected'}
                         </Badge>
                       </div>
 
@@ -278,17 +410,33 @@ const ClientsTab = () => {
         </CardContent>
       </Card>
 
-      {/* Client Statistics - Updated for active clients only */}
+      {/* Client Statistics - Updated for all client statuses */}
       {clients.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Card className="bg-white border border-gray-200">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Connected Clients</p>
-                  <p className="text-2xl font-bold text-green-600">{clients.length}</p>
+                  <p className="text-sm font-medium text-gray-600">Active Clients</p>
+                  <p className="text-2xl font-bold text-green-600">
+                    {clients.filter(c => c.status === 'active').length}
+                  </p>
                 </div>
                 <Wifi className="w-8 h-8 text-green-500" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white border border-gray-200">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Inactive Clients</p>
+                  <p className="text-2xl font-bold text-yellow-600">
+                    {clients.filter(c => c.status === 'inactive').length}
+                  </p>
+                </div>
+                <WifiOff className="w-8 h-8 text-yellow-500" />
               </div>
             </CardContent>
           </Card>

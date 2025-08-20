@@ -757,6 +757,87 @@ export const clientApi = {
     }
   },
 
+  async bulkRemoveClients(clientIds: string[], force: boolean = false) {
+    console.log(` Bulk removing ${clientIds.length} clients from system`);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/clients/bulk_remove_clients`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          client_ids: clientIds,
+          force: force
+        }),
+      });
+
+      const result = await handleApiResponse(response, 'POST /api/clients/bulk_remove_clients');
+      console.log(` Bulk remove completed:`, result);
+      return result;
+    } catch (error) {
+      console.error('Bulk remove failed:', error);
+      throw error;
+    }
+  },
+
+  async cleanupDisconnectedClients(force: boolean = false) {
+    console.log(` Cleaning up disconnected clients`);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/clients/cleanup_disconnected_clients`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          force: force
+        }),
+      });
+
+      const result = await handleApiResponse(response, 'POST /api/clients/cleanup_disconnected_clients');
+      console.log(` Cleanup completed:`, result);
+      return result;
+    } catch (error) {
+      console.error('Cleanup failed:', error);
+      throw error;
+    }
+  },
+
+  async controlAutoCleanup(action: 'start' | 'stop' | 'status', config?: {
+    cleanupIntervalSeconds?: number;
+    inactiveThresholdSeconds?: number;
+  }) {
+    console.log(` Controlling auto-cleanup: ${action}`);
+
+    try {
+      const body: any = { action };
+      if (config) {
+        if (config.cleanupIntervalSeconds !== undefined) {
+          body.cleanup_interval_seconds = config.cleanupIntervalSeconds;
+        }
+        if (config.inactiveThresholdSeconds !== undefined) {
+          body.inactive_threshold_seconds = config.inactiveThresholdSeconds;
+        }
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/clients/control_auto_cleanup`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+
+      const result = await handleApiResponse(response, 'POST /api/clients/control_auto_cleanup');
+      console.log(` Auto-cleanup control result:`, result);
+      return result;
+    } catch (error) {
+      console.error('Auto-cleanup control failed:', error);
+      throw error;
+    }
+  },
+
   async deleteClient(clientId: string) {
     console.log(` Deleting client ${clientId}`);
 

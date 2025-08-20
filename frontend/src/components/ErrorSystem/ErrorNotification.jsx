@@ -6,6 +6,23 @@ const ErrorNotification = () => {
     const [isExpanded, setIsExpanded] = useState(false);
     const [errorDetails, setErrorDetails] = useState(null);
 
+    // Add keyboard shortcut to close notification
+    useEffect(() => {
+        const handleKeyDown = (event) => {
+            if (event.key === 'Escape' && currentError) {
+                clearError();
+            }
+        };
+
+        if (currentError) {
+            document.addEventListener('keydown', handleKeyDown);
+        }
+
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [currentError, clearError]);
+
     useEffect(() => {
         if (currentError && currentError.error_code) {
             generateErrorDetails(currentError);
@@ -167,17 +184,19 @@ const ErrorNotification = () => {
                                 {currentError.message || 'An error occurred'}
                             </p>
                             <p className="text-xs text-gray-500 mt-1 italic">
-                                Click for details
+                                Click for details • Press Esc to close
                             </p>
                         </div>
                         <button
-                            className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded hover:bg-gray-100"
+                            className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded hover:bg-gray-100 flex items-center gap-1"
                             onClick={(e) => {
                                 e.stopPropagation();
                                 clearError();
                             }}
+                            title="Close notification (Esc)"
                         >
-
+                            <span className="text-xs text-gray-500">Esc</span>
+                            <span className="text-lg font-bold">×</span>
                         </button>
                     </div>
                 </div>
@@ -190,7 +209,16 @@ const ErrorNotification = () => {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-2 z-50">
             <div className="bg-white rounded-xl border shadow-lg max-w-2xl w-full max-h-[90vh] flex flex-col mx-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
                 {/* Header */}
-                <div className={`border-l-4 ${getErrorColor(currentError.error_category || '5xx')} p-4 flex-shrink-0 rounded-t-xl`}>
+                <div className={`border-l-4 ${getErrorColor(currentError.error_category || '5xx')} p-4 flex-shrink-0 rounded-t-xl relative`}>
+                    {/* Close button in top-right corner */}
+                    <button
+                        className="absolute top-2 right-2 text-gray-400 hover:text-gray-600 transition-colors p-1 rounded hover:bg-gray-100 w-6 h-6 flex items-center justify-center"
+                        onClick={clearError}
+                        title="Close notification (Esc)"
+                    >
+                        <span className="text-lg font-bold">×</span>
+                    </button>
+
                     <div className="flex items-start justify-between">
                         <div className="flex items-start space-x-2">
                             <span className="text-xl">
@@ -213,8 +241,9 @@ const ErrorNotification = () => {
                             <button
                                 className="inline-flex items-center justify-center gap-1 whitespace-nowrap rounded text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 h-8 w-8 rounded border border-input bg-background hover:bg-accent hover:text-accent-foreground"
                                 onClick={clearError}
+                                title="Close notification"
                             >
-
+                                ✕
                             </button>
                         </div>
                     </div>
@@ -360,8 +389,13 @@ const ErrorNotification = () => {
 
                 {/* Footer */}
                 <div className="flex items-center justify-between p-4 pt-0 border-t flex-shrink-0 rounded-b-xl">
-                    <div className="text-sm text-gray-500">
-                        Error ID: {currentError.id || 'N/A'}
+                    <div className="flex items-center space-x-4">
+                        <div className="text-sm text-gray-500">
+                            Error ID: {currentError.id || 'N/A'}
+                        </div>
+                        <div className="text-xs text-gray-400">
+                            Press <kbd className="px-1 py-0.5 bg-gray-200 rounded text-xs">Esc</kbd> to close
+                        </div>
                     </div>
                     <div className="flex items-center space-x-3">
                         <button

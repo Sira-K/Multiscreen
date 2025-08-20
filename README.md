@@ -115,8 +115,8 @@ UB_Intern/
 
 #### 1. Clone Repository
 ```bash
-git clone <your-repository-url>
-cd UB_Intern
+git clone https://github.com/Sira-K/Multiscreen
+cd Multiscreen
 ```
 
 #### 2. Backend Setup

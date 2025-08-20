@@ -9,6 +9,7 @@ const STORAGE_KEY = 'activeTab';
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState<string>('streams');
+  const [clientsRefreshed, setClientsRefreshed] = useState<number>(0);
 
   const getInitialTab = (): string => {
     try {
@@ -34,6 +35,12 @@ const Index = () => {
     } catch (error) {
       console.warn('Failed to save tab to localStorage:', error);
     }
+  };
+
+  const handleClientsRefreshed = () => {
+    // Increment counter to trigger StreamsTab refresh
+    setClientsRefreshed(prev => prev + 1);
+    console.log('Clients refreshed, notifying StreamsTab to refresh...');
   };
 
   return (
@@ -70,10 +77,10 @@ const Index = () => {
           </TabsList>
 
           <TabsContent value="streams">
-            <StreamsTab />
+            <StreamsTab clientsRefreshed={clientsRefreshed} />
           </TabsContent>
           <TabsContent value="clients">
-            <ClientsTab />
+            <ClientsTab onClientsRefreshed={handleClientsRefreshed} />
           </TabsContent>
           <TabsContent value="videos">
             <VideoFilesTab />

@@ -17,7 +17,11 @@ import { useStreamingStatus } from './hooks/useStreamingStatus';
 import { useGroupOperations } from './hooks/useGroupOperations';
 import { useClientAssignment } from './hooks/useClientAssignment';
 
-const StreamsTab = () => {
+interface StreamsTabProps {
+  clientsRefreshed?: number; // Counter that increments when clients are refreshed
+}
+
+const StreamsTab: React.FC<StreamsTabProps> = ({ clientsRefreshed = 0 }) => {
   const { showError, showErrorByCode, handleApiError } = useErrorHandler();
   const hasInitialized = useRef(false); // Prevent multiple initializations
 
@@ -97,6 +101,31 @@ const StreamsTab = () => {
 
     return () => clearTimeout(timer);
   }, [streamingStatus, groups]);
+
+  // Periodic refresh to sync with backend auto-cleanup
+  useEffect(() => {
+    // Refresh data every 15 seconds to stay in sync with backend auto-cleanup
+    // This ensures group cards update quickly when clients are automatically removed
+    const refreshInterval = setInterval(async () => {
+      try {
+        console.log(' Periodic refresh: syncing with backend auto-cleanup...');
+        await refreshData();
+      } catch (error) {
+        console.error(' Periodic refresh failed:', error);
+        // Don't show error to user for background refresh
+      }
+    }, 15000); // 15 seconds - more responsive to auto-cleanup
+
+    return () => clearInterval(refreshInterval);
+  }, [refreshData]);
+
+  // Immediate refresh when clients are refreshed in ClientsTab
+  useEffect(() => {
+    if (clientsRefreshed > 0) {
+      console.log(' ClientsTab refreshed, triggering StreamsTab refresh...');
+      refreshData();
+    }
+  }, [clientsRefreshed, refreshData]);
 
   // Debug effect for client data - THROTTLED
   useEffect(() => {
