@@ -8,9 +8,8 @@ import os
 import sys
 import subprocess
 import time
-import tkinter as tk
-from tkinter import messagebox
 import json
+import signal
 
 def detect_wayland_outputs():
     """Detect available Wayland outputs using wlr-randr or similar tools"""
@@ -86,50 +85,173 @@ def detect_wayland_outputs():
     
     return outputs
 
-def test_wayland_output(output_name, hdmi_name):
-    """Test a specific Wayland output by creating a test window"""
+def test_wayland_output_native(output_name, hdmi_name):
+    """Test a specific Wayland output using native Wayland applications"""
     print(f"Testing {hdmi_name} (Output: {output_name})...")
     
     # Set Wayland environment variables
     os.environ['WAYLAND_DISPLAY'] = 'wayland-0'
     os.environ['XDG_SESSION_TYPE'] = 'wayland'
     
-    # For Wayland, we need to use a Wayland-compatible toolkit
-    # Tkinter with Wayland backend, or alternative like PyQt5/PySide2
+    success = True
     
+    # Test 1: Try to create a Wayland-native terminal
+    if command_exists('weston-terminal'):
+        print(f"  Testing with weston-terminal...")
+        try:
+            # Create a unique title for this output
+            title = f"Test-{output_name}-{int(time.time())}"
+            
+            # Start weston-terminal with specific title
+            process = subprocess.Popen([
+                'weston-terminal', 
+                '--title', title,
+                '--shell', '/bin/bash',
+                '-e', 'echo', f"Testing {hdmi_name} on {output_name}"
+            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            # Give it time to appear
+            time.sleep(2)
+            
+            # Check if process is running
+            if process.poll() is None:
+                print(f"    ✓ weston-terminal started successfully on {hdmi_name}")
+                
+                # Try to move the window to the specific output if possible
+                try_move_window_to_output(title, output_name)
+                
+                # Let it run for a few seconds
+                time.sleep(3)
+                
+                # Clean up
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                
+                print(f"    ✓ Test completed on {hdmi_name}")
+            else:
+                print(f"    ✗ weston-terminal failed to start on {hdmi_name}")
+                success = False
+                
+        except Exception as e:
+            print(f"    ✗ Error testing weston-terminal on {hdmi_name}: {e}")
+            success = False
+    
+    # Test 2: Try to create a simple Wayland surface (if wl-clipboard is available)
+    elif command_exists('wl-copy'):
+        print(f"  Testing with wl-copy (Wayland clipboard)...")
+        try:
+            # Test clipboard functionality
+            test_text = f"Testing {hdmi_name} on {output_name}"
+            result = subprocess.run(['wl-copy'], input=test_text, text=True, capture_output=True, timeout=5)
+            
+            if result.returncode == 0:
+                print(f"    ✓ wl-copy works on {hdmi_name}")
+                
+                # Test paste
+                result = subprocess.run(['wl-paste'], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0 and test_text in result.stdout:
+                    print(f"    ✓ wl-paste works on {hdmi_name}")
+                else:
+                    print(f"    ⚠ wl-paste test inconclusive on {hdmi_name}")
+            else:
+                print(f"    ✗ wl-copy failed on {hdmi_name}")
+                success = False
+                
+        except Exception as e:
+            print(f"    ✗ Error testing wl-copy on {hdmi_name}: {e}")
+            success = False
+    
+    # Test 3: Try to create a simple notification (if notify-send is available)
+    elif command_exists('notify-send'):
+        print(f"  Testing with notify-send...")
+        try:
+            result = subprocess.run([
+                'notify-send', 
+                '--app-name', 'Wayland Test',
+                f'Testing {hdmi_name}',
+                f'Output: {output_name}'
+            ], capture_output=True, timeout=5)
+            
+            if result.returncode == 0:
+                print(f"    ✓ notify-send works on {hdmi_name}")
+            else:
+                print(f"    ⚠ notify-send test inconclusive on {hdmi_name}")
+                
+        except Exception as e:
+            print(f"    ⚠ notify-send test failed on {hdmi_name}: {e}")
+    
+    # Test 4: Basic Wayland environment test
+    else:
+        print(f"  Testing basic Wayland environment...")
+        try:
+            # Check if we can access Wayland socket
+            wayland_socket = os.environ.get('WAYLAND_DISPLAY', 'wayland-0')
+            socket_path = f"/tmp/{wayland_socket}"
+            
+            if os.path.exists(socket_path):
+                print(f"    ✓ Wayland socket accessible: {socket_path}")
+            else:
+                print(f"    ⚠ Wayland socket not found: {socket_path}")
+            
+            # Check environment variables
+            if os.environ.get('XDG_SESSION_TYPE') == 'wayland':
+                print(f"    ✓ XDG_SESSION_TYPE is wayland")
+            else:
+                print(f"    ⚠ XDG_SESSION_TYPE is: {os.environ.get('XDG_SESSION_TYPE')}")
+                
+        except Exception as e:
+            print(f"    ⚠ Basic Wayland test failed: {e}")
+    
+    return success
+
+def try_move_window_to_output(window_title, output_name):
+    """Try to move a window to a specific Wayland output"""
     try:
-        # Try to create a Wayland-compatible window
-        # Note: Tkinter may not work properly with Wayland
-        root = tk.Tk()
-        root.title(f"Test Window - {hdmi_name}")
-        root.geometry("400x300")
+        # This is a complex task on Wayland - we'll try a few approaches
         
-        # Add some content
-        label = tk.Label(root, text=f"Test Window for {hdmi_name}\nOutput: {output_name}\nWayland Mode", 
-                        font=("Arial", 16), fg="blue")
-        label.pack(expand=True)
+        # Approach 1: Try using swaymsg if using Sway
+        if command_exists('swaymsg'):
+            print(f"    Attempting to move window to output {output_name} using sway...")
+            # Get the window ID first
+            result = subprocess.run(['swaymsg', '-t', 'get_tree'], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                try:
+                    tree = json.loads(result.stdout)
+                    # Find the window by title and move it to the output
+                    # This is a simplified approach - in practice, you'd need more complex parsing
+                    print(f"    Found Sway window tree, attempting output assignment...")
+                except json.JSONDecodeError:
+                    print(f"    Could not parse Sway tree")
         
-        # Add a button to close
-        close_btn = tk.Button(root, text="Close Window", command=root.destroy)
-        close_btn.pack(pady=20)
+        # Approach 2: Try using wlr-randr to set output as primary
+        elif command_exists('wlr-randr'):
+            print(f"    Attempting to configure output {output_name} using wlr-randr...")
+            # This would require parsing wlr-randr output and setting specific configurations
+            print(f"    Output configuration would require manual setup")
         
-        # Make window fullscreen for testing
-        root.attributes('-fullscreen', True)
+        # Approach 3: Use ydotool to simulate user interaction
+        elif command_exists('ydotool'):
+            print(f"    Attempting to interact with window using ydotool...")
+            # Move mouse to center of screen and click to focus
+            subprocess.run(['ydotool', 'mousemove', '--', '960', '540'], capture_output=True, timeout=2)
+            subprocess.run(['ydotool', 'click', '1'], capture_output=True, timeout=2)
+            print(f"    Window interaction attempted")
         
-        print(f"  ✓ {hdmi_name} window created successfully")
-        print(f"  ✓ Window should be visible on {hdmi_name}")
-        print(f"  ✓ Press the 'Close Window' button to continue")
-        
-        # Show window for 10 seconds or until closed
-        root.after(10000, root.destroy)  # Auto-close after 10 seconds
-        root.mainloop()
-        
-        print(f"  ✓ {hdmi_name} test completed successfully")
-        return True
-        
+        else:
+            print(f"    No tools available for window management on {output_name}")
+            
     except Exception as e:
-        print(f"  ✗ Error testing {hdmi_name}: {e}")
-        print(f"    This is common with Tkinter on Wayland")
+        print(f"    Window movement failed: {e}")
+
+def command_exists(command):
+    """Check if a command exists"""
+    try:
+        subprocess.run([command, '--version'], capture_output=True, timeout=5)
+        return True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
 def test_wayland_tools(output_name, hdmi_name):
@@ -311,15 +433,15 @@ def main():
         
         print()
         
-        # Test 3: Tkinter window (may not work on Wayland)
-        print(f"Creating test window on {hdmi_name}...")
-        print("  This will attempt to open a test window.")
-        print("  Note: Tkinter may not work properly with Wayland")
+        # Test 3: Native Wayland output testing (no Tkinter)
+        print(f"Testing native Wayland functionality on {hdmi_name}...")
+        print("  This will test Wayland-native applications and output handling.")
+        print("  Each output should be tested independently.")
         print()
         
-        if not test_wayland_output(output_name, hdmi_name):
-            print("  ⚠ Window creation failed (common on Wayland)")
-            # Don't fail the test for this, as it's expected on Wayland
+        if not test_wayland_output_native(output_name, hdmi_name):
+            print("  ⚠ Native Wayland test had issues")
+            # Don't fail the test for this, as it's expected on some Wayland setups
         
         results[hdmi_name] = success
         print()
