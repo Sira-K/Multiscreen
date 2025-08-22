@@ -1,382 +1,167 @@
 #!/usr/bin/env python3
 """
-Test script for dual HDMI functionality with Wayland support
-This script helps verify that both HDMI outputs are working correctly on Wayland
+Test script for dual HDMI functionality
+This script helps verify that both HDMI outputs are working correctly on X11
 """
 
 import os
 import sys
 import subprocess
 import time
-import json
-import signal
+import tkinter as tk
+from tkinter import messagebox
 
-def detect_wayland_outputs():
-    """Detect available Wayland outputs using wlr-randr or similar tools"""
-    print("Detecting Wayland outputs...")
+def test_display(display_num, hdmi_name):
+    """Test a specific display by creating a test window"""
+    print(f"Testing {hdmi_name} (Display :{display_num}.0)...")
     
-    outputs = []
+    # Set display environment
+    os.environ['DISPLAY'] = f":{display_num}.0"
     
-    # Try wlr-randr first (most common on Raspberry Pi with Wayland)
     try:
-        result = subprocess.run(['wlr-randr'], capture_output=True, text=True, timeout=10)
-        if result.returncode == 0:
-            print("  ✓ wlr-randr available")
-            # Parse wlr-randr output to find HDMI outputs
-            lines = result.stdout.strip().split('\n')
-            current_output = None
-            
-            for line in lines:
-                if line.strip() and not line.startswith(' '):
-                    # This is an output name
-                    current_output = line.strip()
-                    if 'HDMI' in current_output or 'hdmi' in current_output:
-                        outputs.append(current_output)
-                        print(f"    Found output: {current_output}")
-            
-            return outputs
-    except FileNotFoundError:
-        print("  ⚠ wlr-randr not found")
-    except Exception as e:
-        print(f"  ⚠ wlr-randr error: {e}")
-    
-    # Try swaymsg if using Sway
-    try:
-        result = subprocess.run(['swaymsg', '-t', 'get_outputs'], capture_output=True, text=True, timeout=10)
-        if result.returncode == 0:
-            print("  ✓ swaymsg available")
-            try:
-                data = json.loads(result.stdout)
-                for output in data:
-                    if output.get('active') and ('HDMI' in output.get('name', '') or 'hdmi' in output.get('name', '')):
-                        outputs.append(output['name'])
-                        print(f"    Found output: {output['name']}")
-            except json.JSONDecodeError:
-                print("  ⚠ Could not parse swaymsg output")
-            return outputs
-    except FileNotFoundError:
-        print("  ⚠ swaymsg not found")
-    except Exception as e:
-        print(f"  ⚠ swaymsg error: {e}")
-    
-    # Try weston-info if using Weston
-    try:
-        result = subprocess.run(['weston-info'], capture_output=True, text=True, timeout=10)
-        if result.returncode == 0:
-            print("  ✓ weston-info available")
-            lines = result.stdout.strip().split('\n')
-            for line in lines:
-                if 'HDMI' in line or 'hdmi' in line:
-                    # Extract output name from weston-info output
-                    if 'output' in line.lower():
-                        output_name = line.split()[-1] if line.split() else f"HDMI{len(outputs)+1}"
-                        outputs.append(output_name)
-                        print(f"    Found output: {output_name}")
-            return outputs
-    except FileNotFoundError:
-        print("  ⚠ weston-info not found")
-    except Exception as e:
-        print(f"  ⚠ weston-info error: {e}")
-    
-    # Fallback: assume standard HDMI outputs
-    if not outputs:
-        print("  ⚠ Could not detect outputs, using fallback names")
-        outputs = ['HDMI-A-1', 'HDMI-A-2']  # Common Wayland output names
-    
-    return outputs
-
-def test_wayland_output_native(output_name, hdmi_name):
-    """Test a specific Wayland output using native Wayland applications"""
-    print(f"Testing {hdmi_name} (Output: {output_name})...")
-    
-    # Set Wayland environment variables
-    os.environ['WAYLAND_DISPLAY'] = 'wayland-0'
-    os.environ['XDG_SESSION_TYPE'] = 'wayland'
-    
-    success = True
-    
-    # Test 1: Try to create a Wayland-native terminal
-    if command_exists('weston-terminal'):
-        print(f"  Testing with weston-terminal...")
-        try:
-            # Create a unique title for this output
-            title = f"Test-{output_name}-{int(time.time())}"
-            
-            # Start weston-terminal with specific title
-            process = subprocess.Popen([
-                'weston-terminal', 
-                '--title', title,
-                '--shell', '/bin/bash',
-                '-e', 'echo', f"Testing {hdmi_name} on {output_name}"
-            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            
-            # Give it time to appear
-            time.sleep(2)
-            
-            # Check if process is running
-            if process.poll() is None:
-                print(f"    ✓ weston-terminal started successfully on {hdmi_name}")
-                
-                # Try to move the window to the specific output if possible
-                try_move_window_to_output(title, output_name)
-                
-                # Let it run for a few seconds
-                time.sleep(3)
-                
-                # Clean up
-                process.terminate()
-                try:
-                    process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                
-                print(f"    ✓ Test completed on {hdmi_name}")
-            else:
-                print(f"    ✗ weston-terminal failed to start on {hdmi_name}")
-                success = False
-                
-        except Exception as e:
-            print(f"    ✗ Error testing weston-terminal on {hdmi_name}: {e}")
-            success = False
-    
-    # Test 2: Try to create a simple Wayland surface (if wl-clipboard is available)
-    elif command_exists('wl-copy'):
-        print(f"  Testing with wl-copy (Wayland clipboard)...")
-        try:
-            # Test clipboard functionality
-            test_text = f"Testing {hdmi_name} on {output_name}"
-            result = subprocess.run(['wl-copy'], input=test_text, text=True, capture_output=True, timeout=5)
-            
-            if result.returncode == 0:
-                print(f"    ✓ wl-copy works on {hdmi_name}")
-                
-                # Test paste
-                result = subprocess.run(['wl-paste'], capture_output=True, text=True, timeout=5)
-                if result.returncode == 0 and test_text in result.stdout:
-                    print(f"    ✓ wl-paste works on {hdmi_name}")
-                else:
-                    print(f"    ⚠ wl-paste test inconclusive on {hdmi_name}")
-            else:
-                print(f"    ✗ wl-copy failed on {hdmi_name}")
-                success = False
-                
-        except Exception as e:
-            print(f"    ✗ Error testing wl-copy on {hdmi_name}: {e}")
-            success = False
-    
-    # Test 3: Try to create a simple notification (if notify-send is available)
-    elif command_exists('notify-send'):
-        print(f"  Testing with notify-send...")
-        try:
-            result = subprocess.run([
-                'notify-send', 
-                '--app-name', 'Wayland Test',
-                f'Testing {hdmi_name}',
-                f'Output: {output_name}'
-            ], capture_output=True, timeout=5)
-            
-            if result.returncode == 0:
-                print(f"    ✓ notify-send works on {hdmi_name}")
-            else:
-                print(f"    ⚠ notify-send test inconclusive on {hdmi_name}")
-                
-        except Exception as e:
-            print(f"    ⚠ notify-send test failed on {hdmi_name}: {e}")
-    
-    # Test 4: Basic Wayland environment test
-    else:
-        print(f"  Testing basic Wayland environment...")
-        try:
-            # Check if we can access Wayland socket
-            wayland_socket = os.environ.get('WAYLAND_DISPLAY', 'wayland-0')
-            socket_path = f"/tmp/{wayland_socket}"
-            
-            if os.path.exists(socket_path):
-                print(f"    ✓ Wayland socket accessible: {socket_path}")
-            else:
-                print(f"    ⚠ Wayland socket not found: {socket_path}")
-            
-            # Check environment variables
-            if os.environ.get('XDG_SESSION_TYPE') == 'wayland':
-                print(f"    ✓ XDG_SESSION_TYPE is wayland")
-            else:
-                print(f"    ⚠ XDG_SESSION_TYPE is: {os.environ.get('XDG_SESSION_TYPE')}")
-                
-        except Exception as e:
-            print(f"    ⚠ Basic Wayland test failed: {e}")
-    
-    return success
-
-def try_move_window_to_output(window_title, output_name):
-    """Try to move a window to a specific Wayland output"""
-    try:
-        # This is a complex task on Wayland - we'll try a few approaches
+        # Create a simple test window
+        root = tk.Tk()
+        root.title(f"Test Window - {hdmi_name}")
+        root.geometry("400x300")
         
-        # Approach 1: Try using swaymsg if using Sway
-        if command_exists('swaymsg'):
-            print(f"    Attempting to move window to output {output_name} using sway...")
-            # Get the window ID first
-            result = subprocess.run(['swaymsg', '-t', 'get_tree'], capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                try:
-                    tree = json.loads(result.stdout)
-                    # Find the window by title and move it to the output
-                    # This is a simplified approach - in practice, you'd need more complex parsing
-                    print(f"    Found Sway window tree, attempting output assignment...")
-                except json.JSONDecodeError:
-                    print(f"    Could not parse Sway tree")
+        # Add some content
+        label = tk.Label(root, text=f"Test Window for {hdmi_name}\nDisplay :{display_num}.0", 
+                        font=("Arial", 16), fg="blue")
+        label.pack(expand=True)
         
-        # Approach 2: Try using wlr-randr to set output as primary
-        elif command_exists('wlr-randr'):
-            print(f"    Attempting to configure output {output_name} using wlr-randr...")
-            # This would require parsing wlr-randr output and setting specific configurations
-            print(f"    Output configuration would require manual setup")
+        # Add a button to close
+        close_btn = tk.Button(root, text="Close Window", command=root.destroy)
+        close_btn.pack(pady=20)
         
-        # Approach 3: Use ydotool to simulate user interaction
-        elif command_exists('ydotool'):
-            print(f"    Attempting to interact with window using ydotool...")
-            # Move mouse to center of screen and click to focus
-            subprocess.run(['ydotool', 'mousemove', '--', '960', '540'], capture_output=True, timeout=2)
-            subprocess.run(['ydotool', 'click', '1'], capture_output=True, timeout=2)
-            print(f"    Window interaction attempted")
+        # Make window fullscreen for testing
+        root.attributes('-fullscreen', True)
         
-        else:
-            print(f"    No tools available for window management on {output_name}")
-            
-    except Exception as e:
-        print(f"    Window movement failed: {e}")
-
-def command_exists(command):
-    """Check if a command exists"""
-    try:
-        subprocess.run([command, '--version'], capture_output=True, timeout=5)
+        print(f"  ✓ {hdmi_name} window created successfully")
+        print(f"  ✓ Window should be visible on {hdmi_name}")
+        print(f"  ✓ Press the 'Close Window' button to continue")
+        
+        # Show window for 10 seconds or until closed
+        root.after(10000, root.destroy)  # Auto-close after 10 seconds
+        root.mainloop()
+        
+        print(f"  ✓ {hdmi_name} test completed successfully")
         return True
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+        
+    except Exception as e:
+        print(f"  ✗ Error testing {hdmi_name}: {e}")
         return False
 
-def test_wayland_tools(output_name, hdmi_name):
-    """Test Wayland-compatible tools on a specific output"""
-    print(f"Testing Wayland tools on {hdmi_name} (Output: {output_name})...")
-    
-    success = True
-    
-    # Test wlr-randr
-    try:
-        result = subprocess.run(['wlr-randr'], capture_output=True, text=True, timeout=10)
-        if result.returncode == 0:
-            print(f"  ✓ wlr-randr works")
-            # Look for our specific output
-            if output_name in result.stdout:
-                print(f"    Found output {output_name} in wlr-randr")
-            else:
-                print(f"    ⚠ Output {output_name} not found in wlr-randr")
-        else:
-            print(f"  ✗ wlr-randr failed: {result.stderr}")
-            success = False
-    except FileNotFoundError:
-        print(f"  ⚠ wlr-randr not available")
-    except Exception as e:
-        print(f"  ✗ Error testing wlr-randr: {e}")
-        success = False
-    
-    # Test ydotool (Wayland-compatible alternative to xdotool)
-    try:
-        result = subprocess.run(['ydotool', '--version'], capture_output=True, text=True, timeout=5)
-        if result.returncode == 0:
-            print(f"  ✓ ydotool available: {result.stdout.strip()}")
-        else:
-            print(f"  ⚠ ydotool not working properly")
-    except FileNotFoundError:
-        print(f"  ⚠ ydotool not available (install with: sudo apt install ydotool)")
-    except Exception as e:
-        print(f"  ⚠ ydotool error: {e}")
-    
-    # Test wtype (Wayland-compatible alternative to xdotool)
-    try:
-        result = subprocess.run(['wtype', '--version'], capture_output=True, text=True, timeout=5)
-        if result.returncode == 0:
-            print(f"  ✓ wtype available: {result.stdout.strip()}")
-        else:
-            print(f"  ⚠ wtype not working properly")
-    except FileNotFoundError:
-        print(f"  ⚠ wtype not available (install with: sudo apt install wtype)")
-    except Exception as e:
-        print(f"  ⚠ wtype error: {e}")
-    
-    return success
-
-def test_wayland_app(output_name, hdmi_name):
-    """Test running a Wayland-compatible application"""
-    print(f"Testing Wayland application on {hdmi_name} (Output: {output_name})...")
+def test_xrandr(display_num, hdmi_name):
+    """Test xrandr functionality on a specific display"""
+    print(f"Testing xrandr on {hdmi_name} (Display :{display_num}.0)...")
     
     try:
-        # Try to run a Wayland-compatible application
-        # weston-terminal is a good test
-        result = subprocess.run(['weston-terminal'], timeout=5, capture_output=True)
+        # Test xrandr --listmonitors
+        result = subprocess.run(['xrandr', '--display', f':{display_num}.0', '--listmonitors'], 
+                              capture_output=True, text=True, timeout=10)
         
         if result.returncode == 0:
-            print(f"  ✓ weston-terminal works on {hdmi_name}")
+            print(f"  ✓ xrandr --listmonitors works on {hdmi_name}")
+            print(f"    {result.stdout.strip()}")
+        else:
+            print(f"  ✗ xrandr --listmonitors failed on {hdmi_name}: {result.stderr}")
+            return False
+        
+        # Test xrandr --listoutputs
+        result = subprocess.run(['xrandr', '--display', f':{display_num}.0', '--listoutputs'], 
+                              capture_output=True, text=True, timeout=10)
+        
+        if result.returncode == 0:
+            print(f"  ✓ xrandr --listoutputs works on {hdmi_name}")
+            print(f"    {result.stdout.strip()}")
+        else:
+            print(f"  ✗ xrandr --listoutputs failed on {hdmi_name}: {result.stderr}")
+            return False
+        
+        return True
+        
+    except subprocess.TimeoutExpired:
+        print(f"  ✗ xrandr timeout on {hdmi_name}")
+        return False
+    except Exception as e:
+        print(f"  ✗ Error testing xrandr on {hdmi_name}: {e}")
+        return False
+
+def test_simple_app(display_num, hdmi_name):
+    """Test running a simple application on a specific display"""
+    print(f"Testing simple application on {hdmi_name} (Display :{display_num}.0)...")
+    
+    try:
+        # Try to run xeyes (if available)
+        result = subprocess.run(['xeyes', '-display', f':{display_num}.0'], 
+                              timeout=5, capture_output=True)
+        
+        if result.returncode == 0:
+            print(f"  ✓ xeyes works on {hdmi_name}")
             return True
         else:
-            print(f"  ⚠ weston-terminal not available, trying alternative test")
+            print(f"  ⚠ xeyes not available, trying alternative test")
             
-            # Alternative: test with wlr-randr
-            result = subprocess.run(['wlr-randr'], capture_output=True, text=True, timeout=10)
+            # Alternative: test with xwininfo
+            result = subprocess.run(['xwininfo', '-display', f':{display_num}.0', '-root'], 
+                                  capture_output=True, text=True, timeout=10)
             
             if result.returncode == 0:
-                print(f"  ✓ wlr-randr works on {hdmi_name}")
+                print(f"  ✓ xwininfo works on {hdmi_name}")
                 return True
             else:
-                print(f"  ✗ Basic Wayland test failed on {hdmi_name}")
+                print(f"  ✗ Basic X11 test failed on {hdmi_name}")
                 return False
                 
     except subprocess.TimeoutExpired:
-        print(f"  ✓ Wayland app test completed on {hdmi_name}")
+        print(f"  ✓ Simple app test completed on {hdmi_name}")
         return True
     except FileNotFoundError:
-        print(f"  ⚠ weston-terminal not found, skipping app test")
+        print(f"  ⚠ xeyes not found, skipping simple app test")
         return True
     except Exception as e:
-        print(f"  ✗ Error testing Wayland app on {hdmi_name}: {e}")
+        print(f"  ✗ Error testing simple app on {hdmi_name}: {e}")
         return False
 
-def check_wayland_session():
-    """Check if we're running in a Wayland session"""
-    print("Checking Wayland session...")
+def check_x11_session():
+    """Check if we're running in an X11 session"""
+    print("Checking X11 session...")
     
-    wayland_display = os.environ.get('WAYLAND_DISPLAY')
+    display = os.environ.get('DISPLAY')
     xdg_session = os.environ.get('XDG_SESSION_TYPE')
     
-    if wayland_display:
-        print(f"  ✓ WAYLAND_DISPLAY set to: {wayland_display}")
+    if display:
+        print(f"  ✓ DISPLAY set to: {display}")
     else:
-        print(f"  ⚠ WAYLAND_DISPLAY not set")
+        print(f"  ⚠ DISPLAY not set")
     
-    if xdg_session == 'wayland':
+    if xdg_session == 'x11':
         print(f"  ✓ XDG_SESSION_TYPE is: {xdg_session}")
+    elif xdg_session == 'wayland':
+        print(f"  ⚠ XDG_SESSION_TYPE is: {xdg_session} (expected: x11)")
+        print(f"  You may need to switch to X11 for this test to work properly")
     else:
-        print(f"  ⚠ XDG_SESSION_TYPE is: {xdg_session} (expected: wayland)")
+        print(f"  ⚠ XDG_SESSION_TYPE is: {xdg_session}")
     
-    # Check for Wayland compositor
+    # Check for X11 server
     try:
-        result = subprocess.run(['pgrep', '-f', 'weston'], capture_output=True, text=True)
+        result = subprocess.run(['xset', 'q'], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
-            print(f"  ✓ Weston compositor running (PID: {result.stdout.strip()})")
+            print(f"  ✓ X11 server is accessible")
         else:
-            result = subprocess.run(['pgrep', '-f', 'sway'], capture_output=True, text=True)
-            if result.returncode == 0:
-                print(f"  ✓ Sway compositor running (PID: {result.stdout.strip()})")
-            else:
-                print(f"  ⚠ No Wayland compositor detected")
+            print(f"  ✗ X11 server not accessible")
+            return False
+    except FileNotFoundError:
+        print(f"  ⚠ xset not found - cannot verify X11 server")
     except Exception as e:
-        print(f"  ⚠ Could not check compositor: {e}")
+        print(f"  ⚠ Could not check X11 server: {e}")
     
-    return wayland_display is not None or xdg_session == 'wayland'
+    return True
 
 def main():
     """Main test function"""
     print("=" * 60)
-    print("DUAL HDMI WAYLAND TEST SCRIPT")
+    print("DUAL HDMI X11 TEST SCRIPT")
     print("=" * 60)
     print()
     
@@ -393,55 +178,47 @@ def main():
     
     print()
     
-    # Check Wayland session
-    if not check_wayland_session():
-        print("⚠ Not running in Wayland session")
-        print("  This script is designed for Wayland environments")
-        print("  If you're using X11, use the original test script instead")
+    # Check X11 session
+    if not check_x11_session():
+        print("⚠ X11 session check failed")
+        print("  This script is designed for X11 environments")
+        print("  If you're using Wayland, you may need to switch to X11")
         print()
     
-    # Detect Wayland outputs
-    outputs = detect_wayland_outputs()
+    # Test both displays
+    displays = [
+        (0, "HDMI1 (Primary)"),
+        (1, "HDMI2 (Secondary)")
+    ]
     
-    if not outputs:
-        print("✗ No Wayland outputs detected")
-        print("  Please check your Wayland configuration")
-        return
-    
-    print(f"Detected {len(outputs)} outputs: {outputs}")
-    print()
-    
-    # Test outputs
     results = {}
     
-    for i, output_name in enumerate(outputs):
-        hdmi_name = f"HDMI{i+1} ({'Primary' if i == 0 else 'Secondary'})"
+    for display_num, hdmi_name in displays:
         print(f"Testing {hdmi_name}...")
         print("-" * 40)
         
         success = True
         
-        # Test 1: Wayland tools functionality
-        if not test_wayland_tools(output_name, hdmi_name):
+        # Test 1: xrandr functionality
+        if not test_xrandr(display_num, hdmi_name):
             success = False
         
         print()
         
-        # Test 2: Wayland application
-        if not test_wayland_app(output_name, hdmi_name):
+        # Test 2: Simple application
+        if not test_simple_app(display_num, hdmi_name):
             success = False
         
         print()
         
-        # Test 3: Native Wayland output testing (no Tkinter)
-        print(f"Testing native Wayland functionality on {hdmi_name}...")
-        print("  This will test Wayland-native applications and output handling.")
-        print("  Each output should be tested independently.")
+        # Test 3: Tkinter window (interactive)
+        print(f"Creating test window on {hdmi_name}...")
+        print("  This will open a fullscreen test window.")
+        print("  Close it to continue testing.")
         print()
         
-        if not test_wayland_output_native(output_name, hdmi_name):
-            print("  ⚠ Native Wayland test had issues")
-            # Don't fail the test for this, as it's expected on some Wayland setups
+        if not test_display(display_num, hdmi_name):
+            success = False
         
         results[hdmi_name] = success
         print()
@@ -464,22 +241,29 @@ def main():
     
     if all_passed:
         print("🎉 ALL TESTS PASSED!")
-        print("Your dual HDMI Wayland setup is working correctly.")
+        print("Your dual HDMI X11 setup is working correctly.")
         print()
-        print("Note: For the multi-screen client to work with Wayland,")
-        print("you may need to modify it to use Wayland-compatible tools:")
-        print("  - Replace wmctrl with wlr-randr or swaymsg")
-        print("  - Replace xdotool with ydotool or wtype")
-        print("  - Update display detection logic")
+        print("You can now run the multi-screen clients:")
+        print("  Terminal 1: ./launch_hdmi1.sh")
+        print("  Terminal 2: ./launch_hdmi2.sh")
+        print()
+        print("Or manually:")
+        print("  Terminal 1: python3 client.py --target-screen HDMI1")
+        print("  Terminal 2: python3 client.py --target-screen HDMI2")
     else:
         print("⚠ SOME TESTS FAILED")
         print("Please check the error messages above and verify your setup.")
         print()
-        print("Common Wayland issues:")
-        print("  1. Wayland compositor not running")
-        print("  2. Dual HDMI not enabled in /boot/config.txt")
-        print("  3. Missing Wayland tools (wlr-randr, ydotool, wtype)")
+        print("Common issues:")
+        print("  1. Dual HDMI not enabled in /boot/config.txt")
+        print("  2. X11 server not running on secondary display")
+        print("  3. Display permissions issues")
         print("  4. Hardware connection problems")
+        print()
+        print("To switch from Wayland to X11:")
+        print("  sudo nano /etc/gdm3/custom.conf")
+        print("  Add: WaylandEnable=false")
+        print("  sudo reboot")
     
     print("=" * 60)
 
