@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Unified Multi-Screen Client for Video Wall Systems
-Simple, reliable client for multi-screen video streaming
+Unified Multi-Screen Client for Video Wall Systems - Enhanced Version
+Simple, reliable client for multi-screen video streaming with target screen selection
 """
 import argparse
 import requests
@@ -25,11 +25,11 @@ from tkinter import messagebox
 class UnifiedMultiScreenClient:
     """
     Unified Multi-Screen Client for Video Wall Systems
-    Simple and reliable client for multi-screen video streaming
+    Simple and reliable client for multi-screen video streaming with target screen selection
     """
     
     def __init__(self, server_url: str, hostname: str = None, display_name: str = None, 
-                 force_ffplay: bool = False):
+                 force_ffplay: bool = False, target_screen: str = None):
         """
         Initialize the multi-screen client
         
@@ -38,21 +38,34 @@ class UnifiedMultiScreenClient:
             hostname: Unique client identifier
             display_name: Friendly display name
             force_ffplay: Force use of ffplay instead of smart selection
+            target_screen: Target screen (HDMI1, HDMI2, 1, 2, left, right)
         """
         self.server_url = server_url.rstrip('/')
         self.hostname = hostname or socket.gethostname()
         self.display_name = display_name or f"Display-{self.hostname}"
         self.force_ffplay = force_ffplay
+        self.target_screen = target_screen
+        
+        # Configure logging FIRST (before any other operations that might use logger)
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[logging.StreamHandler(sys.stdout)]
+        )
+        self.logger = logging.getLogger(__name__)
         
         # Window management
         self.window_manager = None
         self.current_monitor = 0
         self.monitor_positions = [
-            (0, 0),      # Monitor 1 (left)
-            (1920, 0),   # Monitor 2 (right)
+            (0, 0),      # Monitor 1 (left/HDMI1)
+            (1920, 0),   # Monitor 2 (right/HDMI2)
             (3840, 0),   # Monitor 3 (if available)
             (0, 1080),   # Monitor 4 (bottom-left)
         ]
+        
+        # Determine target monitor index from target_screen parameter
+        self.target_monitor_index = self._parse_target_screen(target_screen)
         
         # Stream management
         self.current_stream_url = None
@@ -75,14 +88,6 @@ class UnifiedMultiScreenClient:
         parsed_url = urlparse(self.server_url)
         self.server_ip = parsed_url.hostname or "127.0.0.1"
         
-                # Configure logging
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[logging.StreamHandler(sys.stdout)]
-        )
-        self.logger = logging.getLogger(__name__)
-        
         # Setup signal handlers and cleanup
         self._setup_signal_handlers()
         atexit.register(self._emergency_cleanup)
@@ -90,6 +95,63 @@ class UnifiedMultiScreenClient:
         # Find player executable
         self.player_executable = self._find_player_executable()
     
+    def _parse_target_screen(self, target_screen: str) -> int:
+        """Parse target screen parameter and return monitor index"""
+        if not target_screen:
+            return 0  # Default to first monitor
+        
+        target = target_screen.lower().strip()
+        
+        # Map common screen identifiers to monitor indices
+        screen_mapping = {
+            'hdmi1': 0, 'hdmi-1': 0, 'hdmi_1': 0,
+            'hdmi2': 1, 'hdmi-2': 1, 'hdmi_2': 1,
+            'left': 0, 'primary': 0, 'main': 0,
+            'right': 1, 'secondary': 1, 'second': 1,
+            '1': 0, '2': 1, '3': 2, '4': 3,
+            '0': 0  # Allow 0-based indexing too
+        }
+        
+        if target in screen_mapping:
+            monitor_index = screen_mapping[target]
+            self.logger.info(f"Target screen '{target_screen}' mapped to monitor {monitor_index + 1}")
+            return monitor_index
+        
+        # Try to parse as integer
+        try:
+            index = int(target)
+            if index > 0:
+                monitor_index = index - 1  # Convert 1-based to 0-based
+            else:
+                monitor_index = 0
+            self.logger.info(f"Target screen '{target_screen}' parsed as monitor {monitor_index + 1}")
+            return monitor_index
+        except ValueError:
+            self.logger.warning(f"Invalid target screen '{target_screen}', defaulting to monitor 1")
+            return 0
+    
+    def _get_target_screen_info(self) -> Dict[str, Any]:
+        """Get information about the target screen"""
+        if self.target_monitor_index < len(self.monitor_positions):
+            x, y = self.monitor_positions[self.target_monitor_index]
+            screen_names = ['HDMI1 (Left)', 'HDMI2 (Right)', 'HDMI3', 'HDMI4']
+            screen_name = screen_names[self.target_monitor_index] if self.target_monitor_index < len(screen_names) else f"Monitor {self.target_monitor_index + 1}"
+            
+            return {
+                'index': self.target_monitor_index,
+                'position': (x, y),
+                'name': screen_name,
+                'specified': self.target_screen
+            }
+        else:
+            return {
+                'index': 0,
+                'position': (0, 0),
+                'name': 'HDMI1 (Left)',
+                'specified': self.target_screen,
+                'warning': f'Target monitor {self.target_monitor_index + 1} not available, using monitor 1'
+            }
+
     @property
     def client_id(self) -> str:
         """Generate unique client ID using hostname and IP address"""
@@ -205,6 +267,7 @@ class UnifiedMultiScreenClient:
     def move_to_monitor(self, monitor_index: int):
         """Move the fullscreen window to a specific monitor"""
         if not self.player_process or self.player_process.poll() is not None:
+            print(f"No active player process to move")
             return
         
         if monitor_index >= len(self.monitor_positions):
@@ -214,30 +277,130 @@ class UnifiedMultiScreenClient:
         x, y = self.monitor_positions[monitor_index]
         self.current_monitor = monitor_index
         
+        print(f"Attempting to move window to Monitor {monitor_index + 1} at ({x}, {y})")
+        
         try:
-            # Use wmctrl to move the window (works with Wayland/XWayland)
             window_title = f"Multi-Screen Client - {self.display_name}"
+            print(f"Looking for window with title: {window_title}")
             
-            # Find the window by title
+            # Method 1: Try wmctrl with window ID
             result = subprocess.run(['wmctrl', '-l'], capture_output=True, text=True)
             if result.returncode == 0:
+                print(f"wmctrl -l output:")
                 for line in result.stdout.split('\n'):
-                    if window_title in line:
-                        window_id = line.split()[0]
-                        # Move window to new position
-                        subprocess.run(['wmctrl', '-ir', window_id, '-e', f'0,{x},{y},-1,-1'])
-                        print(f"Moved to Monitor {monitor_index + 1} (x={x}, y={y})")
-                        return
+                    if line.strip():
+                        print(f"  {line}")
+                        if window_title in line:
+                            window_id = line.split()[0]
+                            print(f"Found window with ID: {window_id}")
+                            
+                            # Move window to new position
+                            move_cmd = ['wmctrl', '-ir', window_id, '-e', f'0,{x},{y},-1,-1']
+                            print(f"Executing: {' '.join(move_cmd)}")
+                            move_result = subprocess.run(move_cmd, capture_output=True, text=True)
+                            
+                            if move_result.returncode == 0:
+                                print(f"Successfully moved to Monitor {monitor_index + 1} (x={x}, y={y})")
+                                
+                                # Verify the move worked
+                                time.sleep(1)
+                                verify_result = subprocess.run(['wmctrl', '-lG'], capture_output=True, text=True)
+                                if verify_result.returncode == 0:
+                                    for verify_line in verify_result.stdout.split('\n'):
+                                        if window_id in verify_line:
+                                            parts = verify_line.split()
+                                            if len(parts) >= 4:
+                                                actual_x, actual_y = parts[2], parts[3]
+                                                print(f"Verification: Window is now at ({actual_x}, {actual_y})")
+                                                return
+                            else:
+                                print(f"wmctrl move failed: {move_result.stderr}")
+                    
+            # Method 2: Try wmctrl with window name (fallback)
+            print(f"Trying wmctrl with window name...")
+            name_cmd = ['wmctrl', '-r', window_title, '-e', f'0,{x},{y},-1,-1']
+            print(f"Executing: {' '.join(name_cmd)}")
+            name_result = subprocess.run(name_cmd, capture_output=True, text=True)
             
-            # Fallback: try xdotool if wmctrl doesn't work
-            subprocess.run(['xdotool', 'search', '--name', window_title, 'windowmove', str(x), str(y)])
-            print(f"Moved to Monitor {monitor_index + 1} (x={x}, y={y})")
+            if name_result.returncode == 0:
+                print(f"Successfully moved via window name to Monitor {monitor_index + 1} (x={x}, y={y})")
+                return
+            else:
+                print(f"wmctrl name-based move failed: {name_result.stderr}")
             
-        except FileNotFoundError:
-            print(f"Window management tools not found. Install with:")
-            print(f"   sudo apt install wmctrl xdotool")
+            # Method 3: Try xdotool (fallback)
+            print(f"Trying xdotool...")
+            xdotool_result = subprocess.run(['xdotool', 'search', '--name', window_title, 'windowmove', str(x), str(y)], 
+                                          capture_output=True, text=True)
+            if xdotool_result.returncode == 0:
+                print(f"Successfully moved via xdotool to Monitor {monitor_index + 1} (x={x}, y={y})")
+                return
+            else:
+                print(f"xdotool failed: {xdotool_result.stderr}")
+            
+            print(f"All window movement methods failed")
+            
+        except FileNotFoundError as e:
+            print(f"Window management tool not found: {e}")
+            print(f"Install with: sudo apt install wmctrl xdotool")
         except Exception as e:
             self.logger.error(f"Failed to move window: {e}")
+            print(f"Exception during window move: {e}")
+    
+    def auto_position_window(self):
+        """Automatically position the window on the target screen"""
+        if self.target_screen:
+            print(f"\n AUTO-POSITIONING WINDOW")
+            target_info = self._get_target_screen_info()
+            
+            if 'warning' in target_info:
+                print(f"   Warning: {target_info['warning']}")
+            
+            print(f"   Target: {target_info['name']}")
+            print(f"   Position: {target_info['position']}")
+            print(f"   Specified: {target_info['specified']}")
+            
+            # Wait longer for the player to start and window to be ready
+            print(f"   Waiting 5 seconds for player to stabilize...")
+            time.sleep(5)
+            
+            # Try multiple times to ensure window movement
+            for attempt in range(3):
+                print(f"   Positioning attempt {attempt + 1}/3...")
+                
+                # Move to target monitor
+                self.move_to_monitor(target_info['index'])
+                
+                # Wait and verify
+                time.sleep(2)
+                
+                # Check if it worked
+                try:
+                    result = subprocess.run(['wmctrl', '-lG'], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        window_title = f"Multi-Screen Client - {self.display_name}"
+                        for line in result.stdout.split('\n'):
+                            if window_title in line:
+                                parts = line.split()
+                                if len(parts) >= 4:
+                                    actual_x = int(parts[2])
+                                    target_x = target_info['position'][0]
+                                    print(f"   Current position: x={actual_x}, target: x={target_x}")
+                                    
+                                    if abs(actual_x - target_x) < 100:  # Allow some tolerance
+                                        print(f"   ✓ Window successfully positioned on target screen!")
+                                        return
+                                    else:
+                                        print(f"   ✗ Window not at target position, retrying...")
+                                break
+                except Exception as e:
+                    print(f"   Error checking position: {e}")
+                
+                if attempt < 2:  # Don't sleep after last attempt
+                    time.sleep(1)
+            
+            print(f"   ⚠ Auto-positioning may not have worked. Try manual hotkeys (Ctrl+2)")
+            print(f"   Or check: wmctrl -lG | grep 'Multi-Screen Client'")
     
     def move_to_next_monitor(self, event=None):
         """Move to the next monitor"""
@@ -251,22 +414,24 @@ class UnifiedMultiScreenClient:
     
     def show_help(self, event=None):
         """Show hotkey help"""
-        help_text = """
+        target_info = self._get_target_screen_info()
+        help_text = f"""
 Multi-Screen Client Hotkeys:
 
 Ctrl+M or Ctrl+Right: Move to next monitor
 Ctrl+Left: Move to previous monitor
-Ctrl+1: Move to Monitor 1 (left)
-Ctrl+2: Move to Monitor 2 (right)
+Ctrl+1: Move to Monitor 1 (HDMI1/Left)
+Ctrl+2: Move to Monitor 2 (HDMI2/Right)
 Ctrl+3: Move to Monitor 3 (if available)
-Ctrl+4: Move to Monitor 4 (bottom-left)
+Ctrl+4: Move to Monitor 4 (if available)
 Ctrl+H: Show this help
+
+Current Target: {target_info['name']}
+Position: {target_info['position']}
 
 Note: Make sure the client window has focus for hotkeys to work.
         """
         messagebox.showinfo("Multi-Screen Client Help", help_text)
-    
-
     
     def detect_sei_in_stream(self, stream_url: str, timeout: int = 10) -> bool:
         """
@@ -360,12 +525,17 @@ Note: Make sure the client window has focus for hotkeys to work.
     def register(self) -> bool:
         """Register client with server"""
         try:
+            target_info = self._get_target_screen_info()
+            
             print(f"\n{'='*80}")
             print(f" STARTING MULTI-SCREEN CLIENT REGISTRATION")
             print(f"   Client: {self.hostname}")
             print(f"   Local IP: {self._get_local_ip_address()}")
             print(f"   Client ID: {self.client_id}")
             print(f"   Display Name: {self.display_name}")
+            print(f"   Target Screen: {target_info['name']} at {target_info['position']}")
+            if 'warning' in target_info:
+                print(f"   Warning: {target_info['warning']}")
             print(f"   Server: {self.server_url}")
             print(f"   Server IP: {self.server_ip}")
             print(f"   Smart Player: {'Enabled' if not self.force_ffplay else 'Disabled (force ffplay)'}")
@@ -390,7 +560,9 @@ Note: Make sure the client window has focus for hotkeys to work.
                 "hostname": self.hostname,
                 "ip_address": local_ip,  # Include IP address for unique client ID
                 "display_name": self.display_name,
-                "platform": f"multiscreen_{player_type}"  # Indicate multi-screen capability
+                "platform": f"multiscreen_{player_type}",  # Indicate multi-screen capability
+                "target_screen": self.target_screen,  # Include target screen info
+                "target_monitor": target_info['index']
             }
             
             print(f"\n Sending registration request...")
@@ -639,11 +811,11 @@ Note: Make sure the client window has focus for hotkeys to work.
             
         if "127.0.0.1" in stream_url:
             fixed_url = stream_url.replace("127.0.0.1", self.server_ip)
-            self.logger.info(f"Fixed stream URL: 127.0.0.1  {self.server_ip}")
+            self.logger.info(f"Fixed stream URL: 127.0.0.1 → {self.server_ip}")
             return fixed_url
         elif "localhost" in stream_url:
             fixed_url = stream_url.replace("localhost", self.server_ip)
-            self.logger.info(f"Fixed stream URL: localhost  {self.server_ip}")
+            self.logger.info(f"Fixed stream URL: localhost → {self.server_ip}")
             return fixed_url
         else:
             return stream_url
@@ -667,9 +839,15 @@ Note: Make sure the client window has focus for hotkeys to work.
             print(f"   Stream URL: {self.current_stream_url}")
             
             if player_type == "cpp_player":
-                return self._play_with_cpp_player()
+                result = self._play_with_cpp_player()
             else:
-                return self._play_with_ffplay()
+                result = self._play_with_ffplay()
+            
+            # Auto-position window on target screen if specified
+            if result and self.target_screen:
+                threading.Thread(target=self.auto_position_window, daemon=True).start()
+            
+            return result
                     
         except Exception as e:
             self.logger.error(f"Player error: {e}")
@@ -744,6 +922,9 @@ Note: Make sure the client window has focus for hotkeys to work.
                 "-flags", "low_delay", 
                 "-framedrop",
                 "-strict", "experimental",
+                "-err_detect", "ignore_err",  # Ignore decode errors
+                "-ec", "favor_inter",         # Error concealment
+                "-sync", "video",             # Sync to video
                 "-window_title", f"Multi-Screen Client - {self.display_name}",
                 "-fs",  # Fullscreen
                 "-autoexit",
@@ -764,7 +945,10 @@ Note: Make sure the client window has focus for hotkeys to work.
                     for line in iter(self.player_process.stderr.readline, ''):
                         if line.strip():
                             line_clean = line.strip()
-                            if "error" in line_clean.lower():
+                            # Filter out common H.264 decode errors to reduce log spam
+                            if "decode_slice_header error" in line_clean:
+                                continue  # Skip these common errors
+                            elif "error" in line_clean.lower():
                                 self.logger.error(f" {line_clean}")
                             elif "warning" in line_clean.lower():
                                 self.logger.warning(f" {line_clean}")
@@ -888,9 +1072,9 @@ Note: Make sure the client window has focus for hotkeys to work.
                     if url_changed or version_changed:
                         self.logger.info(f"Stream change detected:")
                         if url_changed:
-                            self.logger.info(f"  URL: {self.current_stream_url}  {new_stream_url}")
+                            self.logger.info(f"  URL: {self.current_stream_url} → {new_stream_url}")
                         if version_changed:
-                            self.logger.info(f"  Version: {self.current_stream_version}  {new_stream_version}")
+                            self.logger.info(f"  Version: {self.current_stream_version} → {new_stream_version}")
                         
                         self.current_stream_url = new_stream_url
                         if new_stream_version is not None:
@@ -993,11 +1177,16 @@ Note: Make sure the client window has focus for hotkeys to work.
     def run(self):
         """Main execution flow"""
         try:
+            target_info = self._get_target_screen_info()
+            
             print(f"\n{'='*80}")
-            print(f" UNIFIED MULTI-SCREEN CLIENT")
+            print(f" UNIFIED MULTI-SCREEN CLIENT (ENHANCED)")
             print(f"   Hostname: {self.hostname}")
             print(f"   Client ID: {self.client_id}")
             print(f"   Display Name: {self.display_name}")
+            print(f"   Target Screen: {target_info['name']} at {target_info['position']}")
+            if 'warning' in target_info:
+                print(f"   Warning: {target_info['warning']}")
             print(f"   Server: {self.server_url}")
             print(f"   Smart Player: {'Enabled' if not self.force_ffplay else 'Disabled (force ffplay)'}")
             print(f"   C++ Player: {'Available' if self.player_executable else 'Not found'}")
@@ -1063,18 +1252,19 @@ Note: Make sure the client window has focus for hotkeys to work.
 
 
 def main():
-    """Main entry point for the multi-screen client"""
+    """Main entry point for the enhanced multi-screen client"""
     parser = argparse.ArgumentParser(
         prog='client.py',
         description="""
- Unified Multi-Screen Client for Video Wall Systems
+ Enhanced Multi-Screen Client for Video Wall Systems
 
 A simple and reliable client for multi-screen video streaming that supports
-automatic player selection with movable fullscreen windows.
+automatic player selection with target screen positioning.
 
 Features:
    Automatic server registration with unique client identification
    Smart player selection (C++ player for SEI streams, ffplay fallback)
+   Target screen positioning (auto-move to specified monitor)
    Movable fullscreen windows with hotkeys
    Uses system default display (DISPLAY=:0.0)
    Automatic reconnection and error recovery
@@ -1088,16 +1278,34 @@ Features:
     python3 client.py --server http://192.168.1.100:5000 \\
       --hostname rpi-client-1 --display-name "Monitor 1"
 
-  Multiple clients on same device:
-    # Client 1:
+  Target specific screen (NEW!):
     python3 client.py --server http://192.168.1.100:5000 \\
-      --hostname rpi-client-1 --display-name "Client 1"
+      --hostname rpi-client-1 --display-name "HDMI1" \\
+      --target-screen HDMI1
 
-    # Client 2:
     python3 client.py --server http://192.168.1.100:5000 \\
-      --hostname rpi-client-2 --display-name "Client 2"
+      --hostname rpi-client-2 --display-name "HDMI2" \\
+      --target-screen HDMI2
 
-  Note: Uses system default display (DISPLAY=:0.0)
+  Alternative target screen formats:
+    --target-screen left      # Left monitor (HDMI1)
+    --target-screen right     # Right monitor (HDMI2)  
+    --target-screen 1         # Monitor 1 (HDMI1)
+    --target-screen 2         # Monitor 2 (HDMI2)
+    --target-screen primary   # Primary monitor
+    --target-screen secondary # Secondary monitor
+
+  DUAL HDMI SETUP:
+
+  Terminal 1 (HDMI1/Left):
+    python3 client.py --server http://192.168.1.100:5000 \\
+      --hostname rpi-client-1 --display-name "HDMI1" \\
+      --target-screen HDMI1
+
+  Terminal 2 (HDMI2/Right):
+    python3 client.py --server http://192.168.1.100:5000 \\
+      --hostname rpi-client-2 --display-name "HDMI2" \\
+      --target-screen HDMI2
 
   ADVANCED OPTIONS:
 
@@ -1105,58 +1313,42 @@ Features:
     python3 client.py --server http://192.168.1.100:5000 \\
       --hostname client-1 --display-name "Screen 1" --force-ffplay
 
-  Multi-monitor setup with hotkeys:
-    # Start client (will appear on first monitor)
-    DISPLAY=:0 python3 client.py --server http://192.168.1.100:5000 \\
-      --hostname client-1 --display-name "Monitor 1" &
-    
-    # Use hotkeys to move between monitors:
-    # Ctrl+M or Ctrl+Right: Next monitor
-    # Ctrl+Left: Previous monitor
-    # Ctrl+1-4: Specific monitor
-
   Debug mode with detailed logging:
     python3 client.py --server http://192.168.1.100:5000 \\
       --hostname client-1 --display-name "Screen 1" --debug
 
- DEPLOYMENT EXAMPLES:
+ TARGET SCREEN POSITIONING:
 
-  Systemd service for Client 1:
-    ExecStart=/usr/bin/python3 client.py \\
-      --server http://192.168.1.100:5000 \\
-      --hostname rpi-client-1 \\
-      --display-name "Client 1"
+  How it works:
+  1. Client starts and registers with server
+  2. Video player launches (usually on first monitor)  
+  3. Client automatically moves video to target screen
+  4. Video plays on the correct monitor immediately
+  5. Manual hotkeys still available for adjustments
 
-  Systemd service for Client 2:
-    ExecStart=/usr/bin/python3 client.py \\
-      --server http://192.168.1.100:5000 \\
-      --hostname rpi-client-2 \\
-      --display-name "Client 2"
+  Target Screen Values:
+    HDMI1, hdmi1, left, primary, main, 1     → Left monitor
+    HDMI2, hdmi2, right, secondary, 2        → Right monitor
+    3, 4                                     → Additional monitors
 
- SETUP PROCESS:
+ HOTKEY CONTROLS:
 
-  1. Ensure ffmpeg/ffplay is installed:
-     sudo apt install ffmpeg
-
-  2. Start client:
-     python3 client.py --server http://YOUR_SERVER_IP:5000 \\
-       --hostname client-1 --display-name "Screen 1"
-
-  3. Use web interface to assign clients to groups and start streaming
-
-
+  Even with target screen, hotkeys still work:
+    Ctrl+M or Ctrl+Right: Move to next monitor
+    Ctrl+Left: Move to previous monitor
+    Ctrl+1: Move to Monitor 1 (HDMI1/Left)
+    Ctrl+2: Move to Monitor 2 (HDMI2/Right)
+    Ctrl+H: Show help
 
  TROUBLESHOOTING:
 
   Check display configuration:
     xrandr --listmonitors
 
-  Test display:
-    xeyes &
-
-  View client logs:
+  Test target screen positioning:
     python3 client.py --server http://YOUR_SERVER_IP:5000 \\
-      --hostname client-1 --display-name "Screen 1" --debug
+      --hostname test-client --display-name "Test" \\
+      --target-screen right --debug
 
 For more information, visit: https://github.com/your-repo/openvideowalls
         """
@@ -1179,6 +1371,9 @@ For more information, visit: https://github.com/your-repo/openvideowalls
     
     # Optional arguments group
     optional_group = parser.add_argument_group('  Optional Arguments')
+    optional_group.add_argument('--target-screen', 
+                               metavar='SCREEN',
+                               help='Target screen (HDMI1, HDMI2, left, right, 1, 2, primary, secondary)')
     optional_group.add_argument('--force-ffplay', 
                                action='store_true',
                                help='Force use of ffplay for all streams (disable smart C++/ffplay selection)')
@@ -1189,7 +1384,7 @@ For more information, visit: https://github.com/your-repo/openvideowalls
 
     optional_group.add_argument('--version', 
                                action='version', 
-                               version=' Unified Multi-Screen Client v3.0')
+                               version=' Enhanced Multi-Screen Client v3.1')
     
     # Parse arguments
     args = parser.parse_args()
@@ -1200,8 +1395,6 @@ For more information, visit: https://github.com/your-repo/openvideowalls
         print("   Example: --server http://192.168.1.100:5000")
         print("   Example: --server https://videowall.example.com:5000")
         sys.exit(1)
-    
-
     
     # Validate hostname (basic check)
     if not args.hostname.strip():
@@ -1220,16 +1413,21 @@ For more information, visit: https://github.com/your-repo/openvideowalls
         logging.getLogger().setLevel(logging.DEBUG)
         print(" Debug logging enabled")
     
+    # Show target screen info if specified
+    if args.target_screen:
+        print(f" Target screen specified: '{args.target_screen}'")
+    
     # Create and run client
     try:
         client = UnifiedMultiScreenClient(
             server_url=args.server,
             hostname=args.hostname,
             display_name=args.display_name,
-            force_ffplay=args.force_ffplay
+            force_ffplay=args.force_ffplay,
+            target_screen=args.target_screen
         )
         
-        print(" Starting Unified Multi-Screen Client...")
+        print(" Starting Enhanced Multi-Screen Client...")
         print("   Press Ctrl+C to stop gracefully")
         
         client.run()

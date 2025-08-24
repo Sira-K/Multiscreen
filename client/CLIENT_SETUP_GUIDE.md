@@ -1,455 +1,434 @@
-# Multi-Screen Client Setup Guide
+# Complete Multi-Screen Client Setup Guide
+## From Fresh Raspberry Pi to Running Video Wall Client
 
-## Table of Contents
-1. [Overview](#overview)
-2. [Prerequisites](#prerequisites)
-3. [Installation](#installation)
-4. [Basic Usage](#basic-usage)
-5. [Multi-Monitor Setup](#multi-monitor-setup)
-6. [Hotkey Controls](#hotkey-controls)
-7. [Advanced Configuration](#advanced-configuration)
-8. [Troubleshooting](#troubleshooting)
-9. [Examples](#examples)
-10. [Auto-Startup](#auto-startup)
-
-## Overview
-
-The Multi-Screen Client is a Python-based application that connects to a video wall server and displays video streams with movable fullscreen windows. It supports multiple monitors and can be controlled via hotkeys to move between displays.
-
-### Key Features
-- **Movable Fullscreen Windows** - Use hotkeys to move between monitors
-- **Smart Player Selection** - Automatically chooses between ffplay and C++ player
-- **Multi-Monitor Support** - Works with 1-4+ monitors
-- **Hotkey Controls** - Keyboard shortcuts for window management
-- **Automatic Reconnection** - Handles network issues gracefully
-- **Wayland/XWayland Compatible** - Works on modern Linux systems
-
-## Prerequisites
-
-### System Requirements
-- **Operating System**: Linux (Ubuntu, Debian, Raspberry Pi OS, etc.)
-- **Python**: Python 3.7 or higher
-- **Display**: X11, Wayland, or XWayland
-- **Network**: Internet connection for server communication
-
-### Hardware Requirements
-- **RAM**: Minimum 2GB (4GB recommended)
-- **Storage**: 1GB free space
-- **Network**: Ethernet or WiFi connection
-- **Display**: HDMI, DPI, or USB display support
-
-## Installation
-
-### Step 1: Download and Prepare
-```bash
-# Clone or download the client files
-cd /path/to/your/client/directory
-
-# Make setup script executable
-chmod +x setup_client.sh
-```
-
-### Step 2: Run Setup Script
-```bash
-# Run the automated setup
-./setup_client.sh
-```
-
-The setup script will automatically:
-- Install window management tools (wmctrl, xdotool, tkinter)
-- Install ffmpeg for video playback
-- Create convenience scripts
-- Set up multi-monitor configuration tools
-
-### Step 3: Verify Installation
-```bash
-# Check if required tools are installed
-which ffmpeg
-which wmctrl
-which xdotool
-
-# Test Python tkinter
-python3 -c "import tkinter; print('✓ tkinter available')"
-```
-
-## Basic Usage
-
-### Starting the Client
-
-#### Method 1: Using the Convenience Script (Recommended)
-```bash
-./run_client.sh --server http://YOUR_SERVER_IP:5000 \
-  --hostname YOUR_CLIENT_NAME --display-name "Display Name"
-```
-
-#### Method 2: Direct Python Command
-```bash
-python3 client.py --server http://YOUR_SERVER_IP:5000 \
-  --hostname YOUR_CLIENT_NAME --display-name "Display Name"
-```
-
-#### Method 3: With Display Environment Variable
-```bash
-DISPLAY=:0 python3 client.py --server http://YOUR_SERVER_IP:5000 \
-  --hostname YOUR_CLIENT_NAME --display-name "Display Name"
-```
-
-### Required Parameters
-- **`--server`**: Server URL (e.g., `http://192.168.1.100:5000`)
-- **`--hostname`**: Unique client identifier
-- **`--display-name`**: Friendly name for admin interface
-
-### Optional Parameters
-- **`--force-ffplay`**: Force use of ffplay instead of smart selection
-- **`--debug`**: Enable detailed logging
-
-## Multi-Monitor Setup
-
-### Automatic Setup
-```bash
-# Run the multi-monitor configuration script
-./setup_multi_monitor.sh
-```
-
-This script offers several configuration options:
-1. **Dual Monitor (Side by Side)** - Left/Right setup
-2. **Dual Monitor (Stacked)** - Top/Bottom setup
-3. **Triple Monitor (Horizontal)** - 3 monitors in a row
-4. **Custom Configuration** - Manual setup
-5. **Wayland/XWayland Status** - Check display system
-
-### Manual Setup
-```bash
-# Check current monitor configuration
-xrandr --listmonitors
-
-# Configure dual monitors side by side
-xrandr --output HDMI-1 --mode 1920x1080 --pos 0x0
-xrandr --output HDMI-2 --mode 1920x1080 --pos 1920x0
-
-# Configure triple monitors
-xrandr --output HDMI-1 --mode 1920x1080 --pos 0x0
-xrandr --output HDMI-2 --mode 1920x1080 --pos 1920x0
-xrandr --output HDMI-3 --mode 1920x1080 --pos 3840x0
-```
-
-### Monitor Coordinate System
-```
-Monitor 1 (Left):     x=0, y=0
-Monitor 2 (Right):    x=1920, y=0
-Monitor 3 (Far Right): x=3840, y=0
-Monitor 4 (Bottom):   x=0, y=1080
-```
-
-## Hotkey Controls
-
-### Available Hotkeys
-| Hotkey | Action | Description |
-|--------|--------|-------------|
-| **Ctrl+M** | Next Monitor | Move to next available monitor |
-| **Ctrl+Right** | Next Monitor | Alternative to Ctrl+M |
-| **Ctrl+Left** | Previous Monitor | Move to previous monitor |
-| **Ctrl+1** | Monitor 1 | Move to left monitor |
-| **Ctrl+2** | Monitor 2 | Move to right monitor |
-| **Ctrl+3** | Monitor 3 | Move to far right monitor |
-| **Ctrl+4** | Monitor 4 | Move to bottom monitor |
-| **Ctrl+H** | Help | Show hotkey reference |
-
-### How Hotkeys Work
-1. **Window Manager** - Hidden Tkinter application captures hotkeys
-2. **Window Detection** - Finds video window by title
-3. **Position Calculation** - Calculates target monitor coordinates
-4. **Window Movement** - Uses wmctrl/xdotool to move the window
-
-### Hotkey Requirements
-- **Client window must have focus** for hotkeys to work
-- **Window manager must be running** (starts automatically with client)
-- **Proper monitor configuration** must be set up
-
-## Advanced Configuration
-
-### Environment Variables
-```bash
-# Set display for specific monitor
-export DISPLAY=:0
-
-# Set custom window manager tools
-export WINDOW_MANAGER_TOOL=wmctrl  # or xdotool
-```
-
-### Configuration Files
-The client automatically detects and uses:
-- System display configuration
-- Monitor positions from xrandr
-- Network settings from system
-
-### Custom Monitor Positions
-You can modify the monitor positions in the client code:
-```python
-self.monitor_positions = [
-    (0, 0),      # Monitor 1 (left)
-    (1920, 0),   # Monitor 2 (right)
-    (3840, 0),   # Monitor 3 (far right)
-    (0, 1080),   # Monitor 4 (bottom)
-]
-```
-
-## Troubleshooting
-
-### Common Issues
-
-#### 1. Hotkeys Not Working
-```bash
-# Check if window manager is running
-ps aux | grep python3 | grep client
-
-# Verify window management tools
-wmctrl -l
-xdotool --version
-
-# Check if client window has focus
-# Click on the video window to give it focus
-```
-
-#### 2. Window Not Moving
-```bash
-# Check monitor configuration
-xrandr --listmonitors
-
-# Verify monitor positions
-xrandr --query | grep -E "(HDMI|connected)"
-
-# Test window movement manually
-wmctrl -l  # List windows
-wmctrl -ir WINDOW_ID -e 0,1920,0,-1,-1  # Move to x=1920, y=0
-```
-
-#### 3. Display Issues
-```bash
-# Check display system
-echo $XDG_SESSION_TYPE
-echo $WAYLAND_DISPLAY
-echo $DISPLAY
-
-# For Wayland users
-# Monitors are configured through desktop environment settings
-# Use hotkeys to move windows between monitors
-```
-
-#### 4. Network Connection Issues
-```bash
-# Test server connectivity
-curl -I http://YOUR_SERVER_IP:5000
-
-# Check firewall settings
-sudo ufw status
-
-# Verify network configuration
-ip addr show
-```
-
-### Debug Mode
-```bash
-# Run client with debug logging
-./run_client.sh --server http://YOUR_SERVER_IP:5000 \
-  --hostname client-1 --display-name "Debug Client" --debug
-```
-
-## Examples
-
-### Single Monitor Setup
-```bash
-# Basic single monitor client
-./run_client.sh --server http://192.168.1.100:5000 \
-  --hostname rpi-client-1 --display-name "Main Display"
-```
-
-### Dual Monitor Setup
-```bash
-# Configure monitors first
-./setup_multi_monitor.sh
-# Choose option 1 (Dual Monitor Side by Side)
-
-# Start client on first monitor
-./run_client.sh --server http://192.168.1.100:5000 \
-  --hostname rpi-client-1 --display-name "Left Monitor"
-
-# Use Ctrl+M to move to right monitor
-# Use Ctrl+1 to return to left monitor
-```
-
-### Multiple Clients on Same Machine
-```bash
-# Terminal 1 - Client 1
-./run_client.sh --server http://192.168.1.100:5000 \
-  --hostname rpi-client-1 --display-name "Client 1" &
-
-# Terminal 2 - Client 2  
-./run_client.sh --server http://192.168.1.100:5000 \
-  --hostname rpi-client-2 --display-name "Client 2" &
-
-# Each client can be moved independently with hotkeys
-```
-
-### Production Deployment
-```bash
-# Edit systemd service template
-nano multiscreen-client.service
-
-# Install service
-sudo cp multiscreen-client.service /etc/systemd/system/
-sudo systemctl enable multiscreen-client.service
-sudo systemctl start multiscreen-client.service
-
-# Check service status
-sudo systemctl status multiscreen-client.service
-```
-
-## Auto-Startup
-
-### Systemd Service Setup
-```bash
-# 1. Edit the service file
-sudo nano /etc/systemd/system/multiscreen-client.service
-
-# 2. Update the service file with your details:
-[Unit]
-Description=Multi-Screen Client Service
-After=network.target graphical-session.target
-Wants=graphical-session.target
-
-[Service]
-Type=simple
-User=YOUR_USERNAME
-Environment=DISPLAY=:0
-WorkingDirectory=/path/to/your/client
-ExecStart=/usr/bin/python3 /path/to/your/client/client.py \
-  --server http://YOUR_SERVER_IP:5000 \
-  --hostname YOUR_CLIENT_NAME \
-  --display-name "YOUR_DISPLAY_NAME"
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-
-# 3. Enable and start the service
-sudo systemctl daemon-reload
-sudo systemctl enable multiscreen-client.service
-sudo systemctl start multiscreen-client.service
-```
-
-### Startup Script
-```bash
-# Create a startup script
-cat > ~/start_client.sh << 'EOF'
-#!/bin/bash
-cd /path/to/your/client
-./run_client.sh --server http://YOUR_SERVER_IP:5000 \
-  --hostname YOUR_CLIENT_NAME --display-name "YOUR_DISPLAY_NAME"
-EOF
-
-chmod +x ~/start_client.sh
-
-# Add to autostart
-mkdir -p ~/.config/autostart
-cat > ~/.config/autostart/multiscreen-client.desktop << EOF
-[Desktop Entry]
-Type=Application
-Name=Multi-Screen Client
-Exec=/home/YOUR_USERNAME/start_client.sh
-Hidden=false
-NoDisplay=false
-X-GNOME-Autostart-enabled=true
-EOF
-```
-
-## Command Reference
-
-### Client Commands
-```bash
-# Basic client startup
-./run_client.sh --server URL --hostname NAME --display-name "NAME"
-
-# With debug logging
-./run_client.sh --server URL --hostname NAME --display-name "NAME" --debug
-
-# Force ffplay usage
-./run_client.sh --server URL --hostname NAME --display-name "NAME" --force-ffplay
-
-# Direct Python execution
-python3 client.py --server URL --hostname NAME --display-name "NAME"
-```
-
-### Setup Commands
-```bash
-# Run setup script
-./setup_client.sh
-
-# Configure monitors
-./setup_multi_monitor.sh
-
-# Check setup status
-ls -la *.sh
-which ffmpeg wmctrl xdotool
-```
-
-### Monitor Commands
-```bash
-# Check monitor status
-xrandr --listmonitors
-
-# Configure monitors manually
-xrandr --output HDMI-1 --mode 1920x1080 --pos 0x0
-xrandr --output HDMI-2 --mode 1920x1080 --pos 1920x0
-
-# Reset monitor configuration
-xrandr --auto
-```
-
-### Service Commands
-```bash
-# Start service
-sudo systemctl start multiscreen-client.service
-
-# Stop service
-sudo systemctl stop multiscreen-client.service
-
-# Check status
-sudo systemctl status multiscreen-client.service
-
-# View logs
-sudo journalctl -u multiscreen-client.service -f
-```
-
-## Support and Resources
-
-### Getting Help
-- **Hotkey Help**: Press `Ctrl+H` while client is running
-- **Debug Mode**: Use `--debug` flag for detailed logging
-- **Service Logs**: Check systemd logs for service issues
-
-### File Locations
-- **Client Script**: `./client.py`
-- **Setup Script**: `./setup_client.sh`
-- **Runner Script**: `./run_client.sh`
-- **Monitor Setup**: `./setup_multi_monitor.sh`
-- **Service Template**: `./multiscreen-client.service`
-
-### Dependencies
-- **ffmpeg**: Video playback
-- **wmctrl**: Window management
-- **xdotool**: X11 automation
-- **tkinter**: Python GUI (hotkey handling)
+This guide will take you from a factory-fresh Raspberry Pi to a fully working dual-screen video wall client with automatic positioning.
 
 ---
 
-## Quick Start Checklist
+## Table of Contents
+1. [Initial Raspberry Pi Setup](#1-initial-raspberry-pi-setup)
+2. [System Configuration](#2-system-configuration)
+3. [Display System Setup](#3-display-system-setup)
+4. [Dual HDMI Configuration](#4-dual-hdmi-configuration)
+5. [Installing Dependencies](#5-installing-dependencies)
+6. [Testing the Setup](#6-testing-the-setup)
+7. [Running the Client](#7-running-the-client)
+8. [Troubleshooting](#8-troubleshooting)
 
-- [ ] Run `./setup_client.sh`
-- [ ] Configure monitors with `./setup_multi_monitor.sh`
-- [ ] Start client with `./run_client.sh`
-- [ ] Test hotkeys (Ctrl+M, Ctrl+1-4)
-- [ ] Configure auto-startup (optional)
+---
 
-**Your multi-screen client is now ready with movable window support!** 
+## 1. Initial Raspberry Pi Setup
+
+### **Hardware Requirements:**
+- Raspberry Pi 5 (recommended) or Raspberry Pi 4
+- MicroSD card (32GB+ recommended)
+- Two HDMI displays/monitors
+- Two HDMI cables
+- Keyboard and mouse (for initial setup)
+- Ethernet cable or WiFi connection
+
+### **Install Raspberry Pi OS:**
+
+1. **Download Raspberry Pi Imager:**
+   - Go to https://www.raspberrypi.org/software/
+   - Download and install Raspberry Pi Imager
+
+2. **Flash the OS:**
+   - Insert your MicroSD card
+   - Open Raspberry Pi Imager
+   - Choose "Raspberry Pi OS (64-bit)" (recommended)
+   - Select your MicroSD card
+   - Click "Write"
+
+3. **First Boot:**
+   - Insert SD card into Raspberry Pi
+   - Connect HDMI cable to **HDMI0** port (the one closest to USB-C power)
+   - Connect keyboard, mouse, and power
+   - Boot and follow the welcome wizard
+
+4. **Complete Initial Setup:**
+   - Set country, language, timezone
+   - Create user account (remember this username)
+   - Connect to WiFi or Ethernet
+   - Update software when prompted
+
+---
+
+## 2. System Configuration
+
+### **Update the System:**
+```bash
+sudo apt update && sudo apt upgrade -y
+```
+
+### **Enable SSH (Optional but Recommended):**
+```bash
+sudo systemctl enable ssh
+sudo systemctl start ssh
+```
+
+### **Install Essential Tools:**
+```bash
+sudo apt install -y git curl wget vim nano
+```
+
+---
+
+## 3. Display System Setup
+
+### **Switch to X11 (Required for Window Management):**
+
+The multi-screen client works best with X11 instead of Wayland for reliable window positioning.
+
+1. **Open Raspberry Pi Configuration:**
+   ```bash
+   sudo raspi-config
+   ```
+
+2. **Navigate to Advanced Options:**
+   - Select "6 Advanced Options"
+   - Select "A6 Wayland"
+   - Choose "X11" 
+   - Select "OK"
+   - Choose "Finish"
+
+3. **Reboot to Apply Changes:**
+   ```bash
+   sudo reboot
+   ```
+
+4. **Verify X11 is Active:**
+   After reboot, check:
+   ```bash
+   echo $XDG_SESSION_TYPE
+   # Should show: x11
+   ```
+
+---
+
+## 4. Dual HDMI Configuration
+
+### **Enable Dual HDMI Support:**
+
+1. **Open Raspberry Pi Configuration:**
+   ```bash
+   sudo raspi-config
+   ```
+
+2. **Enable Advanced Display Options:**
+   - Select "2 Display Options"
+   - Select "D3 Composite" 
+   - Choose "No" (disable composite)
+   - Select "OK"
+
+3. **Configure Boot Options:**
+   - Go back to main menu
+   - Select "6 Advanced Options"
+   - Select "A1 Expand Filesystem"
+   - Select "OK"
+
+4. **Manual Boot Config (Alternative Method):**
+   If raspi-config doesn't have the option, edit manually:
+   ```bash
+   sudo nano /boot/config.txt
+   ```
+   
+   Add these lines at the end:
+   ```
+   # Dual HDMI Configuration
+   dtoverlay=vc4-kms-v3d
+   max_framebuffers=2
+   disable_fw_kms_setup=1
+   disable_overscan=1
+   ```
+
+5. **Reboot to Apply HDMI Changes:**
+   ```bash
+   sudo reboot
+   ```
+
+6. **Connect Both Displays:**
+   - Connect first display to **HDMI0** (closest to USB-C power)
+   - Connect second display to **HDMI1** (closest to Ethernet port)
+   - Both displays should now work
+
+7. **Verify Dual HDMI Setup:**
+   ```bash
+   xrandr --listmonitors
+   ```
+   
+   You should see something like:
+   ```
+   Monitors: 2
+    0: +*HDMI-1 1920/598x1080/336+0+0  HDMI-1
+    1: +HDMI-2 1920/531x1080/299+1920+0  HDMI-2
+   ```
+
+---
+
+## 5. Installing Dependencies
+
+### **Install Required Packages:**
+
+```bash
+# Update package list
+sudo apt update
+
+# Install video and window management tools
+sudo apt install -y ffmpeg wmctrl xdotool python3-tk x11-apps
+
+# Install development tools (optional, for C++ player)
+sudo apt install -y build-essential cmake git
+
+# Install Python requirements
+sudo apt install -y python3-pip python3-requests
+```
+
+### **Verify Installation:**
+```bash
+# Test each tool
+ffplay --version
+wmctrl --version
+xdotool --version
+python3 -c "import tkinter; print('✓ tkinter works')"
+python3 -c "import requests; print('✓ requests works')"
+```
+
+---
+
+## 6. Testing the Setup
+
+### **Test Display Configuration:**
+```bash
+# Check monitor layout
+xrandr --listmonitors
+
+# List available outputs
+xrandr --listoutputs
+```
+
+### **Test Video Playback on Each Monitor:**
+
+**Test HDMI1 (Left Monitor):**
+```bash
+ffplay -f lavfi -i testsrc2=size=1920x1080:rate=30 \
+  -window_title "Test HDMI1" -x 1920 -y 1080 -left 0 -top 0 -t 5
+```
+
+**Test HDMI2 (Right Monitor):**
+```bash
+ffplay -f lavfi -i testsrc2=size=1920x1080:rate=30 \
+  -window_title "Test HDMI2" -x 1920 -y 1080 -left 1920 -top 0 -t 5
+```
+
+You should see:
+- Test pattern on left monitor (HDMI1) for 5 seconds
+- Test pattern on right monitor (HDMI2) for 5 seconds
+
+### **Test Window Movement:**
+```bash
+# Open a test window
+xeyes &
+
+# Get the window ID
+wmctrl -l
+
+# Move window to right monitor (replace WINDOW_ID with actual ID)
+wmctrl -ir WINDOW_ID -e 0,1920,0,-1,-1
+
+# Move window to left monitor
+wmctrl -ir WINDOW_ID -e 0,0,0,-1,-1
+
+# Close test window
+pkill xeyes
+```
+
+---
+
+## 7. Running the Client
+
+### **Download/Setup Your Client:**
+
+1. **Create Project Directory:**
+   ```bash
+   mkdir -p ~/multiscreen-client
+   cd ~/multiscreen-client
+   ```
+
+2. **Place Your Enhanced client.py:**
+   - Copy your enhanced `client.py` file to this directory
+   - Make sure it includes the `--target-screen` functionality
+
+3. **Verify Client Syntax:**
+   ```bash
+   python3 -m py_compile client.py
+   echo "✓ Client syntax is valid"
+   ```
+
+### **Run the Client:**
+
+**Terminal 1 - HDMI1 (Left Monitor):**
+```bash
+python3 client.py \
+  --server http://YOUR_SERVER_IP:5000 \
+  --hostname rpi-client-1 \
+  --display-name "HDMI-1" \
+  --target-screen HDMI1
+```
+
+**Terminal 2 - HDMI2 (Right Monitor):**
+```bash
+python3 client.py \
+  --server http://YOUR_SERVER_IP:5000 \
+  --hostname rpi-client-2 \
+  --display-name "HDMI-2" \
+  --target-screen HDMI2
+```
+
+### **What Should Happen:**
+
+1. **Registration:** Each client connects to the server
+2. **Assignment:** Admin assigns clients to groups/streams via web interface
+3. **Auto-Positioning:** Video automatically appears on the correct monitor
+4. **Playback:** Synchronized video streams play on both displays
+
+### **Hotkey Controls (While Running):**
+- **Ctrl+1:** Move video to left monitor (HDMI1)
+- **Ctrl+2:** Move video to right monitor (HDMI2)
+- **Ctrl+M:** Move to next monitor
+- **Ctrl+H:** Show help
+
+---
+
+## 8. Troubleshooting
+
+### **Common Issues and Solutions:**
+
+#### **Issue: Only one monitor works**
+**Solution:**
+```bash
+# Check HDMI connections are secure
+# Verify both displays are powered on
+# Check boot config:
+grep "dtoverlay=vc4-kms-v3d" /boot/config.txt
+
+# If missing, add it:
+echo "dtoverlay=vc4-kms-v3d" | sudo tee -a /boot/config.txt
+sudo reboot
+```
+
+#### **Issue: Window positioning doesn't work**
+**Solution:**
+```bash
+# Verify X11 is active:
+echo $XDG_SESSION_TYPE  # Should show "x11"
+
+# If showing "wayland", switch to X11:
+sudo raspi-config
+# Advanced Options → Wayland → X11 → Reboot
+
+# Test window tools:
+wmctrl --version
+xdotool --version
+```
+
+#### **Issue: "command not found" errors**
+**Solution:**
+```bash
+# Install missing packages:
+sudo apt update
+sudo apt install -y ffmpeg wmctrl xdotool python3-tk
+```
+
+#### **Issue: Client won't connect to server**
+**Solution:**
+```bash
+# Test network connectivity:
+ping YOUR_SERVER_IP
+
+# Test server accessibility:
+curl -I http://YOUR_SERVER_IP:5000
+
+# Check firewall:
+sudo ufw status
+```
+
+#### **Issue: Video has decode errors**
+**Solution:**
+```bash
+# Test with a simple stream:
+ffplay http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4
+
+# Check network bandwidth
+# Verify server stream quality
+```
+
+### **Debug Mode:**
+Run client with debug logging:
+```bash
+python3 client.py \
+  --server http://YOUR_SERVER_IP:5000 \
+  --hostname rpi-client-1 \
+  --display-name "HDMI-1" \
+  --target-screen HDMI1 \
+  --debug
+```
+
+### **Check System Status:**
+```bash
+# Display configuration:
+xrandr --listmonitors
+xrandr --listoutputs
+
+# Running processes:
+ps aux | grep python3
+
+# Window list:
+wmctrl -l
+
+# System resources:
+htop
+```
+
+---
+
+## Summary Checklist
+
+- [ ] **Fresh Raspberry Pi OS installed and updated**
+- [ ] **X11 display system configured (not Wayland)**
+- [ ] **Dual HDMI enabled in boot config**
+- [ ] **Both monitors detected and working**
+- [ ] **All dependencies installed (ffmpeg, wmctrl, xdotool, etc.)**
+- [ ] **Video test works on both monitors**
+- [ ] **Window movement test works**
+- [ ] **Enhanced client.py with --target-screen functionality**
+- [ ] **Network connectivity to server confirmed**
+- [ ] **Both client instances can connect and register**
+
+## Quick Reference Commands
+
+```bash
+# Check display system
+echo $XDG_SESSION_TYPE
+
+# List monitors
+xrandr --listmonitors
+
+# Test video on HDMI1
+ffplay -f lavfi -i testsrc2=size=1920x1080:rate=30 -left 0 -top 0 -t 3
+
+# Test video on HDMI2  
+ffplay -f lavfi -i testsrc2=size=1920x1080:rate=30 -left 1920 -top 0 -t 3
+
+# Run client on HDMI1
+python3 client.py --server http://SERVER:5000 --hostname client-1 --display-name "HDMI-1" --target-screen HDMI1
+
+# Run client on HDMI2
+python3 client.py --server http://SERVER:5000 --hostname client-2 --display-name "HDMI-2" --target-screen HDMI2
+```
+
+---
+
+**Your dual-screen video wall client is now ready!** 🎉
+
+The video streams will automatically position themselves on the correct monitors, and you can use hotkeys to move them if needed. The setup provides reliable, synchronized video playback across multiple displays with precise window management.
