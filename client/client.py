@@ -496,27 +496,22 @@ class UnifiedMultiScreenClient:
                 return "127.0.0.1"
     
     def create_window_manager(self):
-        """Create a hidden window manager for hotkey handling"""
+        """Create an invisible window manager (no visible window needed)"""
         try:
-            # Create a simple window manager (no hotkeys needed)
+            # Create an invisible window manager for background processing
             self.window_manager = tk.Tk()
             self.window_manager.title(f"Multi-Screen Client - {self.display_name}")
-            self.window_manager.geometry("400x200")
-            self.window_manager.configure(bg='black')
             
-            # Add a simple label
-            label = tk.Label(self.window_manager, 
-                           text=f"Client: {self.display_name}\nTarget: {self.target_screen or 'Default'}\nStatus: Running",
-                           fg='white', bg='black', font=('Arial', 12))
-            label.pack(expand=True)
+            # Make window invisible
+            self.window_manager.withdraw()  # Hide the window
+            self.window_manager.attributes('-alpha', 0.0)  # Make completely transparent
             
-            # Make window always on top and focusable
-            self.window_manager.attributes('-topmost', True)
-            self.window_manager.focus_force()
+            # Set minimal size to avoid any visual impact
+            self.window_manager.geometry("1x1+0+0")
             
-            print(f"🖥️  Window Manager Started")
+            print(f"🖥️  Invisible Window Manager Started")
             print(f"   Target Screen: {self.target_screen or 'Default'}")
-            print(f"   Note: Monitor movement disabled")
+            print(f"   Status: No visible window (background processing only)")
             
             return True
         except Exception as e:
@@ -535,29 +530,21 @@ class UnifiedMultiScreenClient:
             target_info = self._get_target_screen_info()
             print(f"   Target: {target_info['name']}")
             
-            # Check if we have positioning tools available
-            if not self._check_positioning_tools():
-                print(f"   Note: Window positioning tools not available")
-                print(f"   Install with: sudo apt-get install wmctrl xdotool")
-                return
-            
-            # Get monitor information
+            # Get monitor information for display
             geometry = self._get_monitor_geometry()
             if geometry:
                 print(f"   Monitor: {geometry['width']}x{geometry['height']} at +{geometry['x']}+{geometry['y']}")
+                print(f"   Positioning: Will use ffplay -x {geometry['x']} -y {geometry['y']} -fs")
             else:
                 print(f"   Note: Could not detect monitor layout")
                 print(f"   Run 'xrandr --listmonitors' to check your setup")
+                print(f"   Will use default positioning")
         
         self.logger.info(f"Auto-positioning for target screen {self.target_screen}")
     
     def _check_positioning_tools(self) -> bool:
-        """Check if window positioning tools are available"""
-        try:
-            subprocess.run(['wmctrl', '--version'], capture_output=True, timeout=2)
-            return True
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
-            return False
+        """Legacy method - no longer needed with ffplay positioning"""
+        return True
     
     def move_to_next_monitor(self, event=None):
         """Stub method - monitor movement not needed"""
@@ -576,8 +563,9 @@ class UnifiedMultiScreenClient:
 Multi-Screen Client Help:
 
 Target Screen: {target_info['name']}
-Note: Monitor movement has been disabled.
-Windows will appear on the default screen.
+Window Positioning: Automatic via ffplay command line
+Display: Uses DISPLAY=:0.0 environment variable
+Background Window: Invisible (no visible UI)
 
 Press Ctrl+C to stop the client.
         """
@@ -1000,9 +988,7 @@ Press Ctrl+C to stop the client.
             else:
                 result = self._play_with_ffplay()
             
-            # Auto-position window on target screen if specified
-            if result and self.target_screen:
-                threading.Thread(target=self.auto_position_window, daemon=True).start()
+            # Window positioning is now handled by ffplay command line arguments
             
             return result
                 
@@ -1077,7 +1063,11 @@ Press Ctrl+C to stop the client.
             # Get monitor information for positioning
             geometry_info = self._get_monitor_geometry()
             
-            # Simple ffplay command that works
+            # Set up environment with proper display
+            env = os.environ.copy()
+            env['DISPLAY'] = ':0.0'  # Ensure proper display is set
+            
+            # Build ffplay command with proper positioning
             cmd = [
                 "ffplay",
                 "-fflags", "nobuffer",
@@ -1088,30 +1078,38 @@ Press Ctrl+C to stop the client.
                 "-ec", "favor_inter",
                 "-sync", "video",
                 "-window_title", f"Multi-Screen Client - {self.display_name}",
-                "-fs",  # Start fullscreen
                 "-autoexit",
-                "-loglevel", "info",
-                self.current_stream_url
+                "-loglevel", "info"
             ]
             
-            if geometry_info:
-                print(f"   Monitor detected: {geometry_info['width']}x{geometry_info['height']} at +{geometry_info['x']}+{geometry_info['y']}")
+            # Add positioning if we have geometry info and target screen is specified
+            if geometry_info and self.target_screen and self.target_screen != "1":
+                # Position window on target screen before making fullscreen
+                x, y = geometry_info['x'], geometry_info['y']
+                w, h = geometry_info['width'], geometry_info['height']
+                cmd.extend(["-x", str(x), "-y", str(y), "-fs"])
+                print(f"   Monitor detected: {w}x{h} at +{x}+{y}")
+                print(f"   Window will be positioned on Screen {self.target_screen}")
             else:
-                print(f"   Monitor detection failed, using default positioning")
+                # Default fullscreen on primary display
+                cmd.append("-fs")
+                if geometry_info:
+                    print(f"   Monitor detected: {geometry_info['width']}x{geometry_info['height']} at +{geometry_info['x']}+{geometry_info['y']}")
+                else:
+                    print(f"   Monitor detection failed, using default positioning")
+            
+            # Add stream URL
+            cmd.append(self.current_stream_url)
+            
+            print(f"   Command: {' '.join(cmd[:10])}...")  # Show first 10 args
             
             self.player_process = subprocess.Popen(
                 cmd, 
                 stdout=subprocess.PIPE, 
                 stderr=subprocess.PIPE,
-                universal_newlines=True
+                universal_newlines=True,
+                env=env
             )
-            
-            # Move window to target screen after it starts (if needed)
-            if geometry_info and self.target_screen and self.target_screen != "1":
-                # Only move if target is not screen 1 (default)
-                positioning_delay = 3.0  # 3 seconds delay for stream to stabilize
-                threading.Timer(positioning_delay, self._move_to_target_screen, args=(geometry_info,)).start()
-                print(f"   Window will be moved to Screen {self.target_screen} in {positioning_delay} seconds")
             
             # Monitor ffplay output
             def monitor_ffplay_output():
@@ -1146,127 +1144,12 @@ Press Ctrl+C to stop the client.
             return False
     
     def _move_to_target_screen(self, geometry: Dict[str, int]):
-        """Move ffplay window to target screen"""
-        try:
-            print(f"   Attempting to move window to Screen {self.target_screen}")
-            
-            # Give stream time to start
-            time.sleep(1)
-            
-            # Find the ffplay window
-            result = subprocess.run(['wmctrl', '-l'], capture_output=True, text=True, timeout=5)
-            
-            if result.returncode != 0:
-                print(f"   wmctrl not available - window will stay on default screen")
-                return
-            
-            window_id = None
-            for line in result.stdout.split('\n'):
-                if 'Multi-Screen Client' in line:
-                    window_id = line.split()[0]
-                    break
-            
-            if window_id:
-                x, y = geometry['x'], geometry['y']
-                w, h = geometry['width'], geometry['height']
-                
-                # Remove fullscreen first
-                subprocess.run(['wmctrl', '-i', '-r', window_id, '-b', 'remove,fullscreen'], 
-                             timeout=5, capture_output=True)
-                
-                time.sleep(0.5)
-                
-                # Move window to correct screen
-                subprocess.run(['wmctrl', '-i', '-r', window_id, '-e', f'0,{x},{y},{w},{h}'], 
-                             timeout=5, capture_output=True)
-                
-                time.sleep(0.5)
-                
-                # Make fullscreen again
-                subprocess.run(['wmctrl', '-i', '-r', window_id, '-b', 'add,fullscreen'], 
-                             timeout=5, capture_output=True)
-                
-                print(f"✅ Window moved to Screen {self.target_screen}")
-                
-            else:
-                print(f"   Could not find ffplay window - it may already be positioned correctly")
-                
-        except Exception as e:
-            print(f"   Window positioning failed: {e}")
-            print(f"   Stream will continue on default screen")
+        """Legacy method - window positioning now handled by ffplay command line arguments"""
+        print(f"   Window positioning handled by ffplay command line arguments")
     
     def _make_window_fullscreen_on_screen(self, geometry: Dict[str, int]):
-        """Make ffplay window fullscreen on the target screen with retries"""
-        max_attempts = 3
-        
-        for attempt in range(max_attempts):
-            try:
-                print(f"   Attempting window positioning (attempt {attempt + 1}/{max_attempts})")
-                
-                # Give more time for stream to stabilize
-                if attempt > 0:
-                    time.sleep(2)  # Additional delay between retries
-                else:
-                    time.sleep(1)  # Initial delay
-                
-                # Find the ffplay window
-                result = subprocess.run(['wmctrl', '-l'], capture_output=True, text=True, timeout=5)
-                
-                if result.returncode != 0:
-                    print(f"   Could not list windows (attempt {attempt + 1})")
-                    continue
-                
-                window_id = None
-                windows_found = []
-                
-                for line in result.stdout.split('\n'):
-                    if line.strip():
-                        windows_found.append(line.strip())
-                        if 'Multi-Screen Client' in line or 'ffplay' in line:
-                            window_id = line.split()[0]
-                            break
-                
-                print(f"   Found {len(windows_found)} windows, ffplay window: {'found' if window_id else 'not found'}")
-                
-                if window_id:
-                    x, y = geometry['x'], geometry['y']
-                    w, h = geometry['width'], geometry['height']
-                    
-                    print(f"   Moving window {window_id} to {w}x{h} at +{x}+{y}")
-                    
-                    # Step 1: Move and resize window to correct screen
-                    move_result = subprocess.run(
-                        ['wmctrl', '-i', '-r', window_id, '-e', f'0,{x},{y},{w},{h}'], 
-                        timeout=5, capture_output=True
-                    )
-                    
-                    if move_result.returncode == 0:
-                        print(f"   Window moved successfully")
-                        time.sleep(1)  # Allow window to settle
-                        
-                        # Step 2: Make it fullscreen
-                        fs_result = subprocess.run(
-                            ['wmctrl', '-i', '-r', window_id, '-b', 'add,fullscreen'], 
-                            timeout=5, capture_output=True
-                        )
-                        
-                        if fs_result.returncode == 0:
-                            print(f"   Window made fullscreen on Screen {self.target_screen} ({w}x{h} at +{x}+{y})")
-                            return  # Success, exit function
-                        else:
-                            print(f"   Failed to make fullscreen: {fs_result.stderr.decode()}")
-                    else:
-                        print(f"   Failed to move window: {move_result.stderr.decode()}")
-                
-                else:
-                    print(f"   ffplay window not found in window list")
-                    if windows_found:
-                        print(f"   Available windows: {windows_found[:3]}")  # Show first 3
-                
-            except Exception as e:
-                print(f"   Window positioning attempt {attempt + 1} failed: {e}")
-        
-        print(f"   All window positioning attempts failed - stream will play on default screen")
+        """Legacy method - window positioning now handled by ffplay command line arguments"""
+        print(f"   Window positioning handled by ffplay command line arguments")
     
     def _get_monitor_geometry(self) -> Optional[Dict[str, int]]:
         """Get geometry information for the target monitor"""
@@ -1279,9 +1162,10 @@ Press Ctrl+C to stop the client.
                                   capture_output=True, text=True, timeout=5)
             
             if result.returncode != 0:
+                self.logger.warning(f"xrandr command failed: {result.stderr}")
                 return None
             
-            print(f"Debug - xrandr output:\n{result.stdout}")
+            self.logger.debug(f"xrandr output:\n{result.stdout}")
             
             monitors = []
             for line in result.stdout.split('\n'):
@@ -1291,39 +1175,39 @@ Press Ctrl+C to stop the client.
                     parts = line.strip().split()
                     if len(parts) >= 3:
                         geometry = parts[2]  # "1920/510x1080/287+1920+0"
-                        print(f"Debug - parsing geometry: {geometry}")
+                        self.logger.debug(f"Parsing geometry: {geometry}")
                         
                         if 'x' in geometry and '+' in geometry:
                             try:
-                                # Split by '/' to get width and height parts
-                                # Format: width/mmwidth x height/mmheight + x + y
-                                before_plus = geometry.split('+')[0]  # "1920/510x1080/287"
-                                width_part = before_plus.split('x')[0]  # "1920/510"
-                                height_part = before_plus.split('x')[1]  # "1080/287"
-                                
-                                width = int(width_part.split('/')[0])   # 1920
-                                height = int(height_part.split('/')[0]) # 1080
-                                
-                                # Get position
-                                pos_parts = geometry.split('+')[1:]  # ['1920', '0']
-                                x = int(pos_parts[0]) if len(pos_parts) > 0 else 0
-                                y = int(pos_parts[1]) if len(pos_parts) > 1 else 0
-                                
-                                monitor_info = {
-                                    'width': width,
-                                    'height': height,
-                                    'x': x,
-                                    'y': y
-                                }
-                                
-                                print(f"Debug - parsed monitor: {monitor_info}")
-                                monitors.append(monitor_info)
-                                
+                                # Split by '+' to get position
+                                geom_parts = geometry.split('+')
+                                if len(geom_parts) >= 3:
+                                    # Get width and height from first part
+                                    size_part = geom_parts[0]  # "1920/510x1080/287"
+                                    if 'x' in size_part:
+                                        width_part, height_part = size_part.split('x', 1)
+                                        width = int(width_part.split('/')[0])   # 1920
+                                        height = int(height_part.split('/')[0]) # 1080
+                                        
+                                        # Get position
+                                        x = int(geom_parts[1])  # 1920
+                                        y = int(geom_parts[2])  # 0
+                                        
+                                        monitor_info = {
+                                            'width': width,
+                                            'height': height,
+                                            'x': x,
+                                            'y': y
+                                        }
+                                        
+                                        self.logger.debug(f"Parsed monitor: {monitor_info}")
+                                        monitors.append(monitor_info)
+                                        
                             except (ValueError, IndexError) as e:
-                                print(f"Debug - failed to parse geometry {geometry}: {e}")
+                                self.logger.debug(f"Failed to parse geometry {geometry}: {e}")
                                 continue
             
-            print(f"Debug - found {len(monitors)} monitors: {monitors}")
+            self.logger.info(f"Found {len(monitors)} monitors: {monitors}")
             
             # Select monitor based on target screen
             if self.target_screen == "1" and len(monitors) >= 1:
@@ -1337,49 +1221,12 @@ Press Ctrl+C to stop the client.
             return None
             
         except Exception as e:
-            self.logger.debug(f"Failed to get monitor geometry: {e}")
-            print(f"Debug - exception getting monitor geometry: {e}")
+            self.logger.error(f"Failed to get monitor geometry: {e}")
             return None
     
     def _position_ffplay_window(self, geometry: Dict[str, int]):
-        """Position ffplay window on the correct monitor using wmctrl"""
-        try:
-            # Give ffplay more time to fully initialize
-            time.sleep(1)
-            
-            # Find the ffplay window
-            result = subprocess.run(['wmctrl', '-l'], capture_output=True, text=True, timeout=5)
-            
-            if result.returncode != 0:
-                return
-            
-            window_id = None
-            for line in result.stdout.split('\n'):
-                if 'Multi-Screen Client' in line or 'ffplay' in line:
-                    window_id = line.split()[0]
-                    break
-            
-            if window_id:
-                # Move and resize window
-                x, y = geometry['x'], geometry['y']
-                w, h = geometry['width'], geometry['height']
-                
-                # Move window to correct position
-                subprocess.run(['wmctrl', '-i', '-r', window_id, '-e', f'0,{x},{y},{w},{h}'], 
-                             timeout=5)
-                
-                # Make it fullscreen on that monitor
-                subprocess.run(['wmctrl', '-i', '-r', window_id, '-b', 'add,fullscreen'], 
-                             timeout=5)
-                
-                print(f"✅ Positioned window on Screen {self.target_screen} ({w}x{h} at +{x}+{y})")
-                
-            else:
-                print(f"⚠️  Could not find ffplay window to position")
-                
-        except Exception as e:
-            self.logger.debug(f"Failed to position window: {e}")
-            print(f"⚠️  Window positioning failed: {e}")
+        """Legacy method - window positioning now handled by ffplay command line arguments"""
+        print(f"   Window positioning handled by ffplay command line arguments")
     
     def monitor_player(self) -> str:
         """Monitor the player process and check for stream changes"""
@@ -1611,7 +1458,7 @@ Press Ctrl+C to stop the client.
                 print(f"❌ Registration failed - exiting")
                 return
             
-            # Step 1.5: Create window manager for hotkeys
+            # Step 1.5: Create invisible window manager for background processing
             self.create_window_manager()
             
             # Step 2: Main loop - wait for assignment and play streams
