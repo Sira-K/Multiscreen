@@ -104,7 +104,7 @@ pip3 install --user requests
 cd ~
 
 # Clone the repository
-git clone <your-repository-url>
+git clone https://github.com/Sira-K/Multiscreen
 cd UB_Intern
 
 # Make setup script executable
