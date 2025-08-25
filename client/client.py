@@ -92,233 +92,14 @@ import socket
 from typing import Optional, Dict, Any, Tuple
 from urllib.parse import urlparse
 
-# Try to import tkinter, install locally if needed
-try:
-    import tkinter as tk
-    from tkinter import messagebox
-except ImportError:
-    print("⚠️  tkinter not available - GUI features will be disabled")
-    print("💡 Install with: sudo apt-get install python3-tk")
-    # Create dummy classes to prevent errors
-    class DummyTk:
-        def __init__(self, *args, **kwargs): pass
-        def __getattr__(self, name): return lambda *args, **kwargs: None
-    
-    tk = DummyTk()
-    messagebox = DummyTk()
-
 from queue import Queue
-
-
-class VideoPlayerThread:
-    """Dedicated thread for video player management to ensure synchronized frame updates"""
-    
-    def __init__(self, client_instance, stream_url: str, stream_version: str, logger: logging.Logger):
-        self.client = client_instance
-        self.stream_url = stream_url
-        self.stream_version = stream_version
-        self.logger = logger
-        self.running = True
-        self.player_process = None
-        self.player_type = None
-        self._thread = None
-        self._shutdown_event = threading.Event()
-        
-        # Start the dedicated thread
-        self._thread = threading.Thread(
-            target=self._run_player_thread,
-            name=f"VideoPlayer-{client_instance.target_screen}",
-            daemon=True
-        )
-        self._thread.start()
-    
-    def _run_player_thread(self):
-        """Main thread loop for video player management"""
-        try:
-            self.logger.info(f"Video player thread started for {self.client.target_screen}")
-            
-            # Choose and start the optimal player
-            if self._start_player():
-                # Monitor the player in this thread
-                self._monitor_player()
-            else:
-                self.logger.error(f"Failed to start player for {self.client.target_screen}")
-                
-        except Exception as e:
-            self.logger.error(f"Video player thread error for {self.client.target_screen}: {e}")
-        finally:
-            self.logger.info(f"Video player thread stopped for {self.client.target_screen}")
-    
-    def _start_player(self) -> bool:
-        """Start the video player process"""
-        try:
-            # Choose optimal player
-            player_type, reason = self.client.choose_optimal_player(self.stream_url)
-            self.player_type = player_type
-            
-            self.logger.info(f"Starting {player_type} for {self.client.target_screen}: {reason}")
-            
-            if player_type == "cpp_player":
-                return self._start_cpp_player()
-            else:
-                return self._start_ffplay()
-                
-        except Exception as e:
-            self.logger.error(f"Failed to start player for {self.client.target_screen}: {e}")
-            return False
-    
-    def _start_cpp_player(self) -> bool:
-        """Start the built C++ player"""
-        try:
-            if not self.client.player_executable:
-                return False
-                
-            env = os.environ.copy()
-            cmd = [self.client.player_executable, self.stream_url]
-            
-            self.player_process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=env,
-                cwd=os.path.dirname(self.client.player_executable),
-                universal_newlines=True,
-                bufsize=1
-            )
-            
-            # Start output monitoring in separate thread
-            threading.Thread(
-                target=self._monitor_cpp_output,
-                daemon=True
-            ).start()
-            
-            self.logger.info(f"C++ player started for {self.client.target_screen} (PID: {self.player_process.pid})")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"C++ player error for {self.client.target_screen}: {e}")
-            return False
-    
-    def _start_ffplay(self) -> bool:
-        """Start ffplay"""
-        try:
-            cmd = [
-                "ffplay",
-                "-fflags", "nobuffer",
-                "-flags", "low_delay", 
-                "-framedrop",
-                "-strict", "experimental",
-                "-err_detect", "ignore_err",
-                "-ec", "favor_inter",
-                "-sync", "video",
-                "-window_title", f"Multi-Screen Client - {self.client.display_name}",
-                "-fs",
-                "-autoexit",
-                "-loglevel", "warning",
-                self.stream_url
-            ]
-            
-            self.player_process = subprocess.Popen(
-                cmd, 
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.PIPE,
-                universal_newlines=True
-            )
-            
-            # Start output monitoring in separate thread
-            threading.Thread(
-                target=self._monitor_ffplay_output,
-                daemon=True
-            ).start()
-            
-            self.logger.info(f"ffplay started for {self.client.target_screen} (PID: {self.player_process.pid})")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"ffplay error for {self.client.target_screen}: {e}")
-            return False
-    
-    def _monitor_cpp_output(self):
-        """Monitor C++ player output"""
-        try:
-            for line in iter(self.player_process.stdout.readline, ''):
-                if line.strip():
-                    line_clean = line.strip()
-                    if "SEI" in line_clean or "timestamp" in line_clean.lower():
-                        self.logger.info(f"SEI: {line_clean}")
-                    elif "TELEMETRY:" in line_clean:
-                        self.logger.info(f"{line_clean}")
-                    elif "ERROR" in line_clean.upper():
-                        self.logger.error(f"{line_clean}")
-                    elif "WARNING" in line_clean.upper():
-                        self.logger.warning(f"{line_clean}")
-                    else:
-                        self.logger.debug(f"{line_clean}")
-        except Exception as e:
-            self.logger.debug(f"C++ output monitoring error: {e}")
-    
-    def _monitor_ffplay_output(self):
-        """Monitor ffplay output"""
-        try:
-            for line in iter(self.player_process.stderr.readline, ''):
-                if line.strip():
-                    line_clean = line.strip()
-                    if "decode_slice_header error" in line_clean:
-                        continue  # Skip common errors
-                    elif "error" in line_clean.lower():
-                        self.logger.error(f"{line_clean}")
-                    elif "warning" in line_clean.lower():
-                        self.logger.warning(f"{line_clean}")
-                    else:
-                        self.logger.debug(f"{line_clean}")
-        except Exception as e:
-            self.logger.debug(f"ffplay output monitoring error: {e}")
-    
-    def _monitor_player(self):
-        """Monitor the player process"""
-        while self.running and self.player_process and self.player_process.poll() is None:
-            time.sleep(0.1)  # 100ms sleep to avoid busy waiting
-        
-        if self.player_process:
-            exit_code = self.player_process.returncode
-            if exit_code == 0:
-                self.logger.info(f"Player for {self.client.target_screen} ended normally")
-            elif exit_code == 1:
-                self.logger.warning(f"Player for {self.client.target_screen} connection lost")
-            else:
-                self.logger.error(f"Player for {self.client.target_screen} exited with code: {exit_code}")
-    
-    def stop(self):
-        """Stop the video player thread"""
-        self.running = False
-        self._shutdown_event.set()
-        
-        if self.player_process:
-            try:
-                self.player_process.terminate()
-                try:
-                    self.player_process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    self.player_process.kill()
-                    try:
-                        self.player_process.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        pass
-            except Exception as e:
-                self.logger.error(f"Error stopping player for {self.client.target_screen}: {e}")
-            finally:
-                self.player_process = None
-        
-        # Wait for thread to finish
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2)
 
 
 class UnifiedMultiScreenClient:
     """Enhanced multi-screen client with automatic screen targeting"""
     
     def __init__(self, server_url: str, hostname: str, display_name: str, 
-                 force_ffplay: bool = False, target_screen: str = None):
+                 force_ffplay: bool = False):
         """
         Initialize the multi-screen client
         
@@ -327,23 +108,15 @@ class UnifiedMultiScreenClient:
             hostname: Client hostname for identification
             display_name: Display name for admin interface
             force_ffplay: Force use of ffplay for all streams
-            target_screen: Target screen (1 or 2)
         """
-        # Setup logging first
-        self.logger = logging.getLogger(__name__)
-        
-        self.server_url = server_url
+        # Basic configuration
+        self.server_url = server_url.rstrip('/')
         self.hostname = hostname
         self.display_name = display_name
         self.force_ffplay = force_ffplay
-        self.target_screen = target_screen
         
-        # Parse target screen to monitor index
-        self.target_monitor_index = self._parse_target_screen(target_screen)
-        
-        # Single-threaded mode for Raspberry Pi efficiency
-        self.use_multithreading = False  # Always single-threaded
-        self.video_player_thread = None  # Not used in single-threaded mode
+        # Setup logging
+        self.logger = self._setup_logging()
         
         # Stream management
         self.current_stream_url = None
@@ -373,49 +146,27 @@ class UnifiedMultiScreenClient:
         # Find player executable
         self.player_executable = self._find_player_executable()
         
-        # Window management (simplified - no movement needed)
-        self.window_manager = None
-        
         # Log single-threaded status
-        self.logger.info(f"Single-threaded mode - optimized for Raspberry Pi efficiency")
-        print(f"🔧 SINGLE-THREADED: Enabled (Raspberry Pi optimized)")
+        self.logger.info(f"Single-threaded mode - optimized for efficiency")
+        print(f"🔧 SINGLE-THREADED: Enabled (optimized for efficiency)")
         print(f"📦 AUTO-INSTALL: Python packages installed automatically as needed")
     
-    def _detect_multiple_clients(self) -> bool:
-        """Single-threaded mode - always returns False for Raspberry Pi efficiency"""
-        # Simplified to single-threaded mode for better performance on single-core devices
-        # Each client runs in its own process with 1 main thread
-        return False
+    def _setup_logging(self) -> logging.Logger:
+        """Setup logging configuration"""
+        log_dir = Path.home() / "client_logs"
+        log_dir.mkdir(exist_ok=True)
+        
+        logger = logging.getLogger(__name__)
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(log_dir / "client.log"),
+                logging.StreamHandler()
+            ]
+        )
+        return logger
     
-    def _parse_target_screen(self, target_screen: str) -> int:
-        """Parse target screen parameter and return monitor index"""
-        if not target_screen:
-            return 0  # Default to first monitor
-        
-        target = target_screen.strip()
-        
-        # Only accept 1 or 2
-        if target == "1":
-            self.logger.info(f"Target screen '{target_screen}' mapped to monitor 1")
-            return 0
-        elif target == "2":
-            self.logger.info(f"Target screen '{target_screen}' mapped to monitor 2")
-            return 1
-        else:
-            self.logger.warning(f"Invalid target screen '{target_screen}', must be 1 or 2. Defaulting to monitor 1")
-            return 0
-    
-    def _get_target_screen_info(self) -> Dict[str, Any]:
-        """Get information about the target screen"""
-        screen_names = ['Screen 1', 'Screen 2']
-        screen_name = screen_names[self.target_monitor_index] if self.target_monitor_index < len(screen_names) else f"Screen {self.target_monitor_index + 1}"
-        
-        return {
-            'index': self.target_monitor_index,
-            'name': screen_name,
-            'specified': self.target_screen
-        }
-
     @property
     def client_id(self) -> str:
         """Generate unique client ID using hostname and IP address"""
@@ -494,85 +245,6 @@ class UnifiedMultiScreenClient:
             except Exception:
                 # Final fallback: use loopback IP
                 return "127.0.0.1"
-    
-    def create_window_manager(self):
-        """Create an invisible window manager (no visible window needed)"""
-        try:
-            # Create an invisible window manager for background processing
-            self.window_manager = tk.Tk()
-            self.window_manager.title(f"Multi-Screen Client - {self.display_name}")
-            
-            # Make window invisible
-            self.window_manager.withdraw()  # Hide the window
-            self.window_manager.attributes('-alpha', 0.0)  # Make completely transparent
-            
-            # Set minimal size to avoid any visual impact
-            self.window_manager.geometry("1x1+0+0")
-            
-            print(f"🖥️  Invisible Window Manager Started")
-            print(f"   Target Screen: {self.target_screen or 'Default'}")
-            print(f"   Status: No visible window (background processing only)")
-            
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to create window manager: {e}")
-            return False
-    
-    def move_to_monitor(self, monitor_index: int):
-        """Stub method - monitor movement not needed"""
-        print(f"Monitor movement disabled - window will appear on default screen")
-        self.logger.info(f"Monitor movement requested but disabled")
-    
-    def auto_position_window(self):
-        """Auto-position window on target screen"""
-        if self.target_screen:
-            print(f"\n🎯 TARGET SCREEN: {self.target_screen}")
-            target_info = self._get_target_screen_info()
-            print(f"   Target: {target_info['name']}")
-            
-            # Get monitor information for display
-            geometry = self._get_monitor_geometry()
-            if geometry:
-                print(f"   Monitor: {geometry['width']}x{geometry['height']} at +{geometry['x']}+{geometry['y']}")
-                print(f"   Positioning: Will use ffplay -x {geometry['x']} -y {geometry['y']} -fs")
-            else:
-                print(f"   Note: Could not detect monitor layout")
-                print(f"   Run 'xrandr --listmonitors' to check your setup")
-                print(f"   Will use default positioning")
-        
-        self.logger.info(f"Auto-positioning for target screen {self.target_screen}")
-    
-    def _check_positioning_tools(self) -> bool:
-        """Legacy method - no longer needed with ffplay positioning"""
-        return True
-    
-    def move_to_next_monitor(self, event=None):
-        """Stub method - monitor movement not needed"""
-        print(f"Monitor movement disabled")
-        self.logger.info(f"Next monitor movement requested but disabled")
-    
-    def move_to_previous_monitor(self, event=None):
-        """Stub method - monitor movement not needed"""
-        print(f"Monitor movement disabled")
-        self.logger.info(f"Previous monitor movement requested but disabled")
-    
-    def show_help(self, event=None):
-        """Show simplified help"""
-        target_info = self._get_target_screen_info()
-        help_text = f"""
-Multi-Screen Client Help:
-
-Target Screen: {target_info['name']}
-Window Positioning: Automatic via ffplay command line
-Display: Uses DISPLAY=:0.0 environment variable
-Background Window: Invisible (no visible UI)
-
-Press Ctrl+C to stop the client.
-        """
-        try:
-            messagebox.showinfo("Multi-Screen Client Help", help_text)
-        except:
-            print(help_text)
     
     def detect_sei_in_stream(self, stream_url: str, timeout: int = 10) -> bool:
         """
@@ -666,50 +338,25 @@ Press Ctrl+C to stop the client.
     def register(self) -> bool:
         """Register client with server"""
         try:
-            target_info = self._get_target_screen_info()
-            
-            print(f"\n{'='*80}")
-            print(f"🚀 STARTING MULTI-SCREEN CLIENT REGISTRATION")
-            print(f"   Client: {self.hostname}")
-            print(f"   Local IP: {self._get_local_ip_address()}")
-            print(f"   Client ID: {self.client_id}")
+            print(f"\n🚀 STARTING MULTI-SCREEN CLIENT REGISTRATION")
+            print(f"   Hostname: {self.hostname}")
             print(f"   Display Name: {self.display_name}")
-            print(f"   Target Screen: {target_info['name']}")
-            if 'warning' in target_info:
-                print(f"   Warning: {target_info['warning']}")
             print(f"   Server: {self.server_url}")
-            print(f"   Server IP: {self.server_ip}")
-            print(f"   Smart Player: {'Enabled' if not self.force_ffplay else 'Disabled (force ffplay)'}")
+            print(f"   Client ID: {self.client_id}")
             
-            registration_start = time.time()
-            registration_start_formatted = time.strftime("%Y-%m-%d %H:%M:%S.%f", time.gmtime(registration_start))[:-3]
-            print(f"   Start Time: {registration_start_formatted} UTC")
-            print(f"{'='*80}")
+            # Choose optimal player
+            player_type, reason = self.choose_optimal_player("dummy_url")
+            print(f"   Optimal Player: {player_type} ({reason})")
             
-            # Create platform string indicating player capability
-            if self.force_ffplay:
-                player_type = "ffplay_only"
-            elif not self.player_executable:
-                player_type = "ffplay_fb"  # fallback
-            else:
-                player_type = "smart_sel"  # smart selection
-            
-            # Get local IP address for unique client identification
-            local_ip = self._get_local_ip_address()
-            
+            # Registration data
             registration_data = {
+                "client_id": self.client_id,
                 "hostname": self.hostname,
-                "ip_address": local_ip,  # Include IP address for unique client ID
                 "display_name": self.display_name,
-                "platform": f"multiscreen_{player_type}",  # Indicate multi-screen capability
-                "target_screen": self.target_screen,  # Include target screen info
-                "target_monitor": target_info['index']
+                "platform": f"multiscreen_{player_type}"  # Indicate multi-screen capability
             }
             
-            print(f"\n📡 Sending registration request...")
-            request_sent_time = time.time()
-            
-            # Try new registration endpoint first, fallback to legacy
+            # Try new endpoint first
             try:
                 print(f"🔄 Trying new endpoint: {self.server_url}/api/clients/register")
                 print(f"📋 Registration data: {json.dumps(registration_data, indent=2)}")
@@ -756,22 +403,18 @@ Press Ctrl+C to stop the client.
                 endpoint_used = "legacy (/register_client)"
             
             response_received_time = time.time()
-            network_delay_ms = (response_received_time - request_sent_time) * 1000
             
-            print(f"📨 Response received in {network_delay_ms:.1f}ms using {endpoint_used}")
+            print(f"📨 Response received using {endpoint_used}")
             
             if response.status_code in [200, 202]:
                 result = response.json()
                 if result.get("success", True):  # Legacy endpoint doesn't have 'success' field
-                    registration_end = time.time()
-                    total_time_ms = (registration_end - registration_start) * 1000
                     
                     print(f"\n🎉 REGISTRATION SUCCESSFUL!")
                     print(f"   Client ID: {result.get('client_id', self.client_id)}")
                     print(f"   Status: {result.get('status', 'registered')}")
                     if 'server_time' in result:
                         print(f"   Server Time: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(result['server_time']))}")
-                    print(f"   Total Registration Time: {total_time_ms:.1f}ms")
                     
                     self.registered = True
                     self.assignment_status = result.get('status', 'waiting_for_assignment')
@@ -972,8 +615,7 @@ Press Ctrl+C to stop the client.
             
             # Single-threaded mode (optimized for Raspberry Pi)
             print(f"\n🎬 SINGLE-THREADED VIDEO PLAYER")
-            print(f"   Mode: Main thread playback (Raspberry Pi optimized)")
-            print(f"   Target Screen: {self.target_screen}")
+            print(f"   Mode: Main thread playback (optimized for efficiency)")
             print(f"   Stream URL: {self.current_stream_url}")
             
             # Choose the optimal player for this stream
@@ -1024,27 +666,23 @@ Press Ctrl+C to stop the client.
                         if line.strip():
                             line_clean = line.strip()
                             if "SEI" in line_clean or "timestamp" in line_clean.lower():
-                                self.logger.info(f"🔍 SEI: {line_clean}")
+                                self.logger.info(f"SEI: {line_clean}")
                             elif "TELEMETRY:" in line_clean:
-                                self.logger.info(f"📊 {line_clean}")
+                                self.logger.info(f"{line_clean}")
                             elif "ERROR" in line_clean.upper():
-                                self.logger.error(f"❌ {line_clean}")
+                                self.logger.error(f"{line_clean}")
                             elif "WARNING" in line_clean.upper():
-                                self.logger.warning(f"⚠️ {line_clean}")
+                                self.logger.warning(f"{line_clean}")
                             else:
-                                self.logger.debug(f"ℹ️ {line_clean}")
+                                self.logger.debug(f"{line_clean}")
                 except Exception as e:
                     self.logger.error(f"Error monitoring C++ output: {e}")
-                finally:
-                    if self.player_process and self.player_process.stdout:
-                        self.player_process.stdout.close()
             
+            # Start output monitoring in separate thread
             output_thread = threading.Thread(target=monitor_cpp_output, daemon=True)
             output_thread.start()
             
-            print(f"   Player PID: {self.player_process.pid}")
-            print(f"   Status: Playing with SEI processing")
-            self.logger.info(f"C++ Player started for SEI stream")
+            print(f"✅ C++ player started successfully (PID: {self.player_process.pid})")
             return True
             
         except Exception as e:
@@ -1058,16 +696,12 @@ Press Ctrl+C to stop the client.
             print(f"   Stream URL: {self.current_stream_url}")
             print(f"   Stream Version: {self.current_stream_version}")
             print(f"   Capability: Standard video playback")
-            print(f"   Target Screen: {self.target_screen}")
-            
-            # Get monitor information for positioning
-            geometry_info = self._get_monitor_geometry()
             
             # Set up environment with proper display
             env = os.environ.copy()
             env['DISPLAY'] = ':0.0'  # Ensure proper display is set
             
-            # Build ffplay command with proper positioning
+            # Build ffplay command with basic fullscreen
             cmd = [
                 "ffplay",
                 "-fflags", "nobuffer",
@@ -1078,25 +712,16 @@ Press Ctrl+C to stop the client.
                 "-ec", "favor_inter",
                 "-sync", "video",
                 "-window_title", f"Multi-Screen Client - {self.display_name}",
+                "-fs",  # Always fullscreen
                 "-autoexit",
-                "-loglevel", "info"
+                "-loglevel", "warning"
             ]
             
-            # Add positioning if we have geometry info and target screen is specified
-            if geometry_info and self.target_screen and self.target_screen != "1":
-                # Position window on target screen before making fullscreen
-                x, y = geometry_info['x'], geometry_info['y']
-                w, h = geometry_info['width'], geometry_info['height']
-                cmd.extend(["-x", str(x), "-y", str(y), "-fs"])
-                print(f"   Monitor detected: {w}x{h} at +{x}+{y}")
-                print(f"   Window will be positioned on Screen {self.target_screen}")
-            else:
-                # Default fullscreen on primary display
-                cmd.append("-fs")
-                if geometry_info:
-                    print(f"   Monitor detected: {geometry_info['width']}x{geometry_info['height']} at +{geometry_info['x']}+{geometry_info['y']}")
-                else:
-                    print(f"   Monitor detection failed, using default positioning")
+            print(f"   Using basic fullscreen playback")
+            
+            # SRT streams work fine without special options
+            if self.current_stream_url.startswith("srt://"):
+                print(f"   SRT stream detected")
             
             # Add stream URL
             cmd.append(self.current_stream_url)
@@ -1111,6 +736,16 @@ Press Ctrl+C to stop the client.
                 env=env
             )
             
+            # Give ffplay a moment to start and check if it's still running
+            time.sleep(0.5)
+            if self.player_process.poll() is not None:
+                # Process exited immediately - get error output
+                stdout, stderr = self.player_process.communicate()
+                print(f"❌ ffplay exited immediately with code: {self.player_process.returncode}")
+                if stderr:
+                    print(f"   Error: {stderr.strip()}")
+                return False
+            
             # Monitor ffplay output
             def monitor_ffplay_output():
                 try:
@@ -1118,7 +753,7 @@ Press Ctrl+C to stop the client.
                         if line.strip():
                             line_clean = line.strip()
                             # Show connection and SRT-related messages
-                            if any(keyword in line_clean.lower() for keyword in ['srt', 'connection', 'connect', 'timeout', 'failed', 'error']):
+                            if any(keyword in line_clean.lower() for keyword in ['srt', 'connection', 'connect', 'timeout', 'failed', 'error', 'reconnect']):
                                 print(f"🔌 {line_clean}")
                                 self.logger.info(f"FFplay: {line_clean}")
                             # Skip configuration spam
@@ -1126,107 +761,23 @@ Press Ctrl+C to stop the client.
                                 continue
                             elif "decode_slice_header error" in line_clean:
                                 continue
+                            elif "avutil" in line_clean or "avcodec" in line_clean or "avformat" in line_clean:
+                                continue  # Skip more configuration spam
                             else:
                                 self.logger.debug(f"FFplay: {line_clean}")
                 except Exception as e:
                     self.logger.debug(f"Error monitoring ffplay output: {e}")
             
+            # Start output monitoring in separate thread
             output_thread = threading.Thread(target=monitor_ffplay_output, daemon=True)
             output_thread.start()
             
-            print(f"   Player PID: {self.player_process.pid}")
-            print(f"   Status: Playing standard stream")
-            self.logger.info(f"ffplay started for standard stream")
+            print(f"✅ ffplay started successfully (PID: {self.player_process.pid})")
             return True
             
         except Exception as e:
             self.logger.error(f"ffplay error: {e}")
             return False
-    
-    def _move_to_target_screen(self, geometry: Dict[str, int]):
-        """Legacy method - window positioning now handled by ffplay command line arguments"""
-        print(f"   Window positioning handled by ffplay command line arguments")
-    
-    def _make_window_fullscreen_on_screen(self, geometry: Dict[str, int]):
-        """Legacy method - window positioning now handled by ffplay command line arguments"""
-        print(f"   Window positioning handled by ffplay command line arguments")
-    
-    def _get_monitor_geometry(self) -> Optional[Dict[str, int]]:
-        """Get geometry information for the target monitor"""
-        try:
-            if not self.target_screen:
-                return None
-            
-            # Use xrandr to get monitor information
-            result = subprocess.run(['xrandr', '--listmonitors'], 
-                                  capture_output=True, text=True, timeout=5)
-            
-            if result.returncode != 0:
-                self.logger.warning(f"xrandr command failed: {result.stderr}")
-                return None
-            
-            self.logger.debug(f"xrandr output:\n{result.stdout}")
-            
-            monitors = []
-            for line in result.stdout.split('\n'):
-                if '+' in line and not line.strip().startswith('Monitors:'):
-                    # Parse monitor info: " 1: +DP-2 1920/510x1080/287+1920+0  DP-2"
-                    # or: " 0: +HDMI-1 1920/510x1080/287+0+0  HDMI-1"
-                    parts = line.strip().split()
-                    if len(parts) >= 3:
-                        geometry = parts[2]  # "1920/510x1080/287+1920+0"
-                        self.logger.debug(f"Parsing geometry: {geometry}")
-                        
-                        if 'x' in geometry and '+' in geometry:
-                            try:
-                                # Split by '+' to get position
-                                geom_parts = geometry.split('+')
-                                if len(geom_parts) >= 3:
-                                    # Get width and height from first part
-                                    size_part = geom_parts[0]  # "1920/510x1080/287"
-                                    if 'x' in size_part:
-                                        width_part, height_part = size_part.split('x', 1)
-                                        width = int(width_part.split('/')[0])   # 1920
-                                        height = int(height_part.split('/')[0]) # 1080
-                                        
-                                        # Get position
-                                        x = int(geom_parts[1])  # 1920
-                                        y = int(geom_parts[2])  # 0
-                                        
-                                        monitor_info = {
-                                            'width': width,
-                                            'height': height,
-                                            'x': x,
-                                            'y': y
-                                        }
-                                        
-                                        self.logger.debug(f"Parsed monitor: {monitor_info}")
-                                        monitors.append(monitor_info)
-                                        
-                            except (ValueError, IndexError) as e:
-                                self.logger.debug(f"Failed to parse geometry {geometry}: {e}")
-                                continue
-            
-            self.logger.info(f"Found {len(monitors)} monitors: {monitors}")
-            
-            # Select monitor based on target screen
-            if self.target_screen == "1" and len(monitors) >= 1:
-                return monitors[0]
-            elif self.target_screen == "2" and len(monitors) >= 2:
-                return monitors[1]
-            elif len(monitors) >= 1:
-                # Fallback to first monitor
-                return monitors[0]
-                
-            return None
-            
-        except Exception as e:
-            self.logger.error(f"Failed to get monitor geometry: {e}")
-            return None
-    
-    def _position_ffplay_window(self, geometry: Dict[str, int]):
-        """Legacy method - window positioning now handled by ffplay command line arguments"""
-        print(f"   Window positioning handled by ffplay command line arguments")
     
     def monitor_player(self) -> str:
         """Monitor the player process and check for stream changes"""
@@ -1242,23 +793,27 @@ Press Ctrl+C to stop the client.
         print(f"   Player Type: {self.current_player_type}")
         
         last_stream_check = time.time()
-        stream_check_interval = 10
+        stream_check_interval = 30  # Increased from 10 to 30 seconds
         last_health_report = time.time()
         health_report_interval = 30
         
-        while self.running and not self._shutdown_event.is_set() and self.player_process.poll() is None:
+        while self.running and not self._shutdown_event.is_set():
             current_time = time.time()
             
-            # Handle window manager events
-            if self.window_manager:
-                try:
-                    self.window_manager.update()
-                except:
-                    # Window manager closed or tk not available
-                    break
+            # Check if player process is still running
+            if self.player_process is None:
+                print(f"❌ Player process is None - exiting monitoring")
+                return 'error'
+            
+            # Check if process has exited
+            poll_result = self.player_process.poll()
+            if poll_result is not None:
+                print(f"🔍 Player process exited with code: {poll_result}")
+                break
             
             # Check for stream changes
             if current_time - last_stream_check >= stream_check_interval:
+                self.logger.debug(f"Performing periodic stream check...")
                 if self._check_for_stream_change():
                     print(f"🔄 Stream change detected, will restart with optimal player...")
                     self.stop_stream()
@@ -1319,26 +874,34 @@ Press Ctrl+C to stop the client.
                     new_stream_url = self.fix_stream_url(data.get('stream_url'))
                     new_stream_version = data.get('stream_version')
                     
-                    # Check for meaningful changes
+                    # Check for meaningful changes - only restart if URL actually changed
                     url_changed = (new_stream_url and 
                                 self.current_stream_url and 
                                 new_stream_url != self.current_stream_url)
                     
+                    # Only check version if we have both versions and they're different
                     version_changed = False
-                    if new_stream_version is not None and self.current_stream_version is not None:
-                        version_changed = (new_stream_version != self.current_stream_version)
+                    if (new_stream_version is not None and 
+                        self.current_stream_version is not None and
+                        new_stream_version != self.current_stream_version):
+                        version_changed = True
                     
-                    if url_changed or version_changed:
-                        self.logger.info(f"Stream change detected:")
-                        if url_changed:
-                            self.logger.info(f"  URL: {self.current_stream_url} → {new_stream_url}")
-                        if version_changed:
-                            self.logger.info(f"  Version: {self.current_stream_version} → {new_stream_version}")
-                        
+                    if url_changed:
+                        self.logger.info(f"Stream URL change detected:")
+                        self.logger.info(f"  URL: {self.current_stream_url} → {new_stream_url}")
                         self.current_stream_url = new_stream_url
                         if new_stream_version is not None:
                             self.current_stream_version = new_stream_version
                         return True
+                    elif version_changed:
+                        self.logger.info(f"Stream version change detected:")
+                        self.logger.info(f"  Version: {self.current_stream_version} → {new_stream_version}")
+                        self.current_stream_version = new_stream_version
+                        return True
+                    else:
+                        # No meaningful change - stream is still the same
+                        self.logger.debug(f"Stream check: no changes detected")
+                        return False
                     
                 elif status in ["waiting_for_streaming", "group_not_running", "not_registered"]:
                     # These statuses indicate the stream has stopped
@@ -1419,14 +982,6 @@ Press Ctrl+C to stop the client.
         # Stop components
         self.stop_stream()
         
-        # Clean up window manager
-        if self.window_manager:
-            try:
-                self.window_manager.destroy()
-            except:
-                pass
-            self.window_manager = None
-        
         print(f"✅ Shutdown complete")
     
     def _emergency_cleanup(self):
@@ -1437,16 +992,11 @@ Press Ctrl+C to stop the client.
     def run(self):
         """Main execution flow"""
         try:
-            target_info = self._get_target_screen_info()
-            
             print(f"\n{'='*80}")
             print(f"🚀 UNIFIED MULTI-SCREEN CLIENT (ENHANCED)")
             print(f"   Hostname: {self.hostname}")
             print(f"   Client ID: {self.client_id}")
             print(f"   Display Name: {self.display_name}")
-            print(f"   Target Screen: {target_info['name']}")
-            if 'warning' in target_info:
-                print(f"   Warning: {target_info['warning']}")
             print(f"   Server: {self.server_url}")
             print(f"   Smart Player: {'Enabled' if not self.force_ffplay else 'Disabled (force ffplay)'}")
             print(f"   C++ Player: {'Available' if self.player_executable else 'Not found'}")
@@ -1457,9 +1007,6 @@ Press Ctrl+C to stop the client.
             if not self.register():
                 print(f"❌ Registration failed - exiting")
                 return
-            
-            # Step 1.5: Create invisible window manager for background processing
-            self.create_window_manager()
             
             # Step 2: Main loop - wait for assignment and play streams
             while self.running and not self._shutdown_event.is_set():
@@ -1514,8 +1061,6 @@ Press Ctrl+C to stop the client.
     def get_player_status(self) -> Dict[str, Any]:
         """Get the current status of the video player"""
         status = {
-            'multithreading_enabled': False,  # Always single-threaded
-            'target_screen': self.target_screen,
             'stream_url': self.current_stream_url,
             'stream_version': self.current_stream_version,
             'player_type': self.current_player_type,
@@ -1548,8 +1093,7 @@ def main():
 🚀 Enhanced Multi-Screen Client for Video Wall Systems
 
 A simple and reliable client for multi-screen video streaming that supports
-automatic player selection with target screen identification, optimized for
-Raspberry Pi and single-threaded efficiency.
+automatic player selection, optimized for single-threaded efficiency.
 
 ✨ NEW: Automatic package installation - no setup script needed!
 
@@ -1557,8 +1101,7 @@ Features:
    📦 Automatic Python package installation (requests, etc.)
    🔄 Automatic server registration with unique client identification
    🎯 Smart player selection (C++ player for SEI streams, ffplay fallback)
-   📺 Target screen identification (1 or 2 for simple targeting)
-   🧵 Single-threaded mode optimized for Raspberry Pi performance
+   🧵 Single-threaded mode optimized for efficiency
    ⚡ Efficient resource usage with 1 thread per client
    🖥️ Uses system default display (DISPLAY=:0.0)
    🔁 Automatic reconnection and error recovery
@@ -1572,32 +1115,17 @@ Features:
     python3 client.py --server http://192.168.1.100:5000 \\
       --hostname rpi-client-1 --display-name "Monitor 1"
 
-  Target specific screen:
+  Force ffplay for all streams:
     python3 client.py --server http://192.168.1.100:5000 \\
       --hostname rpi-client-1 --display-name "Screen1" \\
-      --target-screen 1
+      --force-ffplay
 
-    python3 client.py --server http://192.168.1.100:5000 \\
-      --hostname rpi-client-2 --display-name "Screen2" \\
-      --target-screen 2
+  Test with debug mode:
+    python3 client.py --server http://YOUR_SERVER_IP:5000 \\
+      --hostname test-client --display-name "Test" \\
+      --debug
 
-  Target screen values:
-    --target-screen 1         # Screen 1
-    --target-screen 2         # Screen 2
-
-📺 DUAL SCREEN SETUP (Recommended for Raspberry Pi):
-
-  Terminal 1 (Screen 1):
-    python3 client.py --server http://192.168.1.100:5000 \\
-      --hostname rpi-client-1 --display-name "Screen1" \\
-      --target-screen 1
-
-  Terminal 2 (Screen 2):
-    python3 client.py --server http://192.168.1.100:5000 \\
-      --hostname rpi-client-2 --display-name "Screen2" \\
-      --target-screen 2
-
-  Note: Each client runs in its own process with 1 thread for optimal Pi performance
+  Note: Each client runs in its own process with 1 thread for optimal performance
 
 ⚙️ ADVANCED OPTIONS:
 
@@ -1605,51 +1133,9 @@ Features:
     python3 client.py --server http://192.168.1.100:5000 \\
       --hostname client-1 --display-name "Screen 1" --force-ffplay
 
-  Debug mode with detailed logging:
-    python3 client.py --server http://192.168.1.100:5000 \\
-      --hostname client-1 --display-name "Screen 1" --debug
-
-📦 AUTOMATIC PACKAGE INSTALLATION:
-
-  How it works:
-  1. Client checks for required packages (requests, tkinter)
-  2. If missing, automatically installs to local ./lib directory
-  3. No global Python environment changes
-  4. No virtual environments or complex setup needed
-  5. Just run the client and it handles everything!
-
-  Installation methods tried (in order):
-  1. Install to local ./lib directory (--target)
-  2. Install with --break-system-packages if needed
-  3. Fallback to --user installation
-  4. Graceful failure with helpful instructions
-
-🧵 SINGLE-THREADED ARCHITECTURE:
-
-  Raspberry Pi Optimization:
-  - Each client uses exactly 1 main thread
-  - Video playback happens in the main thread
-  - Server communication is minimal and non-blocking
-  - Perfect for single-core and multi-core Pi devices
-
-  Benefits:
-  - No context switching overhead between threads
-  - Stable performance on limited hardware
-  - Efficient resource usage
-  - Simple and reliable operation
-
-🔧 TROUBLESHOOTING:
-
-  If automatic package installation fails:
-    sudo apt-get install python3-requests python3-tk
-
-  Check display configuration:
-    xrandr --listmonitors
-
   Test with debug mode:
     python3 client.py --server http://YOUR_SERVER_IP:5000 \\
-      --hostname test-client --display-name "Test" \\
-      --target-screen 1 --debug
+      --hostname client-1 --display-name "Screen 1" --debug
 
 For more information, visit: https://github.com/your-repo/openvideowalls
         """
@@ -1672,9 +1158,6 @@ For more information, visit: https://github.com/your-repo/openvideowalls
     
     # Optional arguments group
     optional_group = parser.add_argument_group('⚙️ Optional Arguments')
-    optional_group.add_argument('--target-screen', 
-                               metavar='SCREEN',
-                               help='Target screen (1 or 2)')
     optional_group.add_argument('--force-ffplay', 
                                action='store_true',
                                help='Force use of ffplay for all streams (disable smart C++/ffplay selection)')
@@ -1714,10 +1197,6 @@ For more information, visit: https://github.com/your-repo/openvideowalls
         logging.getLogger().setLevel(logging.DEBUG)
         print("🐛 Debug logging enabled")
     
-    # Show target screen info if specified
-    if args.target_screen:
-        print(f"🎯 Target screen specified: '{args.target_screen}'")
-    
     # Create and run client
     try:
         print("🚀 Starting Enhanced Multi-Screen Client (Auto-Install Edition)...")
@@ -1729,8 +1208,7 @@ For more information, visit: https://github.com/your-repo/openvideowalls
             server_url=args.server,
             hostname=args.hostname,
             display_name=args.display_name,
-            force_ffplay=args.force_ffplay,
-            target_screen=args.target_screen
+            force_ffplay=args.force_ffplay
         )
         
         client.run()
