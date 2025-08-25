@@ -1,16 +1,89 @@
 #!/usr/bin/env python3
 """
-Unified Multi-Screen Client for Video Wall Systems - Enhanced Version
-Simple, reliable client for multi-screen video streaming with target screen selection
-Now with automatic multithreading for multiple clients on the same device
+Enhanced Multi-Screen Client with Automatic Package Management
+Automatically handles local package installation if global packages are restricted
 """
-import argparse
+
+import sys
+import os
+from pathlib import Path
+
+# Add local lib directory to Python path if it exists
+LOCAL_LIB_DIR = Path(__file__).parent / "lib"
+if LOCAL_LIB_DIR.exists():
+    sys.path.insert(0, str(LOCAL_LIB_DIR))
+
+def install_package_locally(package_name):
+    """Install a package locally in the ./lib directory"""
+    import subprocess
+    
+    print(f"📦 {package_name} package not found, attempting local installation...")
+    
+    # Create local lib directory
+    LOCAL_LIB_DIR.mkdir(exist_ok=True)
+    
+    # Try different installation methods
+    methods = [
+        # Method 1: Standard pip install to target
+        [sys.executable, "-m", "pip", "install", "--target", str(LOCAL_LIB_DIR), package_name],
+        # Method 2: With --break-system-packages
+        [sys.executable, "-m", "pip", "install", "--target", str(LOCAL_LIB_DIR), "--break-system-packages", package_name],
+        # Method 3: User install as fallback
+        [sys.executable, "-m", "pip", "install", "--user", package_name],
+        # Method 4: User install with break system packages
+        [sys.executable, "-m", "pip", "install", "--user", "--break-system-packages", package_name],
+    ]
+    
+    for i, cmd in enumerate(methods):
+        try:
+            print(f"   Trying installation method {i+1}/4...")
+            subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            # Add to path if installed locally
+            if "--target" in cmd:
+                sys.path.insert(0, str(LOCAL_LIB_DIR))
+            
+            print(f"✅ Successfully installed {package_name} (method {i+1})")
+            return True
+            
+        except subprocess.CalledProcessError:
+            continue
+    
+    # All methods failed
+    print(f"❌ Failed to install {package_name} automatically")
+    print(f"💡 Please install manually:")
+    print(f"   sudo apt-get install python3-{package_name}")
+    print(f"   OR: python3 -m pip install --user --break-system-packages {package_name}")
+    return False
+
+def ensure_package(package_name, import_name=None):
+    """Ensure a package is available, install locally if needed"""
+    if import_name is None:
+        import_name = package_name
+    
+    try:
+        __import__(import_name)
+        return True
+    except ImportError:
+        if install_package_locally(package_name):
+            try:
+                __import__(import_name)
+                return True
+            except ImportError:
+                return False
+        return False
+
+# Ensure required packages are available
+if not ensure_package("requests"):
+    print("Cannot continue without the requests package.")
+    sys.exit(1)
+
+# Now we can safely import everything
 import requests
+import argparse
 import time
 import logging
 import subprocess
-import sys
-import os
 import json
 import signal
 import atexit
@@ -18,9 +91,22 @@ import threading
 import socket
 from typing import Optional, Dict, Any, Tuple
 from urllib.parse import urlparse
-from pathlib import Path
-import tkinter as tk
-from tkinter import messagebox
+
+# Try to import tkinter, install locally if needed
+try:
+    import tkinter as tk
+    from tkinter import messagebox
+except ImportError:
+    print("⚠️  tkinter not available - GUI features will be disabled")
+    print("💡 Install with: sudo apt-get install python3-tk")
+    # Create dummy classes to prevent errors
+    class DummyTk:
+        def __init__(self, *args, **kwargs): pass
+        def __getattr__(self, name): return lambda *args, **kwargs: None
+    
+    tk = DummyTk()
+    messagebox = DummyTk()
+
 from queue import Queue
 
 
@@ -292,7 +378,8 @@ class UnifiedMultiScreenClient:
         
         # Log single-threaded status
         self.logger.info(f"Single-threaded mode - optimized for Raspberry Pi efficiency")
-        print(f" SINGLE-THREADED: Enabled (Raspberry Pi optimized)")
+        print(f"🔧 SINGLE-THREADED: Enabled (Raspberry Pi optimized)")
+        print(f"📦 AUTO-INSTALL: Python packages installed automatically as needed")
     
     def _detect_multiple_clients(self) -> bool:
         """Single-threaded mode - always returns False for Raspberry Pi efficiency"""
@@ -427,7 +514,7 @@ class UnifiedMultiScreenClient:
             self.window_manager.attributes('-topmost', True)
             self.window_manager.focus_force()
             
-            print(f"Window Manager Started")
+            print(f"🖥️  Window Manager Started")
             print(f"   Target Screen: {self.target_screen or 'Default'}")
             print(f"   Note: Monitor movement disabled")
             
@@ -442,13 +529,35 @@ class UnifiedMultiScreenClient:
         self.logger.info(f"Monitor movement requested but disabled")
     
     def auto_position_window(self):
-        """Stub method - auto-positioning not needed"""
+        """Auto-position window on target screen"""
         if self.target_screen:
-            print(f"\n TARGET SCREEN: {self.target_screen}")
+            print(f"\n🎯 TARGET SCREEN: {self.target_screen}")
             target_info = self._get_target_screen_info()
             print(f"   Target: {target_info['name']}")
-            print(f"   Note: Window will appear on default screen (monitor movement disabled)")
-        self.logger.info(f"Auto-positioning requested but disabled")
+            
+            # Check if we have positioning tools available
+            if not self._check_positioning_tools():
+                print(f"   Note: Window positioning tools not available")
+                print(f"   Install with: sudo apt-get install wmctrl xdotool")
+                return
+            
+            # Get monitor information
+            geometry = self._get_monitor_geometry()
+            if geometry:
+                print(f"   Monitor: {geometry['width']}x{geometry['height']} at +{geometry['x']}+{geometry['y']}")
+            else:
+                print(f"   Note: Could not detect monitor layout")
+                print(f"   Run 'xrandr --listmonitors' to check your setup")
+        
+        self.logger.info(f"Auto-positioning for target screen {self.target_screen}")
+    
+    def _check_positioning_tools(self) -> bool:
+        """Check if window positioning tools are available"""
+        try:
+            subprocess.run(['wmctrl', '--version'], capture_output=True, timeout=2)
+            return True
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+            return False
     
     def move_to_next_monitor(self, event=None):
         """Stub method - monitor movement not needed"""
@@ -472,14 +581,17 @@ Windows will appear on the default screen.
 
 Press Ctrl+C to stop the client.
         """
-        messagebox.showinfo("Multi-Screen Client Help", help_text)
+        try:
+            messagebox.showinfo("Multi-Screen Client Help", help_text)
+        except:
+            print(help_text)
     
     def detect_sei_in_stream(self, stream_url: str, timeout: int = 10) -> bool:
         """
         Detect if the stream contains SEI metadata by analyzing the first few seconds
         """
         try:
-            print(f" Analyzing stream for SEI metadata...")
+            print(f"🔍 Analyzing stream for SEI metadata...")
             print(f"   Stream URL: {stream_url}")
             
             # Use ffprobe to analyze the stream for a short duration
@@ -516,7 +628,7 @@ Press Ctrl+C to stop the client.
                     
                     for pattern in sei_patterns:
                         if pattern.lower() in stdout.lower():
-                            print(f" SEI metadata detected (pattern: {pattern[:16]}...)")
+                            print(f"✅ SEI metadata detected (pattern: {pattern[:16]}...)")
                             return True
                     
                     # Alternative: Check stderr for SEI-related messages
@@ -524,17 +636,17 @@ Press Ctrl+C to stop the client.
                         sei_indicators = ["sei", "user_data", "h264_metadata"]
                         for indicator in sei_indicators:
                             if indicator.lower() in stderr.lower():
-                                print(f" SEI indicators found in stream analysis")
+                                print(f"✅ SEI indicators found in stream analysis")
                                 return True
                     
-                    print(f" No SEI metadata detected - standard stream")
+                    print(f"❌ No SEI metadata detected - standard stream")
                     return False
                 else:
-                    print(f"  Could not analyze stream data")
+                    print(f"⚠️  Could not analyze stream data")
                     return False
                     
             except subprocess.TimeoutExpired:
-                print(f"  Stream analysis timeout - assuming no SEI")
+                print(f"⏱️  Stream analysis timeout - assuming no SEI")
                 process.kill()
                 return False
                 
@@ -569,7 +681,7 @@ Press Ctrl+C to stop the client.
             target_info = self._get_target_screen_info()
             
             print(f"\n{'='*80}")
-            print(f" STARTING MULTI-SCREEN CLIENT REGISTRATION")
+            print(f"🚀 STARTING MULTI-SCREEN CLIENT REGISTRATION")
             print(f"   Client: {self.hostname}")
             print(f"   Local IP: {self._get_local_ip_address()}")
             print(f"   Client ID: {self.client_id}")
@@ -606,23 +718,23 @@ Press Ctrl+C to stop the client.
                 "target_monitor": target_info['index']
             }
             
-            print(f"\n Sending registration request...")
+            print(f"\n📡 Sending registration request...")
             request_sent_time = time.time()
             
             # Try new registration endpoint first, fallback to legacy
             try:
-                print(f" Trying new endpoint: {self.server_url}/api/clients/register")
-                print(f" Registration data: {json.dumps(registration_data, indent=2)}")
+                print(f"🔄 Trying new endpoint: {self.server_url}/api/clients/register")
+                print(f"📋 Registration data: {json.dumps(registration_data, indent=2)}")
                 response = requests.post(
                     f"{self.server_url}/api/clients/register",
                     json=registration_data,
                     timeout=10
                 )
                 endpoint_used = "new (/api/clients/register)"
-                print(f" New endpoint succeeded with status: {response.status_code}")
+                print(f"✅ New endpoint succeeded with status: {response.status_code}")
             except requests.exceptions.RequestException as e:
                 # Fallback to legacy endpoint (simplified data)
-                print(f" New endpoint failed with RequestException: {e}")
+                print(f"❌ New endpoint failed with RequestException: {e}")
                 self.logger.info("New endpoint failed, trying legacy endpoint...")
                 legacy_data = {
                     "hostname": self.hostname,
@@ -637,10 +749,10 @@ Press Ctrl+C to stop the client.
                 endpoint_used = "legacy (/register_client)"
             except Exception as e:
                 # Catch any other exceptions
-                print(f" New endpoint failed with unexpected error: {e}")
-                print(f" Error type: {type(e).__name__}")
+                print(f"❌ New endpoint failed with unexpected error: {e}")
+                print(f"🔧 Error type: {type(e).__name__}")
                 import traceback
-                print(f" Traceback: {traceback.format_exc()}")
+                print(f"📄 Traceback: {traceback.format_exc()}")
                 # Fallback to legacy endpoint (simplified data)
                 self.logger.info("New endpoint failed, trying legacy endpoint...")
                 legacy_data = {
@@ -658,7 +770,7 @@ Press Ctrl+C to stop the client.
             response_received_time = time.time()
             network_delay_ms = (response_received_time - request_sent_time) * 1000
             
-            print(f" Response received in {network_delay_ms:.1f}ms using {endpoint_used}")
+            print(f"📨 Response received in {network_delay_ms:.1f}ms using {endpoint_used}")
             
             if response.status_code in [200, 202]:
                 result = response.json()
@@ -666,7 +778,7 @@ Press Ctrl+C to stop the client.
                     registration_end = time.time()
                     total_time_ms = (registration_end - registration_start) * 1000
                     
-                    print(f"\n REGISTRATION SUCCESSFUL!")
+                    print(f"\n🎉 REGISTRATION SUCCESSFUL!")
                     print(f"   Client ID: {result.get('client_id', self.client_id)}")
                     print(f"   Status: {result.get('status', 'registered')}")
                     if 'server_time' in result:
@@ -686,22 +798,22 @@ Press Ctrl+C to stop the client.
                         "Admin will use the web interface to make assignments",
                         "Client will automatically start playing when streaming begins"
                     ])
-                    print(f"\n Next Steps:")
+                    print(f"\n📋 Next Steps:")
                     for step in next_steps:
                         print(f"    {step}")
                     
                     print(f"{'='*80}")
                     return True
                 else:
-                    print(f" Registration failed: {result.get('error', 'Unknown error')}")
+                    print(f"❌ Registration failed: {result.get('error', 'Unknown error')}")
                     return False
             else:
-                print(f" Registration failed with HTTP status {response.status_code}")
+                print(f"❌ Registration failed with HTTP status {response.status_code}")
                 print(f"   Response: {response.text}")
                 return False
                 
         except Exception as e:
-            print(f" Registration error: {e}")
+            print(f"💥 Registration error: {e}")
             self.logger.error(f"Registration error: {e}")
             return False
     
@@ -709,7 +821,7 @@ Press Ctrl+C to stop the client.
         """Wait for admin to assign this client to a group and stream"""
         retry_count = 0
         
-        print(f"\n Waiting for assignment from admin...")
+        print(f"\n⏳ Waiting for assignment from admin...")
         print(f"   Admin needs to:")
         print(f"   1. Assign this client to a group")
         print(f"   2. Assign this client to a specific stream/screen")
@@ -761,7 +873,7 @@ Press Ctrl+C to stop the client.
                     group_name = data.get('group_name', 'unknown')
                     stream_assignment = data.get('stream_assignment', 'unknown')
                     
-                    print(f"\n ASSIGNMENT COMPLETE!")
+                    print(f"\n🎯 ASSIGNMENT COMPLETE!")
                     print(f"   Group: {group_name}")
                     print(f"   Stream: {stream_assignment}")
                     print(f"   Assignment Type: {data.get('assignment_status', 'unknown')}")
@@ -772,13 +884,13 @@ Press Ctrl+C to stop the client.
                     return True
                 
                 elif status in ["waiting_for_group_assignment", "waiting_for_stream_assignment"]:
-                    print(f" {message}")
+                    print(f"⏳ {message}")
                     retry_count = 0  # Don't count as failure
                 
                 elif status == "waiting_for_streaming":
                     group_name = data.get('group_name', 'unknown')
                     stream_assignment = data.get('stream_assignment', 'unknown')
-                    print(f" {message}")
+                    print(f"⏳ {message}")
                     print(f"   Assigned to: {group_name}/{stream_assignment}")
                     print(f"   Waiting for admin to start streaming...")
                     retry_count = 0
@@ -788,7 +900,7 @@ Press Ctrl+C to stop the client.
                     # Keep waiting instead of giving up
                     group_id = data.get('group_id')
                     if retry_count % 6 == 0:
-                        print(f"  Group validation failed, but continuing (Docker discovery issue)")
+                        print(f"⚠️  Group validation failed, but continuing (Docker discovery issue)")
                         print(f"   Group ID: {group_id}")
                         print(f"   Will retry...")
                     # Don't print error every time
@@ -796,28 +908,28 @@ Press Ctrl+C to stop the client.
                     # Continue waiting instead of returning error
                 
                 elif status == "not_registered":
-                    print(f" {message}")
+                    print(f"❌ {message}")
                     print(f"   Client may have been removed from server")
                     return False
                 
                 else:
-                    print(f"  Unexpected status: {status} - {message}")
+                    print(f"❓ Unexpected status: {status} - {message}")
                     retry_count += 1
                 
                 # Interruptible sleep
                 if self._shutdown_event.wait(timeout=self.retry_interval):
-                    print(f"   Shutdown requested during wait")
+                    print(f"🛑 Shutdown requested during wait")
                     return False
                 
             except Exception as e:
-                print(f"  Network error ({retry_count + 1}/{self.max_retries}): {e}")
+                print(f"🌐 Network error ({retry_count + 1}/{self.max_retries}): {e}")
                 retry_count += 1
                 if self._shutdown_event.wait(timeout=self.retry_interval * 2):
-                    print(f"   Shutdown requested during error wait")
+                    print(f"🛑 Shutdown requested during error wait")
                     return False
         
         if retry_count >= self.max_retries:
-            print(f" Max retries reached, giving up")
+            print(f"❌ Max retries reached, giving up")
             return False
         
         return False
@@ -835,14 +947,14 @@ Press Ctrl+C to stop the client.
             data = response.json()
             
             if data.get("success", False):
-                print(f" Heartbeat sent successfully")
+                print(f"💓 Heartbeat sent successfully")
                 return True
             else:
-                print(f" Heartbeat failed: {data.get('error', 'Unknown error')}")
+                print(f"💔 Heartbeat failed: {data.get('error', 'Unknown error')}")
                 return False
                 
         except Exception as e:
-                print(f" Heartbeat request failed: {e}")
+                print(f"💔 Heartbeat request failed: {e}")
                 return False
     
     def fix_stream_url(self, stream_url: str) -> str:
@@ -871,7 +983,7 @@ Press Ctrl+C to stop the client.
             self.stop_stream()  # Clean up any existing player
             
             # Single-threaded mode (optimized for Raspberry Pi)
-            print(f"\n SINGLE-THREADED VIDEO PLAYER")
+            print(f"\n🎬 SINGLE-THREADED VIDEO PLAYER")
             print(f"   Mode: Main thread playback (Raspberry Pi optimized)")
             print(f"   Target Screen: {self.target_screen}")
             print(f"   Stream URL: {self.current_stream_url}")
@@ -901,7 +1013,7 @@ Press Ctrl+C to stop the client.
     def _play_with_cpp_player(self) -> bool:
         """Start playing with the built C++ player (for SEI streams)"""
         try:
-            print(f"\n STARTING C++ PLAYER (SEI MODE)")
+            print(f"\n🚀 STARTING C++ PLAYER (SEI MODE)")
             print(f"   Stream URL: {self.current_stream_url}")
             print(f"   Stream Version: {self.current_stream_version}")
             print(f"   Capability: SEI timestamp processing")
@@ -926,15 +1038,15 @@ Press Ctrl+C to stop the client.
                         if line.strip():
                             line_clean = line.strip()
                             if "SEI" in line_clean or "timestamp" in line_clean.lower():
-                                self.logger.info(f" SEI: {line_clean}")
+                                self.logger.info(f"🔍 SEI: {line_clean}")
                             elif "TELEMETRY:" in line_clean:
-                                self.logger.info(f" {line_clean}")
+                                self.logger.info(f"📊 {line_clean}")
                             elif "ERROR" in line_clean.upper():
-                                self.logger.error(f" {line_clean}")
+                                self.logger.error(f"❌ {line_clean}")
                             elif "WARNING" in line_clean.upper():
-                                self.logger.warning(f" {line_clean}")
+                                self.logger.warning(f"⚠️ {line_clean}")
                             else:
-                                self.logger.debug(f" {line_clean}")
+                                self.logger.debug(f"ℹ️ {line_clean}")
                 except Exception as e:
                     self.logger.error(f"Error monitoring C++ output: {e}")
                 finally:
@@ -956,26 +1068,36 @@ Press Ctrl+C to stop the client.
     def _play_with_ffplay(self) -> bool:
         """Start playing with ffplay (for standard streams without SEI)"""
         try:
-            print(f"\n STARTING FFPLAY (STANDARD MODE)")
+            print(f"\n🚀 STARTING FFPLAY (STANDARD MODE)")
             print(f"   Stream URL: {self.current_stream_url}")
             print(f"   Stream Version: {self.current_stream_version}")
             print(f"   Capability: Standard video playback")
+            print(f"   Target Screen: {self.target_screen}")
             
+            # Get monitor information for positioning
+            geometry_info = self._get_monitor_geometry()
+            
+            # Simple ffplay command that works
             cmd = [
                 "ffplay",
                 "-fflags", "nobuffer",
                 "-flags", "low_delay", 
                 "-framedrop",
                 "-strict", "experimental",
-                "-err_detect", "ignore_err",  # Ignore decode errors
-                "-ec", "favor_inter",         # Error concealment
-                "-sync", "video",             # Sync to video
+                "-err_detect", "ignore_err",
+                "-ec", "favor_inter",
+                "-sync", "video",
                 "-window_title", f"Multi-Screen Client - {self.display_name}",
-                "-fs",  # Fullscreen
+                "-fs",  # Start fullscreen
                 "-autoexit",
-                "-loglevel", "warning",  # Reduce ffplay verbosity
+                "-loglevel", "info",
                 self.current_stream_url
             ]
+            
+            if geometry_info:
+                print(f"   Monitor detected: {geometry_info['width']}x{geometry_info['height']} at +{geometry_info['x']}+{geometry_info['y']}")
+            else:
+                print(f"   Monitor detection failed, using default positioning")
             
             self.player_process = subprocess.Popen(
                 cmd, 
@@ -984,21 +1106,30 @@ Press Ctrl+C to stop the client.
                 universal_newlines=True
             )
             
-            # Monitor ffplay output (less verbose than C++ player)
+            # Move window to target screen after it starts (if needed)
+            if geometry_info and self.target_screen and self.target_screen != "1":
+                # Only move if target is not screen 1 (default)
+                positioning_delay = 3.0  # 3 seconds delay for stream to stabilize
+                threading.Timer(positioning_delay, self._move_to_target_screen, args=(geometry_info,)).start()
+                print(f"   Window will be moved to Screen {self.target_screen} in {positioning_delay} seconds")
+            
+            # Monitor ffplay output
             def monitor_ffplay_output():
                 try:
                     for line in iter(self.player_process.stderr.readline, ''):
                         if line.strip():
                             line_clean = line.strip()
-                            # Filter out common H.264 decode errors to reduce log spam
-                            if "decode_slice_header error" in line_clean:
-                                continue  # Skip these common errors
-                            elif "error" in line_clean.lower():
-                                self.logger.error(f" {line_clean}")
-                            elif "warning" in line_clean.lower():
-                                self.logger.warning(f" {line_clean}")
+                            # Show connection and SRT-related messages
+                            if any(keyword in line_clean.lower() for keyword in ['srt', 'connection', 'connect', 'timeout', 'failed', 'error']):
+                                print(f"🔌 {line_clean}")
+                                self.logger.info(f"FFplay: {line_clean}")
+                            # Skip configuration spam
+                            elif "configuration:" in line_clean:
+                                continue
+                            elif "decode_slice_header error" in line_clean:
+                                continue
                             else:
-                                self.logger.debug(f" {line_clean}")
+                                self.logger.debug(f"FFplay: {line_clean}")
                 except Exception as e:
                     self.logger.debug(f"Error monitoring ffplay output: {e}")
             
@@ -1014,6 +1145,242 @@ Press Ctrl+C to stop the client.
             self.logger.error(f"ffplay error: {e}")
             return False
     
+    def _move_to_target_screen(self, geometry: Dict[str, int]):
+        """Move ffplay window to target screen"""
+        try:
+            print(f"   Attempting to move window to Screen {self.target_screen}")
+            
+            # Give stream time to start
+            time.sleep(1)
+            
+            # Find the ffplay window
+            result = subprocess.run(['wmctrl', '-l'], capture_output=True, text=True, timeout=5)
+            
+            if result.returncode != 0:
+                print(f"   wmctrl not available - window will stay on default screen")
+                return
+            
+            window_id = None
+            for line in result.stdout.split('\n'):
+                if 'Multi-Screen Client' in line:
+                    window_id = line.split()[0]
+                    break
+            
+            if window_id:
+                x, y = geometry['x'], geometry['y']
+                w, h = geometry['width'], geometry['height']
+                
+                # Remove fullscreen first
+                subprocess.run(['wmctrl', '-i', '-r', window_id, '-b', 'remove,fullscreen'], 
+                             timeout=5, capture_output=True)
+                
+                time.sleep(0.5)
+                
+                # Move window to correct screen
+                subprocess.run(['wmctrl', '-i', '-r', window_id, '-e', f'0,{x},{y},{w},{h}'], 
+                             timeout=5, capture_output=True)
+                
+                time.sleep(0.5)
+                
+                # Make fullscreen again
+                subprocess.run(['wmctrl', '-i', '-r', window_id, '-b', 'add,fullscreen'], 
+                             timeout=5, capture_output=True)
+                
+                print(f"✅ Window moved to Screen {self.target_screen}")
+                
+            else:
+                print(f"   Could not find ffplay window - it may already be positioned correctly")
+                
+        except Exception as e:
+            print(f"   Window positioning failed: {e}")
+            print(f"   Stream will continue on default screen")
+    
+    def _make_window_fullscreen_on_screen(self, geometry: Dict[str, int]):
+        """Make ffplay window fullscreen on the target screen with retries"""
+        max_attempts = 3
+        
+        for attempt in range(max_attempts):
+            try:
+                print(f"   Attempting window positioning (attempt {attempt + 1}/{max_attempts})")
+                
+                # Give more time for stream to stabilize
+                if attempt > 0:
+                    time.sleep(2)  # Additional delay between retries
+                else:
+                    time.sleep(1)  # Initial delay
+                
+                # Find the ffplay window
+                result = subprocess.run(['wmctrl', '-l'], capture_output=True, text=True, timeout=5)
+                
+                if result.returncode != 0:
+                    print(f"   Could not list windows (attempt {attempt + 1})")
+                    continue
+                
+                window_id = None
+                windows_found = []
+                
+                for line in result.stdout.split('\n'):
+                    if line.strip():
+                        windows_found.append(line.strip())
+                        if 'Multi-Screen Client' in line or 'ffplay' in line:
+                            window_id = line.split()[0]
+                            break
+                
+                print(f"   Found {len(windows_found)} windows, ffplay window: {'found' if window_id else 'not found'}")
+                
+                if window_id:
+                    x, y = geometry['x'], geometry['y']
+                    w, h = geometry['width'], geometry['height']
+                    
+                    print(f"   Moving window {window_id} to {w}x{h} at +{x}+{y}")
+                    
+                    # Step 1: Move and resize window to correct screen
+                    move_result = subprocess.run(
+                        ['wmctrl', '-i', '-r', window_id, '-e', f'0,{x},{y},{w},{h}'], 
+                        timeout=5, capture_output=True
+                    )
+                    
+                    if move_result.returncode == 0:
+                        print(f"   Window moved successfully")
+                        time.sleep(1)  # Allow window to settle
+                        
+                        # Step 2: Make it fullscreen
+                        fs_result = subprocess.run(
+                            ['wmctrl', '-i', '-r', window_id, '-b', 'add,fullscreen'], 
+                            timeout=5, capture_output=True
+                        )
+                        
+                        if fs_result.returncode == 0:
+                            print(f"   Window made fullscreen on Screen {self.target_screen} ({w}x{h} at +{x}+{y})")
+                            return  # Success, exit function
+                        else:
+                            print(f"   Failed to make fullscreen: {fs_result.stderr.decode()}")
+                    else:
+                        print(f"   Failed to move window: {move_result.stderr.decode()}")
+                
+                else:
+                    print(f"   ffplay window not found in window list")
+                    if windows_found:
+                        print(f"   Available windows: {windows_found[:3]}")  # Show first 3
+                
+            except Exception as e:
+                print(f"   Window positioning attempt {attempt + 1} failed: {e}")
+        
+        print(f"   All window positioning attempts failed - stream will play on default screen")
+    
+    def _get_monitor_geometry(self) -> Optional[Dict[str, int]]:
+        """Get geometry information for the target monitor"""
+        try:
+            if not self.target_screen:
+                return None
+            
+            # Use xrandr to get monitor information
+            result = subprocess.run(['xrandr', '--listmonitors'], 
+                                  capture_output=True, text=True, timeout=5)
+            
+            if result.returncode != 0:
+                return None
+            
+            print(f"Debug - xrandr output:\n{result.stdout}")
+            
+            monitors = []
+            for line in result.stdout.split('\n'):
+                if '+' in line and not line.strip().startswith('Monitors:'):
+                    # Parse monitor info: " 1: +DP-2 1920/510x1080/287+1920+0  DP-2"
+                    # or: " 0: +HDMI-1 1920/510x1080/287+0+0  HDMI-1"
+                    parts = line.strip().split()
+                    if len(parts) >= 3:
+                        geometry = parts[2]  # "1920/510x1080/287+1920+0"
+                        print(f"Debug - parsing geometry: {geometry}")
+                        
+                        if 'x' in geometry and '+' in geometry:
+                            try:
+                                # Split by '/' to get width and height parts
+                                # Format: width/mmwidth x height/mmheight + x + y
+                                before_plus = geometry.split('+')[0]  # "1920/510x1080/287"
+                                width_part = before_plus.split('x')[0]  # "1920/510"
+                                height_part = before_plus.split('x')[1]  # "1080/287"
+                                
+                                width = int(width_part.split('/')[0])   # 1920
+                                height = int(height_part.split('/')[0]) # 1080
+                                
+                                # Get position
+                                pos_parts = geometry.split('+')[1:]  # ['1920', '0']
+                                x = int(pos_parts[0]) if len(pos_parts) > 0 else 0
+                                y = int(pos_parts[1]) if len(pos_parts) > 1 else 0
+                                
+                                monitor_info = {
+                                    'width': width,
+                                    'height': height,
+                                    'x': x,
+                                    'y': y
+                                }
+                                
+                                print(f"Debug - parsed monitor: {monitor_info}")
+                                monitors.append(monitor_info)
+                                
+                            except (ValueError, IndexError) as e:
+                                print(f"Debug - failed to parse geometry {geometry}: {e}")
+                                continue
+            
+            print(f"Debug - found {len(monitors)} monitors: {monitors}")
+            
+            # Select monitor based on target screen
+            if self.target_screen == "1" and len(monitors) >= 1:
+                return monitors[0]
+            elif self.target_screen == "2" and len(monitors) >= 2:
+                return monitors[1]
+            elif len(monitors) >= 1:
+                # Fallback to first monitor
+                return monitors[0]
+                
+            return None
+            
+        except Exception as e:
+            self.logger.debug(f"Failed to get monitor geometry: {e}")
+            print(f"Debug - exception getting monitor geometry: {e}")
+            return None
+    
+    def _position_ffplay_window(self, geometry: Dict[str, int]):
+        """Position ffplay window on the correct monitor using wmctrl"""
+        try:
+            # Give ffplay more time to fully initialize
+            time.sleep(1)
+            
+            # Find the ffplay window
+            result = subprocess.run(['wmctrl', '-l'], capture_output=True, text=True, timeout=5)
+            
+            if result.returncode != 0:
+                return
+            
+            window_id = None
+            for line in result.stdout.split('\n'):
+                if 'Multi-Screen Client' in line or 'ffplay' in line:
+                    window_id = line.split()[0]
+                    break
+            
+            if window_id:
+                # Move and resize window
+                x, y = geometry['x'], geometry['y']
+                w, h = geometry['width'], geometry['height']
+                
+                # Move window to correct position
+                subprocess.run(['wmctrl', '-i', '-r', window_id, '-e', f'0,{x},{y},{w},{h}'], 
+                             timeout=5)
+                
+                # Make it fullscreen on that monitor
+                subprocess.run(['wmctrl', '-i', '-r', window_id, '-b', 'add,fullscreen'], 
+                             timeout=5)
+                
+                print(f"✅ Positioned window on Screen {self.target_screen} ({w}x{h} at +{x}+{y})")
+                
+            else:
+                print(f"⚠️  Could not find ffplay window to position")
+                
+        except Exception as e:
+            self.logger.debug(f"Failed to position window: {e}")
+            print(f"⚠️  Window positioning failed: {e}")
+    
     def monitor_player(self) -> str:
         """Monitor the player process and check for stream changes"""
         if not self.player_process:
@@ -1022,7 +1389,7 @@ Press Ctrl+C to stop the client.
         # Determine current player type for display
         player_display_name = "C++ Player" if self.current_player_type == "cpp_player" else "ffplay"
         
-        print(f"\n MONITORING {player_display_name.upper()}")
+        print(f"\n👀 MONITORING {player_display_name.upper()}")
         print(f"   PID: {self.player_process.pid}")
         print(f"   Stream: {self.current_stream_url}")
         print(f"   Player Type: {self.current_player_type}")
@@ -1039,27 +1406,27 @@ Press Ctrl+C to stop the client.
             if self.window_manager:
                 try:
                     self.window_manager.update()
-                except tk.TclError:
-                    # Window manager closed
+                except:
+                    # Window manager closed or tk not available
                     break
             
             # Check for stream changes
             if current_time - last_stream_check >= stream_check_interval:
                 if self._check_for_stream_change():
-                    print(f" Stream change detected, will restart with optimal player...")
+                    print(f"🔄 Stream change detected, will restart with optimal player...")
                     self.stop_stream()
                     return 'stream_changed'
                 last_stream_check = current_time
             
             # Periodic health report
             if current_time - last_health_report >= health_report_interval:
-                print(f" {player_display_name} health: PID={self.player_process.pid}, "
+                print(f"💚 {player_display_name} health: PID={self.player_process.pid}, "
                       f"Running {int(current_time - last_health_report)}s")
                 last_health_report = current_time
             
             # Check for shutdown
             if self._shutdown_event.wait(timeout=1):
-                print(f" Shutdown requested during monitoring")
+                print(f"🛑 Shutdown requested during monitoring")
                 self.stop_stream()
                 return 'user_exit'
         
@@ -1070,13 +1437,13 @@ Press Ctrl+C to stop the client.
         exit_code = self.player_process.returncode if self.player_process else -1
         
         if exit_code == 0:
-            print(f" {player_display_name} ended normally")
+            print(f"✅ {player_display_name} ended normally")
             return 'stream_ended'
         elif exit_code == 1:
-            print(f"  {player_display_name} connection lost or stream unavailable")
+            print(f"🔌 {player_display_name} connection lost or stream unavailable")
             return 'connection_lost'
         else:
-            print(f" {player_display_name} exited with error code: {exit_code}")
+            print(f"❌ {player_display_name} exited with error code: {exit_code}")
             return 'error'
     
     def _check_for_stream_change(self) -> bool:
@@ -1163,30 +1530,30 @@ Press Ctrl+C to stop the client.
             try:
                 pid = self.player_process.pid
                 player_name = "C++ Player" if self.current_player_type == "cpp_player" else "ffplay"
-                print(f" Stopping {player_name} (PID: {pid})")
+                print(f"🛑 Stopping {player_name} (PID: {pid})")
                 
                 # Graceful termination
                 self.player_process.terminate()
                 
                 try:
                     self.player_process.wait(timeout=3)
-                    print(f" {player_name} stopped gracefully")
+                    print(f"✅ {player_name} stopped gracefully")
                 except subprocess.TimeoutExpired:
-                    print(f"  Force killing {player_name}")
+                    print(f"💀 Force killing {player_name}")
                     self.player_process.kill()
                     
                     try:
                         self.player_process.wait(timeout=2)
-                        print(f" {player_name} force-killed")
+                        print(f"✅ {player_name} force-killed")
                     except subprocess.TimeoutExpired:
-                        print(f" {player_name} unresponsive")
+                        print(f"⚠️ {player_name} unresponsive")
                         try:
                             os.kill(pid, signal.SIGKILL)
                         except (OSError, ProcessLookupError):
                             pass
                 
             except (OSError, ProcessLookupError):
-                print(f" Player process already terminated")
+                print(f"ℹ️ Player process already terminated")
             except Exception as e:
                 self.logger.error(f"Error stopping player: {e}")
             finally:
@@ -1198,7 +1565,7 @@ Press Ctrl+C to stop the client.
         if not self.running:
             return
         
-        print(f"\n INITIATING GRACEFUL SHUTDOWN")
+        print(f"\n🛑 INITIATING GRACEFUL SHUTDOWN")
         self.running = False
         self._shutdown_event.set()
         
@@ -1213,7 +1580,7 @@ Press Ctrl+C to stop the client.
                 pass
             self.window_manager = None
         
-        print(f" Shutdown complete")
+        print(f"✅ Shutdown complete")
     
     def _emergency_cleanup(self):
         """Emergency cleanup for atexit"""
@@ -1226,7 +1593,7 @@ Press Ctrl+C to stop the client.
             target_info = self._get_target_screen_info()
             
             print(f"\n{'='*80}")
-            print(f" UNIFIED MULTI-SCREEN CLIENT (ENHANCED)")
+            print(f"🚀 UNIFIED MULTI-SCREEN CLIENT (ENHANCED)")
             print(f"   Hostname: {self.hostname}")
             print(f"   Client ID: {self.client_id}")
             print(f"   Display Name: {self.display_name}")
@@ -1236,11 +1603,12 @@ Press Ctrl+C to stop the client.
             print(f"   Server: {self.server_url}")
             print(f"   Smart Player: {'Enabled' if not self.force_ffplay else 'Disabled (force ffplay)'}")
             print(f"   C++ Player: {'Available' if self.player_executable else 'Not found'}")
+            print(f"   Auto-Install: Enabled (packages installed automatically)")
             print(f"{'='*80}")
             
             # Step 1: Register with server
             if not self.register():
-                print(f" Registration failed - exiting")
+                print(f"❌ Registration failed - exiting")
                 return
             
             # Step 1.5: Create window manager for hotkeys
@@ -1266,34 +1634,34 @@ Press Ctrl+C to stop the client.
                         stop_reason = self.monitor_player()
                         
                         if stop_reason == 'user_exit':
-                            print(f" User requested exit")
+                            print(f"👋 User requested exit")
                             break
                         elif stop_reason == 'stream_changed':
-                            print(f" Stream changed, restarting...")
+                            print(f"🔄 Stream changed, restarting...")
                             continue
                         elif stop_reason in ['stream_ended', 'connection_lost', 'error']:
-                            print(f" Stream stopped ({stop_reason}), waiting for new assignment...")
+                            print(f"⏹️ Stream stopped ({stop_reason}), waiting for new assignment...")
                             self.current_stream_url = None
                             self.current_stream_version = None
                             self.current_player_type = None
                             continue
                         else:
-                            print(f"  Unexpected stop reason: {stop_reason}")
+                            print(f"❓ Unexpected stop reason: {stop_reason}")
                             break
                     else:
-                        print(f" Failed to start player, retrying in 10 seconds...")
+                        print(f"❌ Failed to start player, retrying in 10 seconds...")
                         if self._shutdown_event.wait(timeout=10):
                             break
                 else:
-                    print(f" Assignment failed, retrying in 10 seconds...")
+                    print(f"❌ Assignment failed, retrying in 10 seconds...")
                     if self._shutdown_event.wait(timeout=10):
                         break
                         
         except Exception as e:
-            print(f" Fatal error: {e}")
+            print(f"💥 Fatal error: {e}")
             self.logger.error(f"Fatal error in main loop: {e}")
         finally:
-            print(f"\n MULTI-SCREEN CLIENT SHUTDOWN")
+            print(f"\n🏁 MULTI-SCREEN CLIENT SHUTDOWN")
             self.shutdown()
 
     def get_player_status(self) -> Dict[str, Any]:
@@ -1305,7 +1673,8 @@ Press Ctrl+C to stop the client.
             'stream_version': self.current_stream_version,
             'player_type': self.current_player_type,
             'running': self.running,
-            'player_process': self.player_process.pid if self.player_process else None
+            'player_process': self.player_process.pid if self.player_process else None,
+            'auto_install_enabled': True  # New feature indicator
         }
         
         return status
@@ -1313,28 +1682,44 @@ Press Ctrl+C to stop the client.
 
 def main():
     """Main entry point for the enhanced multi-screen client"""
+    # Setup logging first
+    log_dir = Path.home() / "client_logs"
+    log_dir.mkdir(exist_ok=True)
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_dir / "client.log"),
+            logging.StreamHandler()
+        ]
+    )
+    
     parser = argparse.ArgumentParser(
         prog='client.py',
         description="""
- Enhanced Multi-Screen Client for Video Wall Systems
+🚀 Enhanced Multi-Screen Client for Video Wall Systems
 
 A simple and reliable client for multi-screen video streaming that supports
 automatic player selection with target screen identification, optimized for
 Raspberry Pi and single-threaded efficiency.
 
+✨ NEW: Automatic package installation - no setup script needed!
+
 Features:
-   Automatic server registration with unique client identification
-   Smart player selection (C++ player for SEI streams, ffplay fallback)
-   Target screen identification (1 or 2 for simple targeting)
-   Single-threaded mode optimized for Raspberry Pi performance
-   Efficient resource usage with 1 thread per client
-   Uses system default display (DISPLAY=:0.0)
-   Automatic reconnection and error recovery
-   Support for multiple instances (each in separate process)
+   📦 Automatic Python package installation (requests, etc.)
+   🔄 Automatic server registration with unique client identification
+   🎯 Smart player selection (C++ player for SEI streams, ffplay fallback)
+   📺 Target screen identification (1 or 2 for simple targeting)
+   🧵 Single-threaded mode optimized for Raspberry Pi performance
+   ⚡ Efficient resource usage with 1 thread per client
+   🖥️ Uses system default display (DISPLAY=:0.0)
+   🔁 Automatic reconnection and error recovery
+   📊 Support for multiple instances (each in separate process)
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
- BASIC USAGE EXAMPLES:
+🎯 BASIC USAGE EXAMPLES:
 
   Standard usage:
     python3 client.py --server http://192.168.1.100:5000 \\
@@ -1353,7 +1738,7 @@ Features:
     --target-screen 1         # Screen 1
     --target-screen 2         # Screen 2
 
-  DUAL SCREEN SETUP (Recommended for Raspberry Pi):
+📺 DUAL SCREEN SETUP (Recommended for Raspberry Pi):
 
   Terminal 1 (Screen 1):
     python3 client.py --server http://192.168.1.100:5000 \\
@@ -1367,7 +1752,7 @@ Features:
 
   Note: Each client runs in its own process with 1 thread for optimal Pi performance
 
-  ADVANCED OPTIONS:
+⚙️ ADVANCED OPTIONS:
 
   Force ffplay for all streams (disable smart selection):
     python3 client.py --server http://192.168.1.100:5000 \\
@@ -1377,23 +1762,22 @@ Features:
     python3 client.py --server http://192.168.1.100:5000 \\
       --hostname client-1 --display-name "Screen 1" --debug
 
- TARGET SCREEN:
+📦 AUTOMATIC PACKAGE INSTALLATION:
 
   How it works:
-  1. Client starts and registers with server
-  2. Video player launches on default screen
-  3. Target screen parameter is used for identification only
-  4. No automatic window movement (disabled)
-  5. Each client runs in 1 thread for Raspberry Pi efficiency
+  1. Client checks for required packages (requests, tkinter)
+  2. If missing, automatically installs to local ./lib directory
+  3. No global Python environment changes
+  4. No virtual environments or complex setup needed
+  5. Just run the client and it handles everything!
 
-  Target Screen Values:
-    1     → Screen 1
-    2     → Screen 2
+  Installation methods tried (in order):
+  1. Install to local ./lib directory (--target)
+  2. Install with --break-system-packages if needed
+  3. Fallback to --user installation
+  4. Graceful failure with helpful instructions
 
-  Note: Monitor movement has been disabled.
-  Windows will appear on the default screen.
-
-  SINGLE-THREADED ARCHITECTURE:
+🧵 SINGLE-THREADED ARCHITECTURE:
 
   Raspberry Pi Optimization:
   - Each client uses exactly 1 main thread
@@ -1407,22 +1791,15 @@ Features:
   - Efficient resource usage
   - Simple and reliable operation
 
-  How it works:
-  1. Each client runs in its own process
-  2. Each process uses 1 main thread for all operations
-  3. Server coordinates timing between multiple Pi devices
-  4. Network-based synchronization (no local threading needed)
+🔧 TROUBLESHOOTING:
 
- HOTKEY CONTROLS:
-
-  No hotkeys needed - monitor movement disabled.
-
- TROUBLESHOOTING:
+  If automatic package installation fails:
+    sudo apt-get install python3-requests python3-tk
 
   Check display configuration:
     xrandr --listmonitors
 
-  Test target screen identification:
+  Test with debug mode:
     python3 client.py --server http://YOUR_SERVER_IP:5000 \\
       --hostname test-client --display-name "Test" \\
       --target-screen 1 --debug
@@ -1432,7 +1809,7 @@ For more information, visit: https://github.com/your-repo/openvideowalls
     )
     
     # Required arguments group
-    required_group = parser.add_argument_group(' Required Arguments')
+    required_group = parser.add_argument_group('🔧 Required Arguments')
     required_group.add_argument('--server', 
                                required=True,
                                metavar='URL',
@@ -1447,7 +1824,7 @@ For more information, visit: https://github.com/your-repo/openvideowalls
                                help='Display name for admin interface - Example: "Monitor 1"')
     
     # Optional arguments group
-    optional_group = parser.add_argument_group('  Optional Arguments')
+    optional_group = parser.add_argument_group('⚙️ Optional Arguments')
     optional_group.add_argument('--target-screen', 
                                metavar='SCREEN',
                                help='Target screen (1 or 2)')
@@ -1457,45 +1834,50 @@ For more information, visit: https://github.com/your-repo/openvideowalls
 
     optional_group.add_argument('--debug', 
                                action='store_true',
-                               help='Enable debug logging (includes SEI detection details)')
+                               help='Enable debug logging (includes SEI detection details and auto-install info)')
 
     optional_group.add_argument('--version', 
                                action='version', 
-                               version=' Enhanced Multi-Screen Client v3.1')
+                               version='🚀 Enhanced Multi-Screen Client v4.0 (Auto-Install Edition)')
     
     # Parse arguments
     args = parser.parse_args()
     
     # Validate server URL
     if not args.server.startswith(('http://', 'https://')):
-        print(" Error: Server URL must start with http:// or https://")
+        print("❌ Error: Server URL must start with http:// or https://")
         print("   Example: --server http://192.168.1.100:5000")
         print("   Example: --server https://videowall.example.com:5000")
         sys.exit(1)
     
     # Validate hostname (basic check)
     if not args.hostname.strip():
-        print(" Error: Hostname cannot be empty")
+        print("❌ Error: Hostname cannot be empty")
         print("   Example: --hostname rpi-client-1")
         sys.exit(1)
     
     # Validate display name (basic check)
     if not args.display_name.strip():
-        print(" Error: Display name cannot be empty")
+        print("❌ Error: Display name cannot be empty")
         print("   Example: --display-name \"Monitor 1\"")
         sys.exit(1)
     
     # Configure logging level
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
-        print(" Debug logging enabled")
+        print("🐛 Debug logging enabled")
     
     # Show target screen info if specified
     if args.target_screen:
-        print(f" Target screen specified: '{args.target_screen}'")
+        print(f"🎯 Target screen specified: '{args.target_screen}'")
     
     # Create and run client
     try:
+        print("🚀 Starting Enhanced Multi-Screen Client (Auto-Install Edition)...")
+        print("📦 Python packages will be installed automatically if needed")
+        print("🛑 Press Ctrl+C to stop gracefully")
+        print()
+        
         client = UnifiedMultiScreenClient(
             server_url=args.server,
             hostname=args.hostname,
@@ -1504,15 +1886,12 @@ For more information, visit: https://github.com/your-repo/openvideowalls
             target_screen=args.target_screen
         )
         
-        print(" Starting Enhanced Multi-Screen Client...")
-        print("   Press Ctrl+C to stop gracefully")
-        
         client.run()
         
     except KeyboardInterrupt:
-        print("\n  Keyboard interrupt received")
+        print("\n🛑 Keyboard interrupt received")
     except Exception as e:
-        print(f"\n Fatal error: {e}")
+        print(f"\n💥 Fatal error: {e}")
         logging.error(f"Fatal error: {e}")
         sys.exit(1)
 
