@@ -2,11 +2,11 @@
 
 A comprehensive, open-source solution for managing multi-screen video streaming systems with support for SRT protocol, Docker containerization, and real-time client management.
 
-## 🎯 Project Overview
+## Project Overview
 
 This system enables organizations to create and manage video walls, digital signage networks, and multi-display streaming setups using recycled or heterogeneous displays. It's designed to be scalable, reliable, and easy to deploy across different hardware configurations.
 
-## 🚀 Key Features
+## Key Features
 
 ### Core Functionality
 - **Multi-Screen Streaming**: Stream video content across multiple displays simultaneously
@@ -23,7 +23,7 @@ This system enables organizations to create and manage video walls, digital sign
 - **Failover Support**: Automatic recovery and redundancy
 - **API-First Design**: RESTful API for integration with external systems
 
-## 🏗️ Architecture
+## Architecture
 
 ### Backend (Flask + Python)
 ```
@@ -63,7 +63,7 @@ client/
 └── setup_client.sh      # Automated setup script
 ```
 
-## 🔧 How It Works
+## How It Works
 
 ### 1. System Setup
 1. **Backend Server**: Deploy the Flask backend with Docker support
@@ -90,7 +90,7 @@ client/
 2. Performance metrics and error reporting
 3. Remote control capabilities for troubleshooting
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 ### Backend
 - **Python 3.8+**: Core application logic
@@ -113,7 +113,7 @@ client/
 - **FFmpeg**: Video playback and streaming
 - **Raspberry Pi OS**: Optimized for embedded displays
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 - Python 3.8+
@@ -142,14 +142,14 @@ chmod +x setup_client.sh
 ./setup_client.sh
 ```
 
-## 📖 Documentation
+## Documentation
 
 - **[Backend API Documentation](backend/README.md)**: Detailed API endpoints and configuration
 - **[Frontend Development Guide](frontend/README.md)**: Component architecture and development
 - **[Raspberry Pi Setup Guide](client/RASPBERRY_PI_SETUP.md)**: Complete client setup instructions
 - **[Project Documentation](Documentations/)**: Research papers and technical documentation
 
-## 🔍 Use Cases
+## Use Cases
 
 ### Digital Signage
 - Shopping malls and retail environments
@@ -166,42 +166,12 @@ chmod +x setup_client.sh
 - Exhibition halls and trade shows
 - Home theater and gaming setups
 
-## 🤝 Contributing
 
-We welcome contributions! Please see our contributing guidelines for:
-- Code style and standards
-- Testing requirements
-- Pull request process
-- Issue reporting
 
-## 📄 License
-
-This project is open source and available under the [MIT License](LICENSE).
-
-## 🆘 Support
+## Support
 
 - **Documentation**: Check the docs folder for detailed guides
 - **Issues**: Report bugs and feature requests on GitHub
 - **Community**: Join discussions in our community forums
 - **Email**: Contact the development team for enterprise support
 
-## 🔮 Roadmap
-
-### Upcoming Features
-- **AI-powered Content Optimization**: Automatic quality adjustment based on network conditions
-- **Advanced Analytics**: Detailed performance metrics and usage analytics
-- **Mobile App**: Native mobile applications for remote management
-- **Cloud Integration**: AWS, Azure, and Google Cloud deployment options
-- **Edge Computing**: Distributed processing for improved performance
-
-### Long-term Vision
-- **Global Scale**: Multi-region deployment and content delivery
-- **Machine Learning**: Predictive maintenance and performance optimization
-- **IoT Integration**: Smart display and sensor integration
-- **Blockchain**: Decentralized content distribution and rights management
-
----
-
-**Built with ❤️ by the OpenVideoWalls Team**
-
-*Empowering organizations to create stunning multi-screen experiences with open-source technology.*
