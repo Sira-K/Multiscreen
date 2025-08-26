@@ -2,122 +2,205 @@
 
 A modern React-based frontend for managing multi-screen video streaming systems, built with TypeScript, Vite, and shadcn/ui components.
 
-## Architecture
+## New Clean Folder Structure
 
-The frontend follows a clean, component-based architecture with organized configuration:
+The frontend has been reorganized with a cleaner, more logical structure:
 
 ```
-frontend/
-├── src/                    # Source code
-│   ├── core/              # Core application files
-│   │   ├── App.tsx            # Main application component
-│   │   ├── main.tsx           # Application entry point
-│   │   ├── App.css            # Application-specific styles
-│   │   ├── index.css          # Global styles
-│   │   ├── vite-env.d.ts      # Vite environment types
-│   │   └── pages/             # Page components
-│   │       ├── Index.tsx          # Main application page
-│   │       └── NotFound.tsx       # 404 error page
-│   ├── features/           # Feature-specific components
-│   │   ├── StreamsTab/         # Streaming management interface
-│   │   │   ├── StreamsTab.tsx      # Main streaming component
-│   │   │   ├── StreamsTabHeader.tsx # Streaming header
-│   │   │   ├── StreamsTabGroups.tsx # Group management
-│   │   │   ├── StreamsTabStats.tsx  # Statistics display
-│   │   │   └── hooks/              # Streaming-specific hooks
-│   │   ├── ClientsTab.tsx      # Client management interface
-│   │   └── VideoFilesTab.tsx   # Video file management
-│   └── shared/             # Shared utilities and components
-│       ├── ui/                 # shadcn/ui component library
-│       │   ├── GroupCard/          # Group card components
-│       │   ├── button.tsx          # Button component
-│       │   ├── card.tsx            # Card component
-│       │   └── ...                 # Other UI components
-│       ├── ErrorSystem/        # Error handling and notifications
-│       │   ├── ErrorContext.jsx     # Error context provider
-│       │   ├── ErrorNotification.jsx # Error display
-│       │   └── useErrorHandler.js   # Error handling hook
-│       ├── hooks/              # Custom React hooks
-│       │   └── use-mobile.tsx      # Mobile responsiveness hook
-│       ├── API/                # API integration
-│       │   ├── api.ts              # API client configuration
-│       │   └── utils.ts            # API utility functions
-│       └── types/               # TypeScript type definitions
-│           └── index.ts            # Main type definitions
-├── config/                 # Configuration files
-│   ├── build/                  # Build configuration
-│   │   └── vite.config.ts      # Vite build settings
-│   ├── typescript/             # TypeScript configuration
-│   │   ├── tsconfig.app.json   # App-specific TS config
-│   │   └── tsconfig.node.json  # Node.js TS config
-│   ├── styling/                # Styling configuration
-│   │   ├── tailwind.config.ts  # Tailwind CSS config
-│   │   └── components.json     # shadcn/ui config
-│   └── linting/                # Code quality
-│       └── eslint.config.js    # ESLint configuration
-├── public/                 # Static assets
-│   ├── placeholder.svg         # Placeholder image
-│   ├── robots.txt              # SEO configuration
-│   └── UB.ico                  # Favicon
-├── dist/                    # Build output (generated)
-├── node_modules/            # Dependencies (generated)
-├── index.html               # Main HTML template
-├── error_lookup.html        # Error lookup interface
-├── package.json             # Dependencies and scripts
-├── postcss.config.js        # PostCSS configuration
-└── tsconfig.json            # Root TypeScript config
+frontend/src/
+├── app/                    # App-level components and configuration
+│   ├── App.tsx            # Main application component
+│   ├── App.css            # Application-specific styles
+│   ├── main.tsx           # Application entry point
+│   └── vite-env.d.ts      # Vite environment types
+├── components/             # Reusable UI components
+│   ├── ui/                 # shadcn/ui component library
+│   │   ├── GroupCard/      # Group card components
+│   │   ├── button.tsx      # Button component
+│   │   ├── card.tsx        # Card component
+│   │   └── ...             # Other UI components
+│   ├── layout/             # Layout components (currently empty)
+│   └── common/             # Common components
+│       ├── ErrorContext.jsx        # Error handling context
+│       ├── ErrorNotification.jsx   # Error notifications
+│       └── ...                     # Other common components
+├── features/               # Feature-based modules
+│   ├── streaming/          # Streaming management
+│   │   ├── StreamsTab.tsx          # Main streaming component
+│   │   ├── StreamsTabHeader.tsx    # Streaming header
+│   │   ├── StreamsTabGroups.tsx    # Group management
+│   │   ├── StreamsTabStats.tsx     # Statistics display
+│   │   └── index.ts                # Feature exports
+│   ├── clients/            # Client management
+│   │   └── ClientsTab.tsx          # Client management interface
+│   └── videos/             # Video management
+│       └── VideoFilesTab.tsx       # Video file management
+├── hooks/                  # Custom React hooks
+│   ├── use-mobile.tsx              # Mobile detection hook
+│   ├── useClientAssignment.ts      # Client assignment logic
+│   ├── useGroupOperations.ts       # Group operations
+│   └── useStreamingStatus.ts       # Streaming status management
+├── lib/                    # Utilities and configurations
+│   ├── api/                # API client and utilities
+│   │   └── api.ts                  # API integration
+│   ├── utils/              # Helper functions
+│   │   └── utils.ts                # Utility functions
+│   └── constants/          # App constants (currently empty)
+├── types/                  # TypeScript type definitions
+│   └── index.ts                    # Main type definitions
+├── styles/                 # Global styles and CSS
+│   └── index.css                   # Global CSS styles
+└── pages/                  # Page components
+    ├── Index.tsx                   # Main application page
+    └── NotFound.tsx                # 404 error page
 ```
 
-## Features
+## Key Improvements in the New Structure
 
-### **Streaming Management**
-- **StreamsTab** - Create and manage streaming groups
-- **Real-time Updates** - Live streaming status monitoring
-- **Group Operations** - Create, edit, and delete streaming groups
-- **Client Assignment** - Assign clients to streaming groups
+### **1. Logical Grouping**
+- **`app/`** - Contains all app-level files (entry point, main app component)
+- **`components/`** - All reusable UI components organized by purpose
+- **`features/`** - Feature-based modules with clear separation of concerns
+- **`hooks/`** - Centralized location for all custom React hooks
+- **`lib/`** - Utility libraries and configurations
+- **`types/`** - TypeScript definitions in one place
+- **`styles/`** - Global styling and CSS
+- **`pages/`** - Page-level components
 
-### **Client Management**
-- **ClientsTab** - Monitor and manage connected clients
-- **Client Status** - Real-time client connection status
-- **Client Assignment** - Assign clients to specific groups
-- **Performance Monitoring** - Track client performance metrics
+### **2. Better Separation of Concerns**
+- **UI Components** (`components/ui/`) - Pure UI components from shadcn/ui
+- **Common Components** (`components/common/`) - Shared business logic components
+- **Feature Modules** (`features/*/`) - Each feature is self-contained
+- **Hooks** (`hooks/`) - All custom hooks in one location
+- **Utilities** (`lib/`) - API, utilities, and constants
 
-### **Video Management**
-- **VideoFilesTab** - Upload and manage video content
-- **File Validation** - Video file format and quality validation
-- **Storage Management** - Organize and categorize video files
-- **Upload Interface** - Drag-and-drop file uploads
+### **3. Improved Maintainability**
+- Clear file locations make it easier to find and modify code
+- Feature-based organization makes it easier to add new features
+- Centralized hooks and utilities reduce duplication
+- Better separation between UI components and business logic
 
-### **Error System**
-- **Error Context** - Centralized error state management
-- **Error Notifications** - User-friendly error messages
-- **Error Logging** - Comprehensive error tracking
-- **Recovery Options** - Automatic error recovery
+### **4. Scalability**
+- Easy to add new features by creating new directories in `features/`
+- Simple to add new UI components in `components/ui/`
+- Centralized hooks can be easily shared across features
+- Clear structure makes onboarding new developers easier
 
-## Quick Start
+## Getting Started
 
-### 1. Install Dependencies
+### Prerequisites
+- Node.js 18+ 
+- npm or yarn package manager
+- Backend server running (see [Backend Setup](../backend/README.md))
+
+### 1. Environment Configuration
+
+**IMPORTANT**: You must create a `.env` file in the `frontend/` directory to configure the backend server connection.
+
+#### Create `.env` File
+
+In the `frontend/` directory, create a file named `.env`:
+
+```bash
+# Navigate to the frontend directory
+cd frontend
+
+# Create the .env file
+touch .env
+```
+
+#### Configure Server Connection
+
+Edit the `.env` file and add the backend server URL:
+
+```env
+# Backend API Configuration
+VITE_API_BASE_URL=http://YOUR_SERVER_IP:5000
+```
+
+#### Example Configurations
+
+**Local Development (Backend running locally):**
+```env
+VITE_API_BASE_URL=http://localhost:5000
+```
+
+**Production/Remote Server:**
+```env
+VITE_API_BASE_URL=http://your-server-domain.com:5000
+```
+
+#### Important Notes:
+- Replace `YOUR_SERVER_IP` with the actual IP address where your backend server is running
+- The port number (`:5000`) should match your backend server configuration
+- The variable name **must** be prefixed with `VITE_` for Vite to include it in the build
+- Do not add quotes around the URL value
+- Make sure the backend server is accessible from your development machine
+
+### 2. Install Dependencies
+
 ```bash
 cd frontend
 npm install
 ```
 
-### 2. Start Development Server
+### 3. Start Development Server
+
 ```bash
 npm run dev
 ```
 
 The application will be available at `http://localhost:5173`
 
-### 3. Build for Production
+**Verify Connection**: When you open the application, it should connect to your backend server. Check the browser's developer console (F12) for any connection errors.
+
+### 4. Build for Production
+
 ```bash
 npm run build
 ```
 
-### 4. Preview Production Build
+### 5. Preview Production Build
+
 ```bash
 npm run preview
 ```
+
+## Environment Variables
+
+The frontend uses environment variables to configure API connections and other settings:
+
+| Variable | Description | Required | Example |
+|----------|-------------|----------|---------|
+| `VITE_API_BASE_URL` | Backend server URL | Yes | `http://192.168.1.100:5000` |
+
+**Note**: Only variables prefixed with `VITE_` are accessible in the frontend code for security reasons.
+
+## Troubleshooting
+
+### Common Issues
+
+** "Cannot connect to backend" or API errors:**
+- Check that your `.env` file exists and contains the correct server URL
+- Verify the backend server is running and accessible
+- Test the connection by visiting the backend URL in your browser
+- Check for firewall or network issues
+
+** Environment variables not loading:**
+- Ensure the variable name starts with `VITE_`
+- Restart the development server after changing `.env`
+- Check that there are no extra spaces or quotes around values
+
+** CORS errors in browser console:**
+- The backend server needs to be configured to allow requests from your frontend URL
+- Check the backend CORS configuration
+
+### Testing Backend Connection
+
+You can test if your backend is accessible by:
+
+1. **Browser test**: Visit `http://YOUR_SERVER_IP:5000` in your browser
+2. **Command line test**: `curl http://YOUR_SERVER_IP:5000/api/health` (if health endpoint exists)
 
 ## Technology Stack
 
@@ -149,33 +232,40 @@ npm run preview
 
 ## Component Architecture
 
-### **Core Components**
+### **App Level**
 - **App.tsx** - Application root with providers and routing
 - **main.tsx** - Application entry point
+
+### **Page Components**
 - **Index.tsx** - Main page with tabbed interface
 - **NotFound.tsx** - 404 error page
 
 ### **Feature Components**
-- **StreamsTab** - Streaming group management with sub-components:
+- **Streaming Feature** (`features/streaming/`):
+  - StreamsTab - Main streaming interface
   - StreamsTabHeader - Group creation and management
   - StreamsTabGroups - Group display and operations
   - StreamsTabStats - Statistics and metrics
-  - Custom hooks for data management
-- **ClientsTab** - Client monitoring and management
-- **VideoFilesTab** - Video file management interface
+- **Clients Feature** (`features/clients/`):
+  - ClientsTab - Client monitoring and management
+- **Videos Feature** (`features/videos/`):
+  - VideoFilesTab - Video file management interface
 
 ### **Shared Components**
-- **UI Component Library** - shadcn/ui components organized by functionality
-- **GroupCard Components** - Reusable group display components
+- **UI Component Library** (`components/ui/`) - shadcn/ui components
+- **Common Components** (`components/common/`) - Business logic components
 - **Error System** - Centralized error handling and notifications
-- **Custom Hooks** - Reusable React hooks
-- **API Integration** - Backend communication utilities
-- **Type Definitions** - TypeScript interfaces and types
 
-### **Error Handling**
-- **ErrorProvider** - Centralized error context
-- **ErrorNotification** - User-facing error display
-- **Error Boundaries** - Graceful error recovery
+### **Custom Hooks**
+- **use-mobile** - Mobile device detection
+- **useClientAssignment** - Client assignment logic
+- **useGroupOperations** - Group management operations
+- **useStreamingStatus** - Streaming status management
+
+### **Utilities and API**
+- **API Integration** (`lib/api/`) - Backend communication
+- **Utility Functions** (`lib/utils/`) - Helper functions
+- **Type Definitions** (`types/`) - TypeScript interfaces
 
 ## Configuration
 
@@ -245,48 +335,28 @@ npm run preview
 2. Use TypeScript for all new code
 3. Implement proper error handling
 4. Add appropriate TypeScript types
-5. Test changes thoroughly before committing
+5. Test changes thoroughly before submitting
+6. Follow the new folder structure for organizing code
 
-## Troubleshooting
+## Support
 
-### **Common Issues**
-- **Port Conflicts** - Change port in `vite.config.ts`
-- **Type Errors** - Check TypeScript configuration
-- **Build Failures** - Clear `node_modules` and reinstall
-- **Styling Issues** - Verify Tailwind CSS configuration
+- Check the browser developer console for detailed error messages
+- Review the backend logs if API calls are failing
+- Ensure all environment variables are correctly configured
+- Verify network connectivity between frontend and backend
 
-### **Getting Help**
-- Check the browser console for errors
-- Review TypeScript compiler output
-- Consult component library documentation
-- Review API integration logs
+## Migration Notes
 
-## Directory Organization
+If you're working with the old structure, here's how files were reorganized:
 
-### **Core Directory (`src/core/`)**
-Contains the main application files that are essential for the app to run:
-- **App.tsx** - Main application component with routing and providers
-- **main.tsx** - Application entry point and React rendering
-- **pages/** - Main page components (Index, NotFound)
-- **Styles** - Global and application-specific CSS
-
-### **Features Directory (`src/features/`)**
-Organized by business functionality, each feature is self-contained:
-- **StreamsTab/** - Complete streaming management functionality
-- **ClientsTab.tsx** - Client monitoring and management
-- **VideoFilesTab.tsx** - Video file handling and uploads
-
-### **Shared Directory (`src/shared/`)**
-Reusable components and utilities used across multiple features:
-- **ui/** - shadcn/ui component library and custom UI components
-- **ErrorSystem/** - Centralized error handling for the entire application
-- **hooks/** - Custom React hooks for common functionality
-- **API/** - Backend communication and data fetching
-- **types/** - TypeScript type definitions shared across features
-
-### **Benefits of This Structure**
-- **Clear Separation** - Core, features, and shared code are logically separated
-- **Feature Isolation** - Each feature can be developed independently
-- **Code Reusability** - Shared components reduce duplication
-- **Easy Navigation** - Developers can quickly find what they need
-- **Scalable Architecture** - Easy to add new features without affecting existing code
+- `src/core/*` → `src/app/*` (app-level files)
+- `src/core/pages/*` → `src/pages/*` (page components)
+- `src/core/index.css` → `src/styles/index.css` (global styles)
+- `src/shared/ui/*` → `src/components/ui/*` (UI components)
+- `src/shared/API/*` → `src/lib/api/*` (API utilities)
+- `src/shared/types/*` → `src/types/*` (type definitions)
+- `src/shared/hooks/*` → `src/hooks/*` (custom hooks)
+- `src/shared/ErrorSystem/*` → `src/components/common/*` (error handling)
+- `src/features/StreamsTab/*` → `src/features/streaming/*` (streaming feature)
+- `src/features/ClientsTab.tsx` → `src/features/clients/ClientsTab.tsx`
+- `src/features/VideoFilesTab.tsx` → `src/features/videos/VideoFilesTab.tsx`
