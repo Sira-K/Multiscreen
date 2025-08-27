@@ -229,6 +229,65 @@ def delete_group():
         except Exception as e:
             logger.warning(f" Error stopping streams, continuing with deletion: {e}")
         
+        # Step 1.5: Unassign all clients from this group
+        logger.info(f" Unassigning all clients from group: {target_name}")
+        unassigned_count = 0  # Track how many clients were unassigned
+        
+        try:
+            from blueprints.client_management.client_state import get_state
+            
+            state = get_state()
+            if state:
+                # Get all clients in this group
+                group_clients = []
+                if hasattr(state, 'get_group_clients'):
+                    group_clients = state.get_group_clients(target_id)
+                elif hasattr(state, 'clients'):
+                    # Fallback: manually find clients in this group
+                    for client_id, client in state.clients.items():
+                        if client.get("group_id") == target_id:
+                            group_clients.append(client)
+                
+                if group_clients:
+                    logger.info(f" Found {len(group_clients)} clients to unassign from group {target_name}")
+                    
+                    # Unassign each client
+                    for client in group_clients:
+                        client_id = client.get("client_id")
+                        if client_id:
+                            # Update client to remove group assignment
+                            client.update({
+                                "group_id": None,
+                                "group_name": None,
+                                "stream_assignment": None,
+                                "stream_url": None,
+                                "screen_number": None,
+                                "assignment_status": "waiting_for_assignment",
+                                "unassigned_at": time.time()
+                            })
+                            
+                            # Save the updated client
+                            if hasattr(state, 'add_client'):
+                                state.add_client(client_id, client)
+                            else:
+                                state.clients[client_id] = client
+                            
+                            unassigned_count += 1
+                            logger.info(f" Unassigned client {client_id} from group {target_name}")
+                    
+                    logger.info(f" Successfully unassigned {unassigned_count} clients from group {target_name}")
+                else:
+                    logger.info(f" No clients found in group {target_name}")
+            else:
+                logger.warning(" Client state not available, skipping client unassignment")
+                
+        except ImportError as e:
+            logger.warning(f" Could not import client management: {e}, skipping client unassignment")
+        except Exception as e:
+            logger.warning(f" Error unassigning clients, continuing with deletion: {e}")
+            import traceback
+            logger.warning(traceback.format_exc())
+        
         # Step 2: Delete Docker container
         logger.info(f" Deleting Docker container for group: {target_name}")
         try:
@@ -273,6 +332,7 @@ def delete_group():
                     "id": target_id,
                     "name": target_name
                 },
+                "clients_unassigned": unassigned_count,
                 "remaining_groups": remaining_groups,
                 "total_remaining": len(remaining_groups)
             }), 200
@@ -284,6 +344,7 @@ def delete_group():
                     "id": target_id,
                     "name": target_name
                 },
+                "clients_unassigned": unassigned_count,
                 "warning": "Could not retrieve updated groups list"
             }), 200
         

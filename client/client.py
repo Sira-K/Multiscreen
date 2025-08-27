@@ -17,7 +17,7 @@ def install_package_locally(package_name):
     """Install a package locally in the ./lib directory"""
     import subprocess
     
-    print(f"📦 {package_name} package not found, attempting local installation...")
+    print(f" {package_name} package not found, attempting local installation...")
     
     # Create local lib directory
     LOCAL_LIB_DIR.mkdir(exist_ok=True)
@@ -43,15 +43,15 @@ def install_package_locally(package_name):
             if "--target" in cmd:
                 sys.path.insert(0, str(LOCAL_LIB_DIR))
             
-            print(f"✅ Successfully installed {package_name} (method {i+1})")
+            print(f" Successfully installed {package_name} (method {i+1})")
             return True
             
         except subprocess.CalledProcessError:
             continue
     
     # All methods failed
-    print(f"❌ Failed to install {package_name} automatically")
-    print(f"💡 Please install manually:")
+    print(f" Failed to install {package_name} automatically")
+    print(f" Please install manually:")
     print(f"   sudo apt-get install python3-{package_name}")
     print(f"   OR: python3 -m pip install --user --break-system-packages {package_name}")
     return False
@@ -148,8 +148,8 @@ class UnifiedMultiScreenClient:
         
         # Log single-threaded status
         self.logger.info(f"Single-threaded mode - optimized for efficiency")
-        print(f"🔧 SINGLE-THREADED: Enabled (optimized for efficiency)")
-        print(f"📦 AUTO-INSTALL: Python packages installed automatically as needed")
+        print(f" SINGLE-THREADED: Enabled (optimized for efficiency)")
+        print(f" AUTO-INSTALL: Python packages installed automatically as needed")
     
     def _setup_logging(self) -> logging.Logger:
         """Setup logging configuration"""
@@ -251,7 +251,7 @@ class UnifiedMultiScreenClient:
         Detect if the stream contains SEI metadata by analyzing the first few seconds
         """
         try:
-            print(f"🔍 Analyzing stream for SEI metadata...")
+            print(f" Analyzing stream for SEI metadata...")
             print(f"   Stream URL: {stream_url}")
             
             # Use ffprobe to analyze the stream for a short duration
@@ -288,7 +288,7 @@ class UnifiedMultiScreenClient:
                     
                     for pattern in sei_patterns:
                         if pattern.lower() in stdout.lower():
-                            print(f"✅ SEI metadata detected (pattern: {pattern[:16]}...)")
+                            print(f" SEI metadata detected (pattern: {pattern[:16]}...)")
                             return True
                     
                     # Alternative: Check stderr for SEI-related messages
@@ -296,17 +296,17 @@ class UnifiedMultiScreenClient:
                         sei_indicators = ["sei", "user_data", "h264_metadata"]
                         for indicator in sei_indicators:
                             if indicator.lower() in stderr.lower():
-                                print(f"✅ SEI indicators found in stream analysis")
+                                print(f" SEI indicators found in stream analysis")
                                 return True
                     
-                    print(f"❌ No SEI metadata detected - standard stream")
+                    print(f" No SEI metadata detected - standard stream")
                     return False
                 else:
-                    print(f"⚠️  Could not analyze stream data")
+                    print(f"  Could not analyze stream data")
                     return False
                     
             except subprocess.TimeoutExpired:
-                print(f"⏱️  Stream analysis timeout - assuming no SEI")
+                print(f"  Stream analysis timeout - assuming no SEI")
                 process.kill()
                 return False
                 
@@ -338,7 +338,7 @@ class UnifiedMultiScreenClient:
     def register(self) -> bool:
         """Register client with server"""
         try:
-            print(f"\n🚀 STARTING MULTI-SCREEN CLIENT REGISTRATION")
+            print(f"\n STARTING MULTI-SCREEN CLIENT REGISTRATION")
             print(f"   Hostname: {self.hostname}")
             print(f"   Display Name: {self.display_name}")
             print(f"   Server: {self.server_url}")
@@ -358,18 +358,18 @@ class UnifiedMultiScreenClient:
             
             # Try new endpoint first
             try:
-                print(f"🔄 Trying new endpoint: {self.server_url}/api/clients/register")
-                print(f"📋 Registration data: {json.dumps(registration_data, indent=2)}")
+                print(f" Trying new endpoint: {self.server_url}/api/clients/register")
+                print(f" Registration data: {json.dumps(registration_data, indent=2)}")
                 response = requests.post(
                     f"{self.server_url}/api/clients/register",
                     json=registration_data,
                     timeout=10
                 )
                 endpoint_used = "new (/api/clients/register)"
-                print(f"✅ New endpoint succeeded with status: {response.status_code}")
+                print(f" New endpoint succeeded with status: {response.status_code}")
             except requests.exceptions.RequestException as e:
                 # Fallback to legacy endpoint (simplified data)
-                print(f"❌ New endpoint failed with RequestException: {e}")
+                print(f" New endpoint failed with RequestException: {e}")
                 self.logger.info("New endpoint failed, trying legacy endpoint...")
                 legacy_data = {
                     "hostname": self.hostname,
@@ -384,10 +384,10 @@ class UnifiedMultiScreenClient:
                 endpoint_used = "legacy (/register_client)"
             except Exception as e:
                 # Catch any other exceptions
-                print(f"❌ New endpoint failed with unexpected error: {e}")
-                print(f"🔧 Error type: {type(e).__name__}")
+                print(f" New endpoint failed with unexpected error: {e}")
+                print(f" Error type: {type(e).__name__}")
                 import traceback
-                print(f"📄 Traceback: {traceback.format_exc()}")
+                print(f" Traceback: {traceback.format_exc()}")
                 # Fallback to legacy endpoint (simplified data)
                 self.logger.info("New endpoint failed, trying legacy endpoint...")
                 legacy_data = {
@@ -404,13 +404,13 @@ class UnifiedMultiScreenClient:
             
             response_received_time = time.time()
             
-            print(f"📨 Response received using {endpoint_used}")
+            print(f" Response received using {endpoint_used}")
             
             if response.status_code in [200, 202]:
                 result = response.json()
                 if result.get("success", True):  # Legacy endpoint doesn't have 'success' field
                     
-                    print(f"\n🎉 REGISTRATION SUCCESSFUL!")
+                    print(f"\n REGISTRATION SUCCESSFUL!")
                     print(f"   Client ID: {result.get('client_id', self.client_id)}")
                     print(f"   Status: {result.get('status', 'registered')}")
                     if 'server_time' in result:
@@ -429,22 +429,22 @@ class UnifiedMultiScreenClient:
                         "Admin will use the web interface to make assignments",
                         "Client will automatically start playing when streaming begins"
                     ])
-                    print(f"\n📋 Next Steps:")
+                    print(f"\n Next Steps:")
                     for step in next_steps:
                         print(f"    {step}")
                     
                     print(f"{'='*80}")
                     return True
                 else:
-                    print(f"❌ Registration failed: {result.get('error', 'Unknown error')}")
+                    print(f" Registration failed: {result.get('error', 'Unknown error')}")
                     return False
             else:
-                print(f"❌ Registration failed with HTTP status {response.status_code}")
+                print(f" Registration failed with HTTP status {response.status_code}")
                 print(f"   Response: {response.text}")
                 return False
                 
         except Exception as e:
-            print(f"💥 Registration error: {e}")
+            print(f" Registration error: {e}")
             self.logger.error(f"Registration error: {e}")
             return False
     
@@ -452,7 +452,7 @@ class UnifiedMultiScreenClient:
         """Wait for admin to assign this client to a group and stream"""
         retry_count = 0
         
-        print(f"\n⏳ Waiting for assignment from admin...")
+        print(f"\n Waiting for assignment from admin...")
         print(f"   Admin needs to:")
         print(f"   1. Assign this client to a group")
         print(f"   2. Assign this client to a specific stream/screen")
@@ -504,7 +504,7 @@ class UnifiedMultiScreenClient:
                     group_name = data.get('group_name', 'unknown')
                     stream_assignment = data.get('stream_assignment', 'unknown')
                     
-                    print(f"\n🎯 ASSIGNMENT COMPLETE!")
+                    print(f"\n ASSIGNMENT COMPLETE!")
                     print(f"   Group: {group_name}")
                     print(f"   Stream: {stream_assignment}")
                     print(f"   Assignment Type: {data.get('assignment_status', 'unknown')}")
@@ -515,13 +515,13 @@ class UnifiedMultiScreenClient:
                     return True
                 
                 elif status in ["waiting_for_group_assignment", "waiting_for_stream_assignment"]:
-                    print(f"⏳ {message}")
+                    print(f" {message}")
                     retry_count = 0  # Don't count as failure
                 
                 elif status == "waiting_for_streaming":
                     group_name = data.get('group_name', 'unknown')
                     stream_assignment = data.get('stream_assignment', 'unknown')
-                    print(f"⏳ {message}")
+                    print(f" {message}")
                     print(f"   Assigned to: {group_name}/{stream_assignment}")
                     print(f"   Waiting for admin to start streaming...")
                     retry_count = 0
@@ -531,7 +531,7 @@ class UnifiedMultiScreenClient:
                     # Keep waiting instead of giving up
                     group_id = data.get('group_id')
                     if retry_count % 6 == 0:
-                        print(f"⚠️  Group validation failed, but continuing (Docker discovery issue)")
+                        print(f"  Group validation failed, but continuing (Docker discovery issue)")
                         print(f"   Group ID: {group_id}")
                         print(f"   Will retry...")
                     # Don't print error every time
@@ -539,28 +539,28 @@ class UnifiedMultiScreenClient:
                     # Continue waiting instead of returning error
                 
                 elif status == "not_registered":
-                    print(f"❌ {message}")
+                    print(f" {message}")
                     print(f"   Client may have been removed from server")
                     return False
                 
                 else:
-                    print(f"❓ Unexpected status: {status} - {message}")
+                    print(f" Unexpected status: {status} - {message}")
                     retry_count += 1
                 
                 # Interruptible sleep
                 if self._shutdown_event.wait(timeout=self.retry_interval):
-                    print(f"🛑 Shutdown requested during wait")
+                    print(f" Shutdown requested during wait")
                     return False
                 
             except Exception as e:
-                print(f"🌐 Network error ({retry_count + 1}/{self.max_retries}): {e}")
+                print(f" Network error ({retry_count + 1}/{self.max_retries}): {e}")
                 retry_count += 1
                 if self._shutdown_event.wait(timeout=self.retry_interval * 2):
-                    print(f"🛑 Shutdown requested during error wait")
+                    print(f" Shutdown requested during error wait")
                     return False
         
         if retry_count >= self.max_retries:
-            print(f"❌ Max retries reached, giving up")
+            print(f" Max retries reached, giving up")
             return False
         
         return False
@@ -578,14 +578,14 @@ class UnifiedMultiScreenClient:
             data = response.json()
             
             if data.get("success", False):
-                print(f"💓 Heartbeat sent successfully")
+                print(f" Heartbeat sent successfully")
                 return True
             else:
-                print(f"💔 Heartbeat failed: {data.get('error', 'Unknown error')}")
+                print(f" Heartbeat failed: {data.get('error', 'Unknown error')}")
                 return False
                 
         except Exception as e:
-                print(f"💔 Heartbeat request failed: {e}")
+                print(f" Heartbeat request failed: {e}")
                 return False
     
     def fix_stream_url(self, stream_url: str) -> str:
@@ -595,11 +595,11 @@ class UnifiedMultiScreenClient:
             
         if "127.0.0.1" in stream_url:
             fixed_url = stream_url.replace("127.0.0.1", self.server_ip)
-            self.logger.info(f"Fixed stream URL: 127.0.0.1 → {self.server_ip}")
+            self.logger.info(f"Fixed stream URL: 127.0.0.1  {self.server_ip}")
             return fixed_url
         elif "localhost" in stream_url:
             fixed_url = stream_url.replace("localhost", self.server_ip)
-            self.logger.info(f"Fixed stream URL: localhost → {self.server_ip}")
+            self.logger.info(f"Fixed stream URL: localhost  {self.server_ip}")
             return fixed_url
         else:
             return stream_url
@@ -614,7 +614,7 @@ class UnifiedMultiScreenClient:
             self.stop_stream()  # Clean up any existing player
             
             # Single-threaded mode (optimized for Raspberry Pi)
-            print(f"\n🎬 SINGLE-THREADED VIDEO PLAYER")
+            print(f"\n SINGLE-THREADED VIDEO PLAYER")
             print(f"   Mode: Main thread playback (optimized for efficiency)")
             print(f"   Stream URL: {self.current_stream_url}")
             
@@ -641,7 +641,7 @@ class UnifiedMultiScreenClient:
     def _play_with_cpp_player(self) -> bool:
         """Start playing with the built C++ player (for SEI streams)"""
         try:
-            print(f"\n🚀 STARTING C++ PLAYER (SEI MODE)")
+            print(f"\n STARTING C++ PLAYER (SEI MODE)")
             print(f"   Stream URL: {self.current_stream_url}")
             print(f"   Stream Version: {self.current_stream_version}")
             print(f"   Capability: SEI timestamp processing")
@@ -682,7 +682,7 @@ class UnifiedMultiScreenClient:
             output_thread = threading.Thread(target=monitor_cpp_output, daemon=True)
             output_thread.start()
             
-            print(f"✅ C++ player started successfully (PID: {self.player_process.pid})")
+            print(f" C++ player started successfully (PID: {self.player_process.pid})")
             return True
             
         except Exception as e:
@@ -692,7 +692,7 @@ class UnifiedMultiScreenClient:
     def _play_with_ffplay(self) -> bool:
         """Start playing with ffplay (for standard streams without SEI)"""
         try:
-            print(f"\n🚀 STARTING FFPLAY (STANDARD MODE)")
+            print(f"\n STARTING FFPLAY (STANDARD MODE)")
             print(f"   Stream URL: {self.current_stream_url}")
             print(f"   Stream Version: {self.current_stream_version}")
             print(f"   Capability: Standard video playback")
@@ -741,7 +741,7 @@ class UnifiedMultiScreenClient:
             if self.player_process.poll() is not None:
                 # Process exited immediately - get error output
                 stdout, stderr = self.player_process.communicate()
-                print(f"❌ ffplay exited immediately with code: {self.player_process.returncode}")
+                print(f" ffplay exited immediately with code: {self.player_process.returncode}")
                 if stderr:
                     print(f"   Error: {stderr.strip()}")
                 return False
@@ -754,7 +754,7 @@ class UnifiedMultiScreenClient:
                             line_clean = line.strip()
                             # Show connection and SRT-related messages
                             if any(keyword in line_clean.lower() for keyword in ['srt', 'connection', 'connect', 'timeout', 'failed', 'error', 'reconnect']):
-                                print(f"🔌 {line_clean}")
+                                print(f" {line_clean}")
                                 self.logger.info(f"FFplay: {line_clean}")
                             # Skip configuration spam
                             elif "configuration:" in line_clean:
@@ -772,7 +772,7 @@ class UnifiedMultiScreenClient:
             output_thread = threading.Thread(target=monitor_ffplay_output, daemon=True)
             output_thread.start()
             
-            print(f"✅ ffplay started successfully (PID: {self.player_process.pid})")
+            print(f" ffplay started successfully (PID: {self.player_process.pid})")
             return True
             
         except Exception as e:
@@ -787,7 +787,7 @@ class UnifiedMultiScreenClient:
         # Determine current player type for display
         player_display_name = "C++ Player" if self.current_player_type == "cpp_player" else "ffplay"
         
-        print(f"\n👀 MONITORING {player_display_name.upper()}")
+        print(f"\n MONITORING {player_display_name.upper()}")
         print(f"   PID: {self.player_process.pid}")
         print(f"   Stream: {self.current_stream_url}")
         print(f"   Player Type: {self.current_player_type}")
@@ -802,33 +802,33 @@ class UnifiedMultiScreenClient:
             
             # Check if player process is still running
             if self.player_process is None:
-                print(f"❌ Player process is None - exiting monitoring")
+                print(f" Player process is None - exiting monitoring")
                 return 'error'
             
             # Check if process has exited
             poll_result = self.player_process.poll()
             if poll_result is not None:
-                print(f"🔍 Player process exited with code: {poll_result}")
+                print(f" Player process exited with code: {poll_result}")
                 break
             
             # Check for stream changes
             if current_time - last_stream_check >= stream_check_interval:
                 self.logger.debug(f"Performing periodic stream check...")
                 if self._check_for_stream_change():
-                    print(f"🔄 Stream change detected, will restart with optimal player...")
+                    print(f" Stream change detected, will restart with optimal player...")
                     self.stop_stream()
                     return 'stream_changed'
                 last_stream_check = current_time
             
             # Periodic health report
             if current_time - last_health_report >= health_report_interval:
-                print(f"💚 {player_display_name} health: PID={self.player_process.pid}, "
+                print(f" {player_display_name} health: PID={self.player_process.pid}, "
                       f"Running {int(current_time - last_health_report)}s")
                 last_health_report = current_time
             
             # Check for shutdown
             if self._shutdown_event.wait(timeout=1):
-                print(f"🛑 Shutdown requested during monitoring")
+                print(f" Shutdown requested during monitoring")
                 self.stop_stream()
                 return 'user_exit'
         
@@ -839,13 +839,13 @@ class UnifiedMultiScreenClient:
         exit_code = self.player_process.returncode if self.player_process else -1
         
         if exit_code == 0:
-            print(f"✅ {player_display_name} ended normally")
+            print(f" {player_display_name} ended normally")
             return 'stream_ended'
         elif exit_code == 1:
-            print(f"🔌 {player_display_name} connection lost or stream unavailable")
+            print(f" {player_display_name} connection lost or stream unavailable")
             return 'connection_lost'
         else:
-            print(f"❌ {player_display_name} exited with error code: {exit_code}")
+            print(f" {player_display_name} exited with error code: {exit_code}")
             return 'error'
     
     def _check_for_stream_change(self) -> bool:
@@ -888,14 +888,14 @@ class UnifiedMultiScreenClient:
                     
                     if url_changed:
                         self.logger.info(f"Stream URL change detected:")
-                        self.logger.info(f"  URL: {self.current_stream_url} → {new_stream_url}")
+                        self.logger.info(f"  URL: {self.current_stream_url}  {new_stream_url}")
                         self.current_stream_url = new_stream_url
                         if new_stream_version is not None:
                             self.current_stream_version = new_stream_version
                         return True
                     elif version_changed:
                         self.logger.info(f"Stream version change detected:")
-                        self.logger.info(f"  Version: {self.current_stream_version} → {new_stream_version}")
+                        self.logger.info(f"  Version: {self.current_stream_version}  {new_stream_version}")
                         self.current_stream_version = new_stream_version
                         return True
                     else:
@@ -940,30 +940,30 @@ class UnifiedMultiScreenClient:
             try:
                 pid = self.player_process.pid
                 player_name = "C++ Player" if self.current_player_type == "cpp_player" else "ffplay"
-                print(f"🛑 Stopping {player_name} (PID: {pid})")
+                print(f" Stopping {player_name} (PID: {pid})")
                 
                 # Graceful termination
                 self.player_process.terminate()
                 
                 try:
                     self.player_process.wait(timeout=3)
-                    print(f"✅ {player_name} stopped gracefully")
+                    print(f" {player_name} stopped gracefully")
                 except subprocess.TimeoutExpired:
-                    print(f"💀 Force killing {player_name}")
+                    print(f" Force killing {player_name}")
                     self.player_process.kill()
                     
                     try:
                         self.player_process.wait(timeout=2)
-                        print(f"✅ {player_name} force-killed")
+                        print(f" {player_name} force-killed")
                     except subprocess.TimeoutExpired:
-                        print(f"⚠️ {player_name} unresponsive")
+                        print(f" {player_name} unresponsive")
                         try:
                             os.kill(pid, signal.SIGKILL)
                         except (OSError, ProcessLookupError):
                             pass
                 
             except (OSError, ProcessLookupError):
-                print(f"ℹ️ Player process already terminated")
+                print(f" Player process already terminated")
             except Exception as e:
                 self.logger.error(f"Error stopping player: {e}")
             finally:
@@ -975,14 +975,14 @@ class UnifiedMultiScreenClient:
         if not self.running:
             return
         
-        print(f"\n🛑 INITIATING GRACEFUL SHUTDOWN")
+        print(f"\n INITIATING GRACEFUL SHUTDOWN")
         self.running = False
         self._shutdown_event.set()
         
         # Stop components
         self.stop_stream()
         
-        print(f"✅ Shutdown complete")
+        print(f" Shutdown complete")
     
     def _emergency_cleanup(self):
         """Emergency cleanup for atexit"""
@@ -993,7 +993,7 @@ class UnifiedMultiScreenClient:
         """Main execution flow"""
         try:
             print(f"\n{'='*80}")
-            print(f"🚀 UNIFIED MULTI-SCREEN CLIENT (ENHANCED)")
+            print(f" UNIFIED MULTI-SCREEN CLIENT (ENHANCED)")
             print(f"   Hostname: {self.hostname}")
             print(f"   Client ID: {self.client_id}")
             print(f"   Display Name: {self.display_name}")
@@ -1005,7 +1005,7 @@ class UnifiedMultiScreenClient:
             
             # Step 1: Register with server
             if not self.register():
-                print(f"❌ Registration failed - exiting")
+                print(f" Registration failed - exiting")
                 return
             
             # Step 2: Main loop - wait for assignment and play streams
@@ -1028,34 +1028,34 @@ class UnifiedMultiScreenClient:
                         stop_reason = self.monitor_player()
                         
                         if stop_reason == 'user_exit':
-                            print(f"👋 User requested exit")
+                            print(f" User requested exit")
                             break
                         elif stop_reason == 'stream_changed':
-                            print(f"🔄 Stream changed, restarting...")
+                            print(f" Stream changed, restarting...")
                             continue
                         elif stop_reason in ['stream_ended', 'connection_lost', 'error']:
-                            print(f"⏹️ Stream stopped ({stop_reason}), waiting for new assignment...")
+                            print(f" Stream stopped ({stop_reason}), waiting for new assignment...")
                             self.current_stream_url = None
                             self.current_stream_version = None
                             self.current_player_type = None
                             continue
                         else:
-                            print(f"❓ Unexpected stop reason: {stop_reason}")
+                            print(f" Unexpected stop reason: {stop_reason}")
                             break
                     else:
-                        print(f"❌ Failed to start player, retrying in 10 seconds...")
+                        print(f" Failed to start player, retrying in 10 seconds...")
                         if self._shutdown_event.wait(timeout=10):
                             break
                 else:
-                    print(f"❌ Assignment failed, retrying in 10 seconds...")
+                    print(f" Assignment failed, retrying in 10 seconds...")
                     if self._shutdown_event.wait(timeout=10):
                         break
                         
         except Exception as e:
-            print(f"💥 Fatal error: {e}")
+            print(f" Fatal error: {e}")
             self.logger.error(f"Fatal error in main loop: {e}")
         finally:
-            print(f"\n🏁 MULTI-SCREEN CLIENT SHUTDOWN")
+            print(f"\n MULTI-SCREEN CLIENT SHUTDOWN")
             self.shutdown()
 
     def get_player_status(self) -> Dict[str, Any]:
@@ -1090,26 +1090,26 @@ def main():
     parser = argparse.ArgumentParser(
         prog='client.py',
         description="""
-🚀 Enhanced Multi-Screen Client for Video Wall Systems
+ Enhanced Multi-Screen Client for Video Wall Systems
 
 A simple and reliable client for multi-screen video streaming that supports
 automatic player selection, optimized for single-threaded efficiency.
 
-✨ NEW: Automatic package installation - no setup script needed!
+ NEW: Automatic package installation - no setup script needed!
 
 Features:
-   📦 Automatic Python package installation (requests, etc.)
-   🔄 Automatic server registration with unique client identification
-   🎯 Smart player selection (C++ player for SEI streams, ffplay fallback)
-   🧵 Single-threaded mode optimized for efficiency
-   ⚡ Efficient resource usage with 1 thread per client
-   🖥️ Uses system default display (DISPLAY=:0.0)
-   🔁 Automatic reconnection and error recovery
-   📊 Support for multiple instances (each in separate process)
+    Automatic Python package installation (requests, etc.)
+    Automatic server registration with unique client identification
+    Smart player selection (C++ player for SEI streams, ffplay fallback)
+    Single-threaded mode optimized for efficiency
+    Efficient resource usage with 1 thread per client
+    Uses system default display (DISPLAY=:0.0)
+    Automatic reconnection and error recovery
+    Support for multiple instances (each in separate process)
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-🎯 BASIC USAGE EXAMPLES:
+ BASIC USAGE EXAMPLES:
 
   Standard usage:
     python3 client.py --server http://192.168.1.100:5000 \\
@@ -1127,7 +1127,7 @@ Features:
 
   Note: Each client runs in its own process with 1 thread for optimal performance
 
-⚙️ ADVANCED OPTIONS:
+ ADVANCED OPTIONS:
 
   Force ffplay for all streams (disable smart selection):
     python3 client.py --server http://192.168.1.100:5000 \\
@@ -1142,7 +1142,7 @@ For more information, visit: https://github.com/your-repo/openvideowalls
     )
     
     # Required arguments group
-    required_group = parser.add_argument_group('🔧 Required Arguments')
+    required_group = parser.add_argument_group(' Required Arguments')
     required_group.add_argument('--server', 
                                required=True,
                                metavar='URL',
@@ -1157,7 +1157,7 @@ For more information, visit: https://github.com/your-repo/openvideowalls
                                help='Display name for admin interface - Example: "Monitor 1"')
     
     # Optional arguments group
-    optional_group = parser.add_argument_group('⚙️ Optional Arguments')
+    optional_group = parser.add_argument_group(' Optional Arguments')
     optional_group.add_argument('--force-ffplay', 
                                action='store_true',
                                help='Force use of ffplay for all streams (disable smart C++/ffplay selection)')
@@ -1168,40 +1168,40 @@ For more information, visit: https://github.com/your-repo/openvideowalls
 
     optional_group.add_argument('--version', 
                                action='version', 
-                               version='🚀 Enhanced Multi-Screen Client v4.0 (Auto-Install Edition)')
+                               version=' Enhanced Multi-Screen Client v4.0 (Auto-Install Edition)')
     
     # Parse arguments
     args = parser.parse_args()
     
     # Validate server URL
     if not args.server.startswith(('http://', 'https://')):
-        print("❌ Error: Server URL must start with http:// or https://")
+        print(" Error: Server URL must start with http:// or https://")
         print("   Example: --server http://192.168.1.100:5000")
         print("   Example: --server https://videowall.example.com:5000")
         sys.exit(1)
     
     # Validate hostname (basic check)
     if not args.hostname.strip():
-        print("❌ Error: Hostname cannot be empty")
+        print(" Error: Hostname cannot be empty")
         print("   Example: --hostname rpi-client-1")
         sys.exit(1)
     
     # Validate display name (basic check)
     if not args.display_name.strip():
-        print("❌ Error: Display name cannot be empty")
+        print(" Error: Display name cannot be empty")
         print("   Example: --display-name \"Monitor 1\"")
         sys.exit(1)
     
     # Configure logging level
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
-        print("🐛 Debug logging enabled")
+        print(" Debug logging enabled")
     
     # Create and run client
     try:
-        print("🚀 Starting Enhanced Multi-Screen Client (Auto-Install Edition)...")
-        print("📦 Python packages will be installed automatically if needed")
-        print("🛑 Press Ctrl+C to stop gracefully")
+        print(" Starting Enhanced Multi-Screen Client (Auto-Install Edition)...")
+        print(" Python packages will be installed automatically if needed")
+        print(" Press Ctrl+C to stop gracefully")
         print()
         
         client = UnifiedMultiScreenClient(
@@ -1214,9 +1214,9 @@ For more information, visit: https://github.com/your-repo/openvideowalls
         client.run()
         
     except KeyboardInterrupt:
-        print("\n🛑 Keyboard interrupt received")
+        print("\n Keyboard interrupt received")
     except Exception as e:
-        print(f"\n💥 Fatal error: {e}")
+        print(f"\n Fatal error: {e}")
         logging.error(f"Fatal error: {e}")
         sys.exit(1)
 

@@ -257,7 +257,7 @@ const VideoFilesTab = () => {
         showError({
           message: `Upload Complete: ${successful}/${total} files uploaded successfully${failed > 0 ? `, ${failed} failed` : ''} in ${response.timing.total_time_seconds}s`,
           error_code: 'UPLOAD_COMPLETE',
-          error_category: 'INFO',
+          error_category: 'success',
           context: {
             component: 'VideoFilesTab',
             operation: 'handleSequentialUpload',
@@ -272,7 +272,7 @@ const VideoFilesTab = () => {
         showError({
           message: `File uploaded successfully in ${response.timing.total_time_seconds}s`,
           error_code: 'UPLOAD_SUCCESSFUL',
-          error_category: 'INFO',
+          error_category: 'success',
           context: {
             component: 'VideoFilesTab',
             operation: 'handleSequentialUpload',
@@ -403,18 +403,6 @@ const VideoFilesTab = () => {
 
     setUploadingFiles(initialUploadStates);
 
-    showError({
-      message: `Uploading ${validFiles.length} file(s) sequentially...`,
-      error_code: 'UPLOAD_STARTED',
-      error_category: 'INFO',
-      context: {
-        component: 'VideoFilesTab',
-        operation: 'handleFileUpload',
-        timestamp: new Date().toISOString(),
-        total_files: validFiles.length
-      }
-    });
-
     // Start sequential upload
     await handleSequentialUpload(validFiles);
 
@@ -442,7 +430,7 @@ const VideoFilesTab = () => {
         showError({
           message: `${videoName} has been deleted successfully.`,
           error_code: 'VIDEO_DELETED',
-          error_category: 'INFO',
+          error_category: 'success',
           context: {
             component: 'VideoFilesTab',
             operation: 'removeVideo',

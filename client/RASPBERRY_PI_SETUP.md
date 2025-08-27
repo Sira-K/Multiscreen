@@ -46,24 +46,6 @@ sudo reboot
 # Enable SSH (for remote access)
 sudo raspi-config
 # Navigate to: Interface Options > SSH > Enable
-
-# Enable VNC (optional, for remote desktop)
-sudo raspi-config
-# Navigate to: Interface Options > VNC > Enable
-
-# Enable I2C (if using hardware displays)
-sudo raspi-config
-# Navigate to: Interface Options > I2C > Enable
-```
-
-### Configure Display (if using multiple monitors)
-```bash
-# Check current display configuration
-xrandr --listmonitors
-
-# Configure displays in raspi-config
-sudo raspi-config
-# Navigate to: Display Options > Screen Configuration
 ```
 
 ## Step 3: Install Required Software
