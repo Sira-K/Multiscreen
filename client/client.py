@@ -99,7 +99,7 @@ class UnifiedMultiScreenClient:
     """Enhanced multi-screen client with automatic screen targeting"""
     
     def __init__(self, server_url: str, hostname: str, display_name: str, 
-                 force_ffplay: bool = False):
+                 force_ffplay: bool = False, monitor: str = 'auto'):
         """
         Initialize the multi-screen client
         
@@ -108,12 +108,14 @@ class UnifiedMultiScreenClient:
             hostname: Client hostname for identification
             display_name: Display name for admin interface
             force_ffplay: Force use of ffplay for all streams
+            monitor: Monitor position: 1 (left), 2 (right), or auto-detect from display name
         """
         # Basic configuration
         self.server_url = server_url.rstrip('/')
         self.hostname = hostname
         self.display_name = display_name
         self.force_ffplay = force_ffplay
+        self.monitor = monitor
         
         # Setup logging
         self.logger = self._setup_logging()
@@ -150,6 +152,7 @@ class UnifiedMultiScreenClient:
         self.logger.info(f"Single-threaded mode - optimized for efficiency")
         print(f" SINGLE-THREADED: Enabled (optimized for efficiency)")
         print(f" AUTO-INSTALL: Python packages installed automatically as needed")
+        print(f" MONITOR: Auto-positioning on {self.monitor} monitor")
     
     def _setup_logging(self) -> logging.Logger:
         """Setup logging configuration"""
@@ -630,7 +633,9 @@ class UnifiedMultiScreenClient:
             else:
                 result = self._play_with_ffplay()
             
-            # Window positioning is now handled by ffplay command line arguments
+            # Auto-position the window on the correct monitor
+            if self.current_player_type == "ffplay":
+                self._position_window()
             
             return result
                 
@@ -778,6 +783,36 @@ class UnifiedMultiScreenClient:
         except Exception as e:
             self.logger.error(f"ffplay error: {e}")
             return False
+    
+    def _position_window(self):
+        """Position the ffplay window on the correct monitor"""
+        try:
+            if self.monitor == '1':
+                subprocess.run(["wmctrl", "-ir", str(os.getpid()), "-e", "0,0,0,1920,1080"], check=True)
+                self.logger.info("Positioned window on monitor 1 (left)")
+                print(f"   Window positioned on monitor 1 (left) at (0,0)")
+            elif self.monitor == '2':
+                subprocess.run(["wmctrl", "-ir", str(os.getpid()), "-e", "0,3840,0,1920,1080"], check=True)
+                self.logger.info("Positioned window on monitor 2 (right)")
+                print(f"   Window positioned on monitor 2 (right) at (3840,0)")
+            elif self.monitor == 'auto':
+                # Auto-detect from display name
+                if any(word in self.display_name.lower() for word in ['1', 'first', 'left', 'primary']):
+                    subprocess.run(["wmctrl", "-ir", str(os.getpid()), "-e", "0,0,0,1920,1080"], check=True)
+                    self.logger.info("Auto-positioned window on monitor 1 (left)")
+                    print(f"   Auto-positioned on monitor 1 (left) at (0,0)")
+                elif any(word in self.display_name.lower() for word in ['2', 'second', 'right', 'secondary']):
+                    subprocess.run(["wmctrl", "-ir", str(os.getpid()), "-e", "0,3840,0,1920,1080"], check=True)
+                    self.logger.info("Auto-positioned window on monitor 2 (right)")
+                    print(f"   Auto-positioned on monitor 2 (right) at (3840,0)")
+                else:
+                    # Default to monitor 1 (left)
+                    subprocess.run(["wmctrl", "-ir", str(os.getpid()), "-e", "0,0,0,1920,1080"], check=True)
+                    self.logger.info("Default positioned window on monitor 1 (left)")
+                    print(f"   Default positioned on monitor 1 (left) at (0,0)")
+        except Exception as e:
+            self.logger.warning(f"Could not position window: {e}")
+            print(f"   Warning: Could not auto-position window: {e}")
     
     def monitor_player(self) -> str:
         """Monitor the player process and check for stream changes"""
@@ -1115,6 +1150,12 @@ Features:
     python3 client.py --server http://192.168.1.100:5000 \\
       --hostname rpi-client-1 --display-name "Monitor 1"
 
+  Multi-monitor setup:
+    python3 client.py --server http://192.168.1.100:5000 \\
+      --hostname client-1 --display-name "Monitor 1" --monitor 1
+    python3 client.py --server http://192.168.1.100:5000 \\
+      --hostname client-2 --display-name "Monitor 2" --monitor 2
+
   Force ffplay for all streams:
     python3 client.py --server http://192.168.1.100:5000 \\
       --hostname rpi-client-1 --display-name "Screen1" \\
@@ -1128,6 +1169,12 @@ Features:
   Note: Each client runs in its own process with 1 thread for optimal performance
 
  ADVANCED OPTIONS:
+
+  Multi-monitor setup:
+    python3 client.py --server http://192.168.1.100:5000 \\
+      --hostname client-1 --display-name "Monitor 1" --monitor 1
+    python3 client.py --server http://192.168.1.100:5000 \\
+      --hostname client-2 --display-name "Monitor 2" --monitor 2
 
   Force ffplay for all streams (disable smart selection):
     python3 client.py --server http://192.168.1.100:5000 \\
@@ -1161,6 +1208,11 @@ For more information, visit: https://github.com/your-repo/openvideowalls
     optional_group.add_argument('--force-ffplay', 
                                action='store_true',
                                help='Force use of ffplay for all streams (disable smart C++/ffplay selection)')
+
+    optional_group.add_argument('--monitor', 
+                               choices=['1', '2', 'auto'],
+                               default='auto',
+                               help='Monitor position: 1 (left), 2 (right), or auto-detect from display name')
 
     optional_group.add_argument('--debug', 
                                action='store_true',
@@ -1208,7 +1260,8 @@ For more information, visit: https://github.com/your-repo/openvideowalls
             server_url=args.server,
             hostname=args.hostname,
             display_name=args.display_name,
-            force_ffplay=args.force_ffplay
+            force_ffplay=args.force_ffplay,
+            monitor=args.monitor
         )
         
         client.run()
