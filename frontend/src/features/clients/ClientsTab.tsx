@@ -6,10 +6,20 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowUp, ArrowDown, Monitor, Wifi, WifiOff, Search, Users, RefreshCw, Settings } from "lucide-react";
+import { ArrowUp, ArrowDown, Monitor, Wifi, WifiOff, Search, Users, RefreshCw, Settings, Trash2 } from "lucide-react";
 import { useErrorHandler } from "@/components/common/useErrorHandler";
 import { clientApi } from '@/lib/api/api';
 import type { Client } from '@/types';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // Make ClientsTab self-loading with optional refresh callback
 interface ClientsTabProps {
@@ -22,6 +32,8 @@ const ClientsTab: React.FC<ClientsTabProps> = ({ onClientsRefreshed }) => {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [removingClient, setRemovingClient] = useState<string | null>(null);
+  const [clientToRemove, setClientToRemove] = useState<Client | null>(null);
   const [autoCleanupStatus, setAutoCleanupStatus] = useState<{
     running: boolean;
     interval?: number;
@@ -190,6 +202,64 @@ const ClientsTab: React.FC<ClientsTabProps> = ({ onClientsRefreshed }) => {
     setClients(newClients);
   };
 
+  // Handle remove button click - show confirmation dialog
+  const handleRemoveClick = (client: Client) => {
+    setClientToRemove(client);
+  };
+
+  // Remove client function
+  const removeClient = async (clientId: string) => {
+    if (!clientId) return;
+    
+    try {
+      setRemovingClient(clientId);
+      console.log(`Removing client: ${clientId}`);
+      
+      const result = await clientApi.removeClient(clientId);
+      
+      if (result.success) {
+        showError({
+          message: `Client removed successfully: ${result.removed_client_name || clientId}`,
+          error_code: 'CLIENT_REMOVED',
+          error_category: 'success',
+          context: {
+            component: 'ClientsTab',
+            operation: 'removeClient',
+            client_id: clientId,
+            timestamp: new Date().toISOString()
+          }
+        });
+        
+        // Refresh clients list
+        await loadClients(true);
+        
+        // Notify parent component that clients were updated
+        if (onClientsRefreshed) {
+          onClientsRefreshed();
+        }
+      } else {
+        throw new Error(result.error || 'Failed to remove client');
+      }
+    } catch (error: any) {
+      console.error('Error removing client:', error);
+      showError({
+        message: `Failed to remove client: ${error.message}`,
+        error_code: 'CLIENT_REMOVE_FAILED',
+        error_category: '5xx',
+        context: {
+          component: 'ClientsTab',
+          operation: 'removeClient',
+          client_id: clientId,
+          timestamp: new Date().toISOString(),
+          original_error: error?.message,
+          stack: error?.stack
+        }
+      });
+    } finally {
+      setRemovingClient(null);
+      setClientToRemove(null);
+    }
+  };
 
 
   const filteredClients = clients.filter(client => {
@@ -377,6 +447,21 @@ const ClientsTab: React.FC<ClientsTabProps> = ({ onClientsRefreshed }) => {
                     >
                       <ArrowDown className="w-4 h-4" />
                     </Button>
+
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => handleRemoveClick(client)}
+                      disabled={removingClient === client.client_id}
+                      className="p-2 hover:bg-red-700 transition-colors"
+                      title={`Remove ${client.display_name || client.hostname || client.client_id} from server permanently`}
+                    >
+                      {removingClient === client.client_id ? (
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      ) : (
+                        <Trash2 className="w-4 h-4" />
+                      )}
+                    </Button>
                   </div>
                 </div>
               ))
@@ -431,6 +516,37 @@ const ClientsTab: React.FC<ClientsTabProps> = ({ onClientsRefreshed }) => {
           </Card>
         </div>
       )}
+
+      {/* Client Removal Confirmation Dialog */}
+      <AlertDialog open={!!clientToRemove} onOpenChange={() => setClientToRemove(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove Client</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to remove <strong>{clientToRemove?.display_name || clientToRemove?.hostname || clientToRemove?.client_id}</strong> from the server?
+              <br /><br />
+              This will:
+              <ul className="list-disc list-inside mt-2 space-y-1">
+                <li>Disconnect the client immediately</li>
+                <li>Remove it from all groups and stream assignments</li>
+                <li>Clear its configuration and status</li>
+                <li>Require the client to re-register if it reconnects</li>
+              </ul>
+              <br />
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => clientToRemove && removeClient(clientToRemove.client_id)}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Remove Client
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

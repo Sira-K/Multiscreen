@@ -787,6 +787,10 @@ class UnifiedMultiScreenClient:
     def _position_window(self):
         """Position the ffplay window on the correct monitor"""
         try:
+            # Wait for ffplay to create its window (10 seconds)
+            print(f"   Waiting 10 seconds for ffplay window to appear...")
+            time.sleep(10)
+            
             if self.monitor == '1':
                 subprocess.run(["wmctrl", "-ir", str(os.getpid()), "-e", "0,0,0,1920,1080"], check=True)
                 self.logger.info("Positioned window on monitor 1 (left)")
